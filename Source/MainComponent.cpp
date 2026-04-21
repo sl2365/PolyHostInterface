@@ -31,60 +31,13 @@ MainComponent::MainComponent()
     addAndMakeVisible(statusBar);
     markSessionClean();
     updateWindowTitle();
-    startTimer(750);
 }
 
 MainComponent::~MainComponent()
 {
-    stopTimer();
     audioEngine.getDeviceManager().removeChangeListener(this);
     settings.setAudioDeviceState(audioEngine.createAudioDeviceStateXml());
     audioEngine.shutdown();
-}
-
-juce::String MainComponent::createSessionSignature() const
-{
-    juce::MemoryOutputStream mo;
-
-    mo.writeInt(tabs.getNumTabs());
-    mo.writeInt(tabs.getCurrentTabIndex());
-
-    if (auto* top = findParentComponentOfClass<juce::DocumentWindow>())
-    {
-        mo.writeInt(top->getWidth());
-        mo.writeInt(top->getHeight());
-    }
-    else
-    {
-        mo.writeInt(getWidth());
-        mo.writeInt(getHeight());
-    }
-
-    for (int i = 0; i < tabs.getNumTabs(); ++i)
-    {
-        if (auto* tc = getTabComponent(i))
-        {
-            mo.writeInt((int) tc->getType());
-            mo.writeString(tc->getPluginFile().getFullPathName());
-
-            auto state = tc->getPluginState();
-            mo.writeInt((int) state.getSize());
-            mo.write(state.getData(), state.getSize());
-        }
-    }
-
-    return mo.toUTF8();
-}
-
-void MainComponent::timerCallback()
-{
-    auto currentSignature = createSessionSignature();
-
-    if (lastCleanSessionSignature.isNotEmpty() && currentSignature != lastCleanSessionSignature)
-    {
-        if (!isSessionDirty)
-            markSessionDirty();
-    }
 }
 
 void MainComponent::changeListenerCallback(juce::ChangeBroadcaster* source)
@@ -102,7 +55,10 @@ void MainComponent::changeListenerCallback(juce::ChangeBroadcaster* source)
             if (source == tc)
             {
                 refreshTabAppearance(i);
-                markSessionDirty();
+
+                if (!isLoadingPreset)
+                    markSessionDirty();
+
                 return;
             }
         }
@@ -136,6 +92,8 @@ void MainComponent::loadPluginFromFile(const juce::File& file)
                 if (tc->loadPlugin(file))
                 {
                     tabs.setCurrentTabIndex(i);
+                    refreshTabAppearance(i);
+                    markSessionDirty();
                 }
                 return;
             }
@@ -215,6 +173,8 @@ juce::PopupMenu MainComponent::getMenuForIndex(int index, const juce::String&)
             menu.addItem(103, "Save Preset");
             menu.addItem(104, "Save Preset As...");
             menu.addItem(105, "Load Preset...");
+            menu.addItem(107, "Locate Missing Plugins...",
+                         !unresolvedMissingPlugins.isEmpty());
             menu.addItem(106, "Delete Preset...");
             menu.addSeparator();
             menu.addItem(199, "Quit");
@@ -238,6 +198,7 @@ void MainComponent::menuItemSelected(int itemId, int)
         case 103: savePreset(); break;
         case 104: savePresetAs(); break;
         case 105: loadPreset(); break;
+        case 107: locateMissingPlugins(); break;
         case 106: deletePreset(); break;
         case 199:
             if (requestQuit())
@@ -320,8 +281,8 @@ void MainComponent::menuItemSelected(int itemId, int)
 void MainComponent::clearAllPlugins()
 {
     for (int i = 0; i < tabs.getNumTabs(); ++i)
-    if (auto* tc = getTabComponent(i))
-        tc->removeChangeListener(this);
+        if (auto* tc = getTabComponent(i))
+            tc->removeChangeListener(this);
 
     tabs.clearTabs();
     markSessionDirty();
@@ -368,7 +329,11 @@ void MainComponent::loadPreset()
     if (xml == nullptr || !xml->hasTagName("PolyHostPreset"))
         return;
 
+    isLoadingPreset = true;
+    unresolvedMissingPlugins.clear();
+
     juce::StringArray loadErrors;
+    juce::Array<MissingPluginEntry> missingPlugins;
 
     rebuildTabsFromPresetXml(*xml);
 
@@ -388,6 +353,11 @@ void MainComponent::loadPreset()
             auto pluginPathRelative       = tabXml->getStringAttribute("pluginPathRelative");
             auto pluginPathDriveFlexible  = tabXml->getStringAttribute("pluginPathDriveFlexible");
             auto stateBase64              = tabXml->getStringAttribute("pluginState");
+            auto typeString = tabXml->getStringAttribute("type");
+            auto pluginFormatName        = tabXml->getStringAttribute("pluginFormatName");
+            auto isInstrument            = tabXml->getBoolAttribute("isInstrument", typeString == "Synth");
+            auto pluginManufacturer      = tabXml->getStringAttribute("pluginManufacturer");
+            auto pluginVersion           = tabXml->getStringAttribute("pluginVersion");
 
             if (pluginPath.isNotEmpty() || pluginPathRelative.isNotEmpty() || pluginPathDriveFlexible.isNotEmpty())
             {
@@ -402,6 +372,22 @@ void MainComponent::loadPreset()
                         displayPath = pluginPathDriveFlexible;
 
                     loadErrors.add("Missing plugin: " + pluginName + "\n  Path: " + displayPath);
+
+                    MissingPluginEntry entry;
+                    entry.tabIndex = tabIndex;
+                    entry.slotType = (typeString == "Synth")
+                        ? PluginTabComponent::SlotType::Synth
+                        : PluginTabComponent::SlotType::FX;
+                    entry.pluginName = pluginName;
+                    entry.pluginPath = pluginPath;
+                    entry.pluginPathRelative = pluginPathRelative;
+                    entry.pluginPathDriveFlexible = pluginPathDriveFlexible;
+                    entry.pluginStateBase64 = stateBase64;
+                    entry.pluginFormatName = pluginFormatName;
+                    entry.isInstrument = isInstrument;
+                    entry.pluginManufacturer = pluginManufacturer;
+                    entry.pluginVersion = pluginVersion;
+                    missingPlugins.add(entry);
                 }
                 else if (!tc->loadPlugin(pluginFile))
                 {
@@ -435,10 +421,23 @@ void MainComponent::loadPreset()
         top->setSize(juce::jmax(900, w), juce::jmax(550, h));
     }
 
+    unresolvedMissingPlugins = missingPlugins;
     currentPresetFile = file;
-    markSessionClean();
-    updateWindowTitle();
     showPresetLoadErrors(loadErrors);
+
+    if (promptToLocateMissingPlugins(unresolvedMissingPlugins))
+    {
+        isLoadingPreset = false;
+        locateMissingPlugins();
+    }
+    else
+    {
+        juce::MessageManager::callAsync([this]
+        {
+            isLoadingPreset = false;
+            markSessionClean();
+        });
+    }
 }
 
 void MainComponent::showPresetLoadErrors(const juce::StringArray& errors)
@@ -462,6 +461,332 @@ void MainComponent::showPresetLoadErrors(const juce::StringArray& errors)
         message);
 }
 
+bool MainComponent::locateMissingPlugin(MissingPluginEntry& entry)
+{
+    juce::File startDir = AppSettings::getAppDirectory();
+
+    if (lastPluginRepairDirectory.isDirectory())
+    {
+        startDir = lastPluginRepairDirectory;
+    }
+    else if (entry.pluginPath.isNotEmpty())
+    {
+        juce::File originalFile(entry.pluginPath);
+        auto parent = originalFile.getParentDirectory();
+        if (parent.exists())
+            startDir = parent;
+    }
+
+    juce::File replacementFile = tryAutoLocateReplacement(entry);
+
+    if (replacementFile == juce::File())
+    {
+        juce::FileChooser chooser("Locate Plugin: " + entry.pluginName,
+                                  startDir,
+                                  "*.vst3;*.dll;*.clap");
+
+        if (!chooser.browseForFileToOpen())
+            return false;
+
+        replacementFile = chooser.getResult();
+    }
+
+    if (!confirmReplacementPlugin(entry, replacementFile))
+        return false;
+
+    if (!validateReplacementPluginCompatibility(entry, replacementFile))
+        return false;
+
+    if (!juce::isPositiveAndBelow(entry.tabIndex, tabs.getNumTabs()))
+        return false;
+
+    if (auto* tc = getTabComponent(entry.tabIndex))
+    {
+        if (!tc->loadPlugin(replacementFile))
+            return false;
+
+        lastPluginRepairDirectory = replacementFile.getParentDirectory();
+
+        juce::MemoryBlock state;
+        if (state.fromBase64Encoding(entry.pluginStateBase64))
+            tc->restorePluginState(state);
+
+        refreshTabAppearance(entry.tabIndex);
+        markSessionDirty();
+        return true;
+    }
+
+    return false;
+}
+
+void MainComponent::locateMissingPlugins()
+{
+    if (unresolvedMissingPlugins.isEmpty())
+    {
+        juce::AlertWindow::showMessageBoxAsync(
+            juce::AlertWindow::InfoIcon,
+            "Locate Missing Plugins",
+            "There are no unresolved missing plugins.");
+        return;
+    }
+
+    juce::StringArray restored;
+    juce::StringArray skipped;
+    juce::Array<MissingPluginEntry> stillMissing;
+
+    for (int i = 0; i < unresolvedMissingPlugins.size(); ++i)
+    {
+        auto entry = unresolvedMissingPlugins.getReference(i);
+
+        if (locateMissingPlugin(entry))
+            restored.add(entry.pluginName);
+        else
+        {
+            skipped.add(entry.pluginName);
+            stillMissing.add(entry);
+        }
+    }
+
+    unresolvedMissingPlugins = stillMissing;
+
+    juce::StringArray failed;
+    showMissingPluginRepairResult(restored, failed, skipped);
+}
+
+bool MainComponent::promptToLocateMissingPlugins(const juce::Array<MissingPluginEntry>& missingPlugins)
+{
+    if (missingPlugins.isEmpty())
+        return false;
+
+    juce::String message = "Some plugins could not be found.\n\n";
+    message += "Would you like to locate them now?\n\n";
+
+    for (int i = 0; i < missingPlugins.size(); ++i)
+    {
+        message += missingPlugins.getReference(i).pluginName;
+
+        if (i < missingPlugins.size() - 1)
+            message += "\n";
+    }
+
+    return juce::AlertWindow::showOkCancelBox(juce::AlertWindow::QuestionIcon,
+                                              "Locate Missing Plugins",
+                                              message,
+                                              "Locate",
+                                              "Later");
+}
+
+bool MainComponent::confirmReplacementPlugin(const MissingPluginEntry& entry, const juce::File& replacementFile)
+{
+    juce::String expectedType = entry.isInstrument ? "Synth" : "FX";
+
+    juce::String message = "Use this file as the replacement plugin?\n\n";
+    message += juce::String("Expected: ") + entry.pluginName + "\n";
+    message += juce::String("Expected Type: ") + expectedType + "\n";
+
+    if (entry.pluginFormatName.isNotEmpty())
+        message += juce::String("Expected Format: ") + entry.pluginFormatName + "\n";
+
+    if (entry.pluginManufacturer.isNotEmpty())
+        message += juce::String("Expected Manufacturer: ") + entry.pluginManufacturer + "\n";
+
+    if (entry.pluginVersion.isNotEmpty())
+        message += juce::String("Expected Version: ") + entry.pluginVersion + "\n";
+
+    message += juce::String("Selected: ") + replacementFile.getFileName() + "\n\n";
+    message += replacementFile.getFullPathName();
+
+    return juce::AlertWindow::showOkCancelBox(juce::AlertWindow::QuestionIcon,
+                                              "Confirm Replacement Plugin",
+                                              message,
+                                              "Use Replacement",
+                                              "Cancel");
+}
+
+void MainComponent::showMissingPluginRepairResult(const juce::StringArray& restored,
+                                                  const juce::StringArray& failed,
+                                                  const juce::StringArray& skipped)
+{
+    juce::String message;
+
+    if (!restored.isEmpty())
+    {
+        message += "Restored:\n";
+        for (int i = 0; i < restored.size(); ++i)
+            message += "  - " + restored[i] + "\n";
+        message += "\n";
+    }
+
+    if (!failed.isEmpty())
+    {
+        message += "Failed:\n";
+        for (int i = 0; i < failed.size(); ++i)
+            message += "  - " + failed[i] + "\n";
+        message += "\n";
+    }
+
+    if (!skipped.isEmpty())
+    {
+        message += "Not repaired:\n";
+        for (int i = 0; i < skipped.size(); ++i)
+            message += "  - " + skipped[i] + "\n";
+        message += "\n";
+    }
+
+    if (unresolvedMissingPlugins.isEmpty())
+        message += "All missing plugins have been resolved.\n";
+    else
+        message += "Remaining unresolved plugins: " + juce::String(unresolvedMissingPlugins.size()) + "\n";
+
+    if (!restored.isEmpty())
+    {
+        message += "\nSave the preset now to store repaired plugin paths.";
+
+        auto saveNow = juce::AlertWindow::showOkCancelBox(
+            juce::AlertWindow::InfoIcon,
+            "Missing Plugin Repair Complete",
+            message.trimEnd(),
+            "Save Now",
+            "Later");
+
+        if (saveNow)
+        {
+            if (currentPresetFile.existsAsFile())
+                savePreset();
+            else
+                savePresetAs();
+        }
+
+        return;
+    }
+
+    juce::AlertWindow::showMessageBoxAsync(
+        juce::AlertWindow::InfoIcon,
+        "Missing Plugin Repair Complete",
+        message.trimEnd());
+}
+
+bool MainComponent::scanPluginFile(const juce::File& pluginFile, juce::PluginDescription& desc) const
+{
+    if (!pluginFile.existsAsFile())
+        return false;
+
+    juce::AudioPluginFormatManager formatManager;
+    formatManager.addFormat(std::make_unique<juce::VST3PluginFormat>());
+   #if JUCE_PLUGINHOST_VST
+    formatManager.addFormat(std::make_unique<juce::VSTPluginFormat>());
+   #endif
+
+    juce::OwnedArray<juce::PluginDescription> results;
+
+    for (auto* format : formatManager.getFormats())
+    {
+        format->findAllTypesForFile(results, pluginFile.getFullPathName());
+        if (!results.isEmpty())
+            break;
+    }
+
+    if (results.isEmpty())
+        return false;
+
+    desc = *results.getFirst();
+    return true;
+}
+
+bool MainComponent::validateReplacementPluginCompatibility(const MissingPluginEntry& entry,
+                                                          const juce::File& replacementFile)
+{
+    juce::PluginDescription desc;
+    if (!scanPluginFile(replacementFile, desc))
+    {
+        juce::AlertWindow::showMessageBoxAsync(
+            juce::AlertWindow::WarningIcon,
+            "Invalid Replacement Plugin",
+            juce::String("Could not scan the selected plugin file:\n\n") + replacementFile.getFullPathName());
+        return false;
+    }
+
+    juce::StringArray mismatches;
+
+    auto selectedType = desc.isInstrument ? PluginTabComponent::SlotType::Synth
+                                          : PluginTabComponent::SlotType::FX;
+
+    if (selectedType != entry.slotType)
+    {
+        juce::String expectedType = (entry.slotType == PluginTabComponent::SlotType::Synth) ? "Synth" : "FX";
+        juce::String selectedTypeName = (selectedType == PluginTabComponent::SlotType::Synth) ? "Synth" : "FX";
+
+        mismatches.add("Type: expected " + expectedType + ", selected " + selectedTypeName);
+    }
+
+    if (entry.pluginFormatName.isNotEmpty()
+        && !desc.pluginFormatName.equalsIgnoreCase(entry.pluginFormatName))
+    {
+        mismatches.add("Format: expected " + entry.pluginFormatName
+                       + ", selected " + desc.pluginFormatName);
+    }
+
+    if (entry.pluginManufacturer.isNotEmpty()
+        && !desc.manufacturerName.equalsIgnoreCase(entry.pluginManufacturer))
+    {
+        mismatches.add("Manufacturer: expected " + entry.pluginManufacturer
+                       + ", selected " + desc.manufacturerName);
+    }
+
+    if (entry.pluginVersion.isNotEmpty()
+        && desc.version != entry.pluginVersion)
+    {
+        mismatches.add("Version: expected " + entry.pluginVersion
+                       + ", selected " + desc.version);
+    }
+
+    if (mismatches.isEmpty())
+        return true;
+
+    juce::String message = "The selected replacement plugin does not fully match the original.\n\n";
+    message += "Detected mismatches:\n";
+
+    for (int i = 0; i < mismatches.size(); ++i)
+        message += juce::String("  - ") + mismatches[i] + "\n";
+
+    message += "\nDo you still want to use it?";
+
+    return juce::AlertWindow::showOkCancelBox(
+        juce::AlertWindow::WarningIcon,
+        "Replacement Plugin Mismatch",
+        message,
+        "Use Anyway",
+        "Cancel");
+}
+
+juce::String MainComponent::getExpectedPluginFileName(const MissingPluginEntry& entry) const
+{
+    if (entry.pluginPath.isNotEmpty())
+        return juce::File(entry.pluginPath).getFileName();
+
+    if (entry.pluginPathRelative.isNotEmpty())
+        return juce::File(entry.pluginPathRelative).getFileName();
+
+    return {};
+}
+
+juce::File MainComponent::tryAutoLocateReplacement(const MissingPluginEntry& entry) const
+{
+    if (!lastPluginRepairDirectory.isDirectory())
+        return {};
+
+    auto expectedFileName = getExpectedPluginFileName(entry);
+    if (expectedFileName.isEmpty())
+        return {};
+
+    auto candidate = lastPluginRepairDirectory.getChildFile(expectedFileName);
+
+    if (candidate.existsAsFile())
+        return candidate;
+
+    return {};
+}
+
 void MainComponent::markSessionDirty()
 {
     isSessionDirty = true;
@@ -471,7 +796,6 @@ void MainComponent::markSessionDirty()
 void MainComponent::markSessionClean()
 {
     isSessionDirty = false;
-    lastCleanSessionSignature = createSessionSignature();
     updateWindowTitle();
 }
 
@@ -490,8 +814,8 @@ void MainComponent::newPreset()
     addEmptyTab();
 
     currentPresetFile = {};
+    unresolvedMissingPlugins.clear();
     markSessionClean();
-    updateWindowTitle();
 }
 
 bool MainComponent::requestQuit()
@@ -537,10 +861,7 @@ void MainComponent::savePreset()
     }
 
     if (writePresetToFile(currentPresetFile))
-    {
         markSessionClean();
-        updateWindowTitle();
-    }
 }
 
 void MainComponent::savePresetAs()
@@ -565,7 +886,6 @@ void MainComponent::savePresetAs()
     {
         currentPresetFile = file;
         markSessionClean();
-        updateWindowTitle();
     }
 }
 
@@ -609,6 +929,15 @@ bool MainComponent::writePresetToFile(const juce::File& file)
                 auto driveFlexiblePath = AppSettings::getDriveFlexiblePath(pluginFile);
                 if (driveFlexiblePath.isNotEmpty())
                     tabXml->setAttribute("pluginPathDriveFlexible", driveFlexiblePath);
+
+                juce::PluginDescription desc;
+                if (scanPluginFile(pluginFile, desc))
+                {
+                    tabXml->setAttribute("pluginFormatName", desc.pluginFormatName);
+                    tabXml->setAttribute("isInstrument", desc.isInstrument);
+                    tabXml->setAttribute("pluginManufacturer", desc.manufacturerName);
+                    tabXml->setAttribute("pluginVersion", desc.version);
+                }
 
                 auto state = tc->getPluginState();
                 tabXml->setAttribute("pluginState", state.toBase64Encoding());

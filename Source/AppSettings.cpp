@@ -65,7 +65,7 @@ juce::String AppSettings::makePathPortable(const juce::File& file)
     auto appDir = getAppDirectory();
     auto relative = file.getRelativePathFrom(appDir);
 
-    if (!relative.isEmpty() && !relative.startsWithChar('/'))
+    if (!relative.isEmpty() && !juce::File::isAbsolutePath(relative))
         return relative;
 
     return {};
