@@ -1,4 +1,4 @@
-﻿# PolyHost
+# PolyHost
 
 A lightweight, tabbed VST3 / CLAP plugin host for Windows.
 Play synths and route FX chains, driven by any MIDI device.
@@ -51,6 +51,7 @@ PolyHost\                        ← your project root
     └── Settings\                ← created at runtime, settings stored here
         └── polyhost.xml
 ```
+
 ## Build Setup (one-time)
 
 ### 1. Visual Studio 2022 Community (free)

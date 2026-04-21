@@ -182,7 +182,19 @@ juce::PopupMenu MainComponent::getMenuForIndex(int index, const juce::String&)
         case 1: menu.addItem(201, "Audio Device Settings"); break;
         case 2: menu.addItem(301, "Select MIDI Input Device"); menu.addItem(302, "MIDI Monitor"); break;
         case 3: menu.addItem(401, "Record Audio...  [TODO]"); menu.addItem(402, "Record MIDI...  [TODO]"); break;
-        case 4: menu.addItem(501, "Preferences...  [TODO]"); break;
+        case 4:
+            menu.addItem(501,
+                         "Auto-Save Preset After Plugin Repair",
+                         true,
+                         settings.getAutoSaveAfterPluginRepair());
+            menu.addSeparator();
+            menu.addItem(502, "Add Plugin Scan Folder...");
+            menu.addItem(503, "Show Plugin Scan Folders");
+            menu.addItem(504, "Clear Plugin Scan Folders",
+                         settings.getPluginScanFolders().size() > 0);
+            menu.addSeparator();
+            menu.addItem(500, "Preferences...  [TODO]");
+            break;
         case 5: menu.addItem(601, "About PolyHost"); break;
         default: break;
     }
@@ -270,6 +282,12 @@ void MainComponent::menuItemSelected(int itemId, int)
             midiMonitorWindow->toFront(true);
             break;
         }
+        case 501:
+            settings.setAutoSaveAfterPluginRepair(!settings.getAutoSaveAfterPluginRepair());
+            break;
+        case 502: addPluginScanFolder(); break;
+        case 503: showPluginScanFolders(); break;
+        case 504: clearPluginScanFolders(); break;
         case 601:
             juce::NativeMessageBox::showMessageBoxAsync(juce::AlertWindow::InfoIcon, "About PolyHost",
                 "PolyHost v0.1\n\nA lightweight tabbed plugin host for VST3 and CLAP.\nBuilt with JUCE.\n\nVST2 and 32-bit bridging planned.");
@@ -480,6 +498,15 @@ bool MainComponent::locateMissingPlugin(MissingPluginEntry& entry)
     juce::File replacementFile = tryAutoLocateReplacement(entry);
 
     if (replacementFile == juce::File())
+        replacementFile = tryAutoLocateReplacementByMetadata(entry);
+
+    if (replacementFile == juce::File())
+    {
+        auto candidates = findReplacementCandidates(entry);
+        replacementFile = chooseReplacementCandidate(entry, candidates);
+    }
+
+    if (replacementFile == juce::File())
     {
         juce::FileChooser chooser("Locate Plugin: " + entry.pluginName,
                                   startDir,
@@ -556,24 +583,53 @@ void MainComponent::locateMissingPlugins()
 bool MainComponent::promptToLocateMissingPlugins(const juce::Array<MissingPluginEntry>& missingPlugins)
 {
     if (missingPlugins.isEmpty())
-        return false;
+        return true;
 
-    juce::String message = "Some plugins could not be found.\n\n";
-    message += "Would you like to locate them now?\n\n";
+    juce::StringArray restored;
+    juce::StringArray failed;
+    juce::StringArray skipped;
 
     for (int i = 0; i < missingPlugins.size(); ++i)
     {
-        message += missingPlugins.getReference(i).pluginName;
+        auto entry = missingPlugins.getReference(i);
 
-        if (i < missingPlugins.size() - 1)
-            message += "\n";
+        auto action = promptForMissingPluginRepairAction(entry, i, missingPlugins.size());
+
+        if (action == 0)
+        {
+            skipped.add(entry.pluginName + " (repair session cancelled)");
+            break;
+        }
+
+        if (action == 2) // Skip
+        {
+            skipped.add(entry.pluginName);
+            continue;
+        }
+
+        if (locateMissingPlugin(entry))
+            restored.add(entry.pluginName);
+        else
+            failed.add(entry.pluginName);
     }
 
-    return juce::AlertWindow::showOkCancelBox(juce::AlertWindow::QuestionIcon,
-                                              "Locate Missing Plugins",
-                                              message,
-                                              "Locate",
-                                              "Later");
+    unresolvedMissingPlugins.clear();
+
+    for (int i = 0; i < missingPlugins.size(); ++i)
+    {
+        auto& original = missingPlugins.getReference(i);
+
+        bool wasRestored = restored.contains(original.pluginName);
+        bool wasSkipped  = skipped.contains(original.pluginName)
+                        || skipped.contains(original.pluginName + " (repair session cancelled)");
+
+        if (!wasRestored && !wasSkipped)
+            unresolvedMissingPlugins.add(original);
+    }
+
+    showMissingPluginRepairResult(restored, failed, skipped);
+
+    return unresolvedMissingPlugins.isEmpty();
 }
 
 bool MainComponent::confirmReplacementPlugin(const MissingPluginEntry& entry, const juce::File& replacementFile)
@@ -640,6 +696,28 @@ void MainComponent::showMissingPluginRepairResult(const juce::StringArray& resto
 
     if (!restored.isEmpty())
     {
+        if (settings.getAutoSaveAfterPluginRepair())
+        {
+            if (currentPresetFile.existsAsFile())
+                savePreset();
+            else
+                savePresetAs();
+
+            juce::MessageManager::callAsync([this]
+            {
+                markSessionClean();
+            });
+
+            message += "\nPreset was saved automatically with repaired plugin paths.";
+
+            juce::AlertWindow::showMessageBoxAsync(
+                juce::AlertWindow::InfoIcon,
+                "Missing Plugin Repair Complete",
+                message.trimEnd());
+
+            return;
+        }
+
         message += "\nSave the preset now to store repaired plugin paths.";
 
         auto saveNow = juce::AlertWindow::showOkCancelBox(
@@ -664,6 +742,53 @@ void MainComponent::showMissingPluginRepairResult(const juce::StringArray& resto
         juce::AlertWindow::InfoIcon,
         "Missing Plugin Repair Complete",
         message.trimEnd());
+}
+
+juce::File MainComponent::tryAutoLocateReplacementByMetadata(const MissingPluginEntry& entry) const
+{
+    if (!lastPluginRepairDirectory.isDirectory())
+        return {};
+
+    juce::Array<juce::File> candidates;
+
+    auto addMatches = [&](const juce::String& pattern)
+    {
+        auto files = lastPluginRepairDirectory.findChildFiles(juce::File::findFiles, false, pattern);
+        for (auto& f : files)
+            candidates.addIfNotAlreadyThere(f);
+    };
+
+    addMatches("*.vst3");
+    addMatches("*.dll");
+    addMatches("*.clap");
+
+    juce::Array<juce::File> strongMatches;
+
+    for (auto& file : candidates)
+    {
+        juce::PluginDescription desc;
+        if (!scanPluginFile(file, desc))
+            continue;
+
+        bool nameMatches = entry.pluginName.isNotEmpty()
+                           && desc.name.equalsIgnoreCase(entry.pluginName);
+
+        bool formatMatches = entry.pluginFormatName.isEmpty()
+                             || desc.pluginFormatName.equalsIgnoreCase(entry.pluginFormatName);
+
+        bool manufacturerMatches = entry.pluginManufacturer.isEmpty()
+                                   || desc.manufacturerName.equalsIgnoreCase(entry.pluginManufacturer);
+
+        bool typeMatches = (desc.isInstrument == entry.isInstrument);
+
+        if (nameMatches && formatMatches && manufacturerMatches && typeMatches)
+            strongMatches.add(file);
+    }
+
+    if (strongMatches.size() == 1)
+        return strongMatches[0];
+
+    return {};
 }
 
 bool MainComponent::scanPluginFile(const juce::File& pluginFile, juce::PluginDescription& desc) const
@@ -974,3 +1099,226 @@ void MainComponent::rebuildTabsFromPresetXml(const juce::XmlElement& presetXml)
     if (tabs.getNumTabs() == 0)
         addEmptyTab();
 }
+
+void MainComponent::addPluginScanFolder()
+{
+    juce::FileChooser chooser("Select Plugin Scan Folder",
+                              AppSettings::getAppDirectory(),
+                              "*");
+
+    if (!chooser.browseForDirectory())
+        return;
+
+    auto folder = chooser.getResult();
+
+    if (!folder.isDirectory())
+        return;
+
+    settings.addPluginScanFolder(folder.getFullPathName());
+
+    juce::AlertWindow::showMessageBoxAsync(
+        juce::AlertWindow::InfoIcon,
+        "Plugin Scan Folder Added",
+        "Added:\n" + folder.getFullPathName());
+}
+
+void MainComponent::showPluginScanFolders()
+{
+    auto folders = settings.getPluginScanFolders();
+
+    if (folders.isEmpty())
+    {
+        juce::AlertWindow::showMessageBoxAsync(
+            juce::AlertWindow::InfoIcon,
+            "Plugin Scan Folders",
+            "No plugin scan folders have been configured.");
+        return;
+    }
+
+    juce::String message = "Configured plugin scan folders:\n\n";
+
+    for (int i = 0; i < folders.size(); ++i)
+        message += folders[i] + "\n";
+
+    juce::AlertWindow::showMessageBoxAsync(
+        juce::AlertWindow::InfoIcon,
+        "Plugin Scan Folders",
+        message.trimEnd());
+}
+
+void MainComponent::clearPluginScanFolders()
+{
+    auto folders = settings.getPluginScanFolders();
+
+    if (folders.isEmpty())
+        return;
+
+    auto confirmed = juce::AlertWindow::showOkCancelBox(
+        juce::AlertWindow::WarningIcon,
+        "Clear Plugin Scan Folders",
+        "Remove all configured plugin scan folders?",
+        "Clear All",
+        "Cancel");
+
+    if (!confirmed)
+        return;
+
+    settings.setPluginScanFolders({});
+
+    juce::AlertWindow::showMessageBoxAsync(
+        juce::AlertWindow::InfoIcon,
+        "Plugin Scan Folders",
+        "All plugin scan folders have been cleared.");
+}
+
+int MainComponent::getPluginMatchScore(const MissingPluginEntry& entry,
+                                       const juce::PluginDescription& desc) const
+{
+    int score = 0;
+
+    if (entry.pluginName.isNotEmpty() && desc.name.equalsIgnoreCase(entry.pluginName))
+        score += 100;
+
+    if (entry.pluginFormatName.isNotEmpty() && desc.pluginFormatName.equalsIgnoreCase(entry.pluginFormatName))
+        score += 40;
+
+    if (entry.pluginManufacturer.isNotEmpty() && desc.manufacturerName.equalsIgnoreCase(entry.pluginManufacturer))
+        score += 25;
+
+    if (desc.isInstrument == entry.isInstrument)
+        score += 20;
+
+    if (entry.pluginVersion.isNotEmpty() && desc.version.equalsIgnoreCase(entry.pluginVersion))
+        score += 10;
+
+    return score;
+}
+
+juce::Array<MainComponent::PluginReplacementCandidate>
+MainComponent::findReplacementCandidates(const MissingPluginEntry& entry) const
+{
+    juce::Array<PluginReplacementCandidate> rankedCandidates;
+    juce::StringArray scanFolders = settings.getPluginScanFolders();
+
+    constexpr int maxFilesToInspect = 200;
+    int filesInspected = 0;
+
+    for (auto& folderPath : scanFolders)
+    {
+        juce::File folder(folderPath);
+
+        if (!folder.isDirectory())
+            continue;
+
+        juce::Array<juce::File> files;
+
+        auto addMatches = [&](const juce::String& pattern)
+        {
+            auto matches = folder.findChildFiles(juce::File::findFiles, true, pattern);
+            for (auto& f : matches)
+                files.addIfNotAlreadyThere(f);
+        };
+
+        addMatches("*.vst3");
+        addMatches("*.dll");
+        addMatches("*.clap");
+
+        for (auto& file : files)
+        {
+            if (filesInspected >= maxFilesToInspect)
+                break;
+
+            ++filesInspected;
+
+            juce::PluginDescription desc;
+            if (!scanPluginFile(file, desc))
+                continue;
+
+            auto score = getPluginMatchScore(entry, desc);
+
+            if (score <= 0)
+                continue;
+
+            PluginReplacementCandidate candidate;
+            candidate.file = file;
+            candidate.desc = desc;
+            candidate.score = score;
+            rankedCandidates.add(candidate);
+        }
+
+        if (filesInspected >= maxFilesToInspect)
+            break;
+    }
+
+    std::sort(rankedCandidates.begin(), rankedCandidates.end(),
+              [](const PluginReplacementCandidate& a, const PluginReplacementCandidate& b)
+              {
+                  return a.score > b.score;
+              });
+
+    return rankedCandidates;
+}
+
+juce::File MainComponent::chooseReplacementCandidate(
+    const MissingPluginEntry& entry,
+    const juce::Array<PluginReplacementCandidate>& candidates)
+{
+    if (candidates.isEmpty())
+        return {};
+
+    if (candidates.size() == 1)
+        return candidates[0].file;
+
+    juce::PopupMenu menu;
+    menu.addSectionHeader("Choose replacement for " + entry.pluginName);
+
+    for (int i = 0; i < candidates.size(); ++i)
+    {
+        const auto& candidate = candidates.getReference(i);
+
+        juce::String label = candidate.desc.name;
+
+        if (candidate.desc.manufacturerName.isNotEmpty())
+            label += " - " + candidate.desc.manufacturerName;
+
+        if (candidate.desc.pluginFormatName.isNotEmpty())
+            label += " [" + candidate.desc.pluginFormatName + "]";
+
+        label += " {" + candidate.file.getFileName() + "}";
+
+        menu.addItem(i + 1, label);
+    }
+
+    auto result = menu.showMenu(juce::PopupMenu::Options().withTargetComponent(this));
+
+    if (result <= 0 || result > candidates.size())
+        return {};
+
+    return candidates[result - 1].file;
+}
+
+int MainComponent::promptForMissingPluginRepairAction(const MissingPluginEntry& entry,
+                                                      int currentIndex,
+                                                      int totalCount) const
+{
+    juce::String message;
+    message << "Missing plugin " << (currentIndex + 1) << " of " << totalCount << ":\n\n";
+    message << "Name: " << entry.pluginName << "\n";
+
+    if (entry.pluginManufacturer.isNotEmpty())
+        message << "Manufacturer: " << entry.pluginManufacturer << "\n";
+
+    if (entry.pluginFormatName.isNotEmpty())
+        message << "Format: " << entry.pluginFormatName << "\n";
+
+    message << "\nWould you like to repair this plugin now?";
+
+    return juce::AlertWindow::showYesNoCancelBox(
+        juce::AlertWindow::WarningIcon,
+        "Repair Missing Plugin",
+        message,
+        "Repair",
+        "Skip",
+        "Cancel");
+}
+

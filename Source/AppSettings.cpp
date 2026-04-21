@@ -6,6 +6,10 @@ static constexpr const char* kAudioDevice  = "audioDevice";
 static constexpr const char* kWindowWidth  = "windowWidth";
 static constexpr const char* kWindowHeight = "windowHeight";
 static constexpr const char* kAudioDeviceState = "audioDeviceState";
+static constexpr const char* kAutoSaveAfterPluginRepair = "autoSaveAfterPluginRepair";
+static constexpr const char* kPluginScanFolders         = "PluginScanFolders";
+static constexpr const char* kFolderTag                 = "Folder";
+static constexpr const char* kPathAttribute             = "path";
 
 juce::File AppSettings::getSettingsFile()
 {
@@ -133,4 +137,74 @@ juce::File AppSettings::resolvePluginPath(const juce::String& absolutePath,
    #endif
 
     return {};
+}
+
+bool AppSettings::getAutoSaveAfterPluginRepair() const
+{
+    return xml->getBoolAttribute(kAutoSaveAfterPluginRepair, false);
+}
+
+void AppSettings::setAutoSaveAfterPluginRepair(bool shouldAutoSave)
+{
+    xml->setAttribute(kAutoSaveAfterPluginRepair, shouldAutoSave);
+    save();
+}
+
+juce::StringArray AppSettings::getPluginScanFolders() const
+{
+    juce::StringArray folders;
+
+    if (auto* foldersXml = xml->getChildByName(kPluginScanFolders))
+    {
+        for (auto* child : foldersXml->getChildIterator())
+        {
+            if (child->hasTagName(kFolderTag))
+            {
+                auto path = child->getStringAttribute(kPathAttribute).trim();
+                if (path.isNotEmpty())
+                    folders.addIfNotAlreadyThere(path);
+            }
+        }
+    }
+
+    return folders;
+}
+
+void AppSettings::setPluginScanFolders(const juce::StringArray& folders)
+{
+    xml->removeChildElement(xml->getChildByName(kPluginScanFolders), true);
+
+    auto foldersXml = std::make_unique<juce::XmlElement>(kPluginScanFolders);
+
+    for (auto& folder : folders)
+    {
+        auto trimmed = folder.trim();
+        if (trimmed.isEmpty())
+            continue;
+
+        auto* child = foldersXml->createNewChildElement(kFolderTag);
+        child->setAttribute(kPathAttribute, trimmed);
+    }
+
+    xml->addChildElement(foldersXml.release());
+    save();
+}
+
+void AppSettings::addPluginScanFolder(const juce::String& folderPath)
+{
+    auto folders = getPluginScanFolders();
+    auto trimmed = folderPath.trim();
+
+    if (trimmed.isEmpty())
+        return;
+
+    folders.addIfNotAlreadyThere(trimmed);
+    setPluginScanFolders(folders);
+}
+
+void AppSettings::removePluginScanFolder(const juce::String& folderPath)
+{
+    auto folders = getPluginScanFolders();
+    folders.removeString(folderPath.trim(), true);
+    setPluginScanFolders(folders);
 }

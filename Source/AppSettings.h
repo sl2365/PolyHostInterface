@@ -21,6 +21,14 @@ public:
     juce::String getAudioDeviceState() const;
     void setAudioDeviceState(const juce::String& xmlText);
 
+    bool getAutoSaveAfterPluginRepair() const;
+    void setAutoSaveAfterPluginRepair(bool shouldAutoSave);
+
+    juce::StringArray getPluginScanFolders() const;
+    void setPluginScanFolders(const juce::StringArray& folders);
+    void addPluginScanFolder(const juce::String& folderPath);
+    void removePluginScanFolder(const juce::String& folderPath);
+
     static juce::File getSettingsFile();
     static juce::File getPresetsDirectory();
     static juce::File getAppDirectory();

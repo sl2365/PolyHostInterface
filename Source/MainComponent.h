@@ -7,8 +7,8 @@
 #include "MidiMonitorWindow.h"
 
 class MainComponent final : public juce::Component,
-                             public juce::MenuBarModel,
-                             private juce::ChangeListener
+                            public juce::MenuBarModel,
+                            private juce::ChangeListener
 {
 public:
     static constexpr int kMaxSynthTabs = 2;
@@ -23,8 +23,8 @@ public:
     bool requestQuit();
 
     juce::StringArray getMenuBarNames() override;
-    juce::PopupMenu   getMenuForIndex(int index, const juce::String& name) override;
-    void              menuItemSelected(int itemId, int menuIndex) override;
+    juce::PopupMenu getMenuForIndex(int index, const juce::String& name) override;
+    void menuItemSelected(int itemId, int menuIndex) override;
 
     AppSettings& getSettings() { return settings; }
 
@@ -44,27 +44,25 @@ private:
         juce::String pluginVersion;
     };
 
+    struct PluginReplacementCandidate
+    {
+        juce::File file;
+        juce::PluginDescription desc;
+        int score = 0;
+    };
+
+    // Core UI / tab helpers
     void addEmptyTab();
     void refreshTabAppearance(int tabIndex);
-    int  countTabsOfType(PluginTabComponent::SlotType type) const;
+    int countTabsOfType(PluginTabComponent::SlotType type) const;
     PluginTabComponent* getTabComponent(int tabIndex) const;
     void changeListenerCallback(juce::ChangeBroadcaster* source) override;
-    bool promptToLocateMissingPlugins(const juce::Array<MissingPluginEntry>& missingPlugins);
-    bool locateMissingPlugin(MissingPluginEntry& entry);
-    bool confirmReplacementPlugin(const MissingPluginEntry& entry, const juce::File& replacementFile);
-    bool scanPluginFile(const juce::File& pluginFile, juce::PluginDescription& desc) const;
-    bool validateReplacementPluginCompatibility(const MissingPluginEntry& entry, const juce::File& replacementFile);
-    juce::File tryAutoLocateReplacement(const MissingPluginEntry& entry) const;
-    juce::String getExpectedPluginFileName(const MissingPluginEntry& entry) const;
-    void showMissingPluginRepairResult(const juce::StringArray& restored,
-                                        const juce::StringArray& failed,
-                                        const juce::StringArray& skipped);
-                                        
+
+    // Preset/session helpers
     void newPreset();
     void savePreset();
     void savePresetAs();
     void loadPreset();
-    void locateMissingPlugins();
     void deletePreset();
     void clearAllPlugins();
     bool writePresetToFile(const juce::File& file);
@@ -75,13 +73,41 @@ private:
     void markSessionClean();
     void showPresetLoadErrors(const juce::StringArray& errors);
 
-    AppSettings   settings;
-    AudioEngine   audioEngine;
-    MidiEngine    midiEngine { audioEngine.getDeviceManager() };
+    // Missing plugin repair
+    void locateMissingPlugins();
+    bool promptToLocateMissingPlugins(const juce::Array<MissingPluginEntry>& missingPlugins);
+    int promptForMissingPluginRepairAction(const MissingPluginEntry& entry,
+                                           int currentIndex,
+                                           int totalCount) const;
+    bool locateMissingPlugin(MissingPluginEntry& entry);
+    bool confirmReplacementPlugin(const MissingPluginEntry& entry, const juce::File& replacementFile);
+    bool scanPluginFile(const juce::File& pluginFile, juce::PluginDescription& desc) const;
+    bool validateReplacementPluginCompatibility(const MissingPluginEntry& entry,
+                                                const juce::File& replacementFile);
+    juce::File tryAutoLocateReplacement(const MissingPluginEntry& entry) const;
+    juce::File tryAutoLocateReplacementByMetadata(const MissingPluginEntry& entry) const;
+    juce::Array<PluginReplacementCandidate> findReplacementCandidates(const MissingPluginEntry& entry) const;
+    juce::File chooseReplacementCandidate(const MissingPluginEntry& entry,
+                                          const juce::Array<PluginReplacementCandidate>& candidates);
+    int getPluginMatchScore(const MissingPluginEntry& entry,
+                            const juce::PluginDescription& desc) const;
+    juce::String getExpectedPluginFileName(const MissingPluginEntry& entry) const;
+    void showMissingPluginRepairResult(const juce::StringArray& restored,
+                                       const juce::StringArray& failed,
+                                       const juce::StringArray& skipped);
+
+    // Plugin scan folder actions
+    void addPluginScanFolder();
+    void showPluginScanFolders();
+    void clearPluginScanFolders();
+
+    AppSettings settings;
+    AudioEngine audioEngine;
+    MidiEngine midiEngine { audioEngine.getDeviceManager() };
 
     juce::MenuBarComponent menuBar { this };
-    juce::TabbedComponent  tabs    { juce::TabbedButtonBar::TabsAtTop };
-    juce::Label            statusBar;
+    juce::TabbedComponent tabs { juce::TabbedButtonBar::TabsAtTop };
+    juce::Label statusBar;
     std::unique_ptr<MidiMonitorWindow> midiMonitorWindow;
     juce::File currentPresetFile;
     juce::File lastPluginRepairDirectory;
