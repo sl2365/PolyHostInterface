@@ -57,6 +57,7 @@ private:
     int countTabsOfType(PluginTabComponent::SlotType type) const;
     PluginTabComponent* getTabComponent(int tabIndex) const;
     void changeListenerCallback(juce::ChangeBroadcaster* source) override;
+    void closeCurrentTab();
 
     // Preset/session helpers
     void newPreset();

@@ -31,6 +31,7 @@ public:
     bool hasPlugin() const { return nodeId != juce::AudioProcessorGraph::NodeID(); }
     SlotType getType() const { return slotType; }
     int getSlotIndex() const { return slotIndex; }
+    void setSlotIndex(int newIndex) { slotIndex = newIndex; }
     juce::AudioProcessorGraph::NodeID getNodeID() const { return nodeId; }
     juce::String getPluginName() const;
 

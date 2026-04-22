@@ -130,8 +130,15 @@ void MainComponent::refreshTabAppearance(int index)
         if (tc->hasPlugin())
             name = tc->getPluginName();
 
+        auto baseColour = PluginTabComponent::colourForType(tc->getType());
+        const bool isSelected = (index == tabs.getCurrentTabIndex());
+
+        auto tabColour = isSelected
+            ? baseColour.brighter(0.10f)
+            : baseColour.darker(0.50f);
+
         tabs.setTabName(index, name);
-        tabs.setTabBackgroundColour(index, PluginTabComponent::colourForType(tc->getType()));
+        tabs.setTabBackgroundColour(index, tabColour);
     }
 }
 
@@ -169,6 +176,7 @@ juce::PopupMenu MainComponent::getMenuForIndex(int index, const juce::String&)
             menu.addItem(100, "New Preset");
             menu.addSeparator();
             menu.addItem(101, "Add Tab");
+            menu.addItem(102, "Close Current Tab");
             menu.addSeparator();
             menu.addItem(103, "Save Preset");
             menu.addItem(104, "Save Preset As...");
@@ -207,6 +215,7 @@ void MainComponent::menuItemSelected(int itemId, int)
     {
         case 100: newPreset(); break;
         case 101: addEmptyTab(); break;
+        case 102: closeCurrentTab(); break;
         case 103: savePreset(); break;
         case 104: savePresetAs(); break;
         case 105: loadPreset(); break;
@@ -1335,5 +1344,39 @@ juce::File MainComponent::findReplacementPluginFile(const MissingPluginEntry& en
         replacementFile = browseForReplacementPlugin(entry, startDir);
 
     return replacementFile;
+}
+
+void MainComponent::closeCurrentTab()
+{
+    auto currentIndex = tabs.getCurrentTabIndex();
+
+    if (!juce::isPositiveAndBelow(currentIndex, tabs.getNumTabs()))
+        return;
+
+    if (tabs.getNumTabs() == 1)
+    {
+        if (auto* tc = getTabComponent(currentIndex))
+        {
+            tc->clearPlugin();
+            refreshTabAppearance(currentIndex);
+            unresolvedMissingPlugins.clear();
+            markSessionDirty();
+        }
+        return;
+    }
+
+    if (auto* tc = getTabComponent(currentIndex))
+        tc->removeChangeListener(this);
+
+    const int newIndex = juce::jlimit(0, tabs.getNumTabs() - 2, currentIndex);
+
+    tabs.removeTab(currentIndex);
+    tabs.setCurrentTabIndex(newIndex);
+
+    for (int i = 0; i < tabs.getNumTabs(); ++i)
+        refreshTabAppearance(i);
+
+    unresolvedMissingPlugins.clear();
+    markSessionDirty();
 }
 
