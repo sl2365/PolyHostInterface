@@ -6,10 +6,27 @@ MainComponent::MainComponent()
     audioEngine.initialise(settings.getAudioDeviceState());
     audioEngine.getDeviceManager().addChangeListener(this);
     addAndMakeVisible(menuBar);
+    toolbar.addDefaultItems(*this);
+    addAndMakeVisible(toolbar);
+
     tabs.setColour(juce::TabbedComponent::backgroundColourId, juce::Colour(0xFF16213E));
     tabs.setTabBarDepth(34);
     tabs.getTabbedButtonBar().setMinimumTabScaleFactor(0.7f);
+    tabs.getTabbedButtonBar().setLookAndFeel(&tabBarLookAndFeel);
+    tabs.getTabbedButtonBar().addMouseListener(&tabBarMouseListener, true);
     addAndMakeVisible(tabs);
+
+    addAndMakeVisible(routingView);
+    routingView.setVisible(false);
+    routingView.onMoveUp = [this](int tabIndex)
+    {
+        moveTabEarlier(tabIndex);
+    };
+
+    routingView.onMoveDown = [this](int tabIndex)
+    {
+        moveTabLater(tabIndex);
+    };
     addEmptyTab();
     addEmptyTab();
 
@@ -35,6 +52,8 @@ MainComponent::MainComponent()
 
 MainComponent::~MainComponent()
 {
+    tabs.getTabbedButtonBar().removeMouseListener(&tabBarMouseListener);
+    tabs.getTabbedButtonBar().setLookAndFeel(nullptr);
     audioEngine.getDeviceManager().removeChangeListener(this);
     settings.setAudioDeviceState(audioEngine.createAudioDeviceStateXml());
     audioEngine.shutdown();
@@ -55,6 +74,7 @@ void MainComponent::changeListenerCallback(juce::ChangeBroadcaster* source)
             if (source == tc)
             {
                 refreshTabAppearance(i);
+                refreshRoutingView();
 
                 if (!isLoadingPreset)
                     markSessionDirty();
@@ -93,6 +113,7 @@ void MainComponent::loadPluginFromFile(const juce::File& file)
                 {
                     tabs.setCurrentTabIndex(i);
                     refreshTabAppearance(i);
+                    refreshRoutingView();
                     markSessionDirty();
                 }
                 return;
@@ -108,6 +129,7 @@ void MainComponent::loadPluginFromFile(const juce::File& file)
         {
             tabs.setCurrentTabIndex(tabs.getNumTabs() - 1);
             refreshTabAppearance(tabs.getNumTabs() - 1);
+            refreshRoutingView();
             markSessionDirty();
         }
     }
@@ -160,9 +182,13 @@ void MainComponent::paint(juce::Graphics& g) { g.fillAll(juce::Colour(0xFF1A1A2E
 void MainComponent::resized()
 {
     auto area = getLocalBounds();
+
     menuBar.setBounds(area.removeFromTop(juce::LookAndFeel::getDefaultLookAndFeel().getDefaultMenuBarHeight()));
+    toolbar.setBounds(area.removeFromTop(36));
     statusBar.setBounds(area.removeFromBottom(24));
+
     tabs.setBounds(area);
+    routingView.setBounds(area);
 }
 
 juce::StringArray MainComponent::getMenuBarNames() { return { "File", "Audio", "MIDI", "Recording", "Options", "Help" }; }
@@ -187,8 +213,16 @@ juce::PopupMenu MainComponent::getMenuForIndex(int index, const juce::String&)
             menu.addSeparator();
             menu.addItem(199, "Quit");
             break;
-        case 1: menu.addItem(201, "Audio Device Settings"); break;
-        case 2: menu.addItem(301, "Select MIDI Input Device"); menu.addItem(302, "MIDI Monitor"); break;
+        case 1:
+            menu.addItem(201, "Audio Device Settings");
+            menu.addSeparator();
+            menu.addItem(202, "Routing");
+            break;
+        case 2:
+            menu.addItem(301, "Select MIDI Input Device");
+            menu.addItem(302, "MIDI Monitor");
+            menu.addSeparator();
+            break;
         case 3: menu.addItem(401, "Record Audio...  [TODO]"); menu.addItem(402, "Record MIDI...  [TODO]"); break;
         case 4:
             menu.addItem(501,
@@ -225,6 +259,7 @@ void MainComponent::menuItemSelected(int itemId, int)
             if (requestQuit())
                 juce::JUCEApplication::getInstance()->systemRequestedQuit();
             break;
+
         case 201:
         {
             auto* selector = new juce::AudioDeviceSelectorComponent(
@@ -248,6 +283,10 @@ void MainComponent::menuItemSelected(int itemId, int)
             w->centreWithSize(500, 400);
             break;
         }
+        case 202:
+            toggleRoutingView();
+            break;
+
         case 301:
         {
             juce::PopupMenu midiMenu;
@@ -291,12 +330,14 @@ void MainComponent::menuItemSelected(int itemId, int)
             midiMonitorWindow->toFront(true);
             break;
         }
+
         case 501:
             settings.setAutoSaveAfterPluginRepair(!settings.getAutoSaveAfterPluginRepair());
             break;
         case 502: addPluginScanFolder(); break;
         case 503: showPluginScanFolders(); break;
         case 504: clearPluginScanFolders(); break;
+
         case 601:
             juce::NativeMessageBox::showMessageBoxAsync(juce::AlertWindow::InfoIcon, "About PolyHost",
                 "PolyHost v0.1\n\nA lightweight tabbed plugin host for VST3 and CLAP.\nBuilt with JUCE.\n\nVST2 and 32-bit bridging planned.");
@@ -312,6 +353,7 @@ void MainComponent::clearAllPlugins()
             tc->removeChangeListener(this);
 
     tabs.clearTabs();
+    refreshRoutingView();
     markSessionDirty();
 }
 
@@ -436,6 +478,8 @@ void MainComponent::loadPreset()
 
     for (int i = 0; i < tabs.getNumTabs(); ++i)
         refreshTabAppearance(i);
+
+    refreshRoutingView();
 
     auto selectedTab = xml->getIntAttribute("selectedTab", 0);
     if (juce::isPositiveAndBelow(selectedTab, tabs.getNumTabs()))
@@ -855,6 +899,7 @@ void MainComponent::newPreset()
     addEmptyTab();
     addEmptyTab();
 
+    refreshRoutingView();
     currentPresetFile = {};
     unresolvedMissingPlugins.clear();
     markSessionClean();
@@ -865,6 +910,9 @@ bool MainComponent::requestQuit()
     return maybeSaveChanges();
 }
 
+// ===================================
+// SAVE / LOAD
+// ===================================
 bool MainComponent::maybeSaveChanges()
 {
     if (!isSessionDirty)
@@ -1017,6 +1065,9 @@ void MainComponent::rebuildTabsFromPresetXml(const juce::XmlElement& presetXml)
         addEmptyTab();
 }
 
+// ===================================
+// PLUGINS
+// ===================================
 void MainComponent::addPluginScanFolder()
 {
     juce::FileChooser chooser("Select Plugin Scan Folder",
@@ -1111,6 +1162,9 @@ int MainComponent::getPluginMatchScore(const MissingPluginEntry& entry,
     return score;
 }
 
+// ===================================
+// REBUILD MISSING PLUGINS
+// ===================================
 juce::Array<MainComponent::PluginReplacementCandidate>
 MainComponent::findReplacementCandidates(const MissingPluginEntry& entry) const
 {
@@ -1319,6 +1373,7 @@ bool MainComponent::applyReplacementPlugin(const MissingPluginEntry& entry,
             tc->restorePluginState(state);
 
         refreshTabAppearance(entry.tabIndex);
+        refreshRoutingView();
         markSessionDirty();
         return true;
     }
@@ -1346,6 +1401,9 @@ juce::File MainComponent::findReplacementPluginFile(const MissingPluginEntry& en
     return replacementFile;
 }
 
+// ===================================
+// TABS
+// ===================================
 void MainComponent::closeCurrentTab()
 {
     auto currentIndex = tabs.getCurrentTabIndex();
@@ -1377,6 +1435,410 @@ void MainComponent::closeCurrentTab()
         refreshTabAppearance(i);
 
     unresolvedMissingPlugins.clear();
+    refreshRoutingView();
     markSessionDirty();
+}
+
+bool MainComponent::confirmCloseTab(int tabIndex) const
+{
+    if (auto* tc = getTabComponent(tabIndex))
+    {
+        if (!tc->hasPlugin())
+            return true;
+
+        auto name = tc->getPluginName();
+        if (name.isEmpty())
+            name = "this tab";
+
+        return juce::AlertWindow::showOkCancelBox(
+            juce::AlertWindow::WarningIcon,
+            "Close Tab",
+            "Close tab for \"" + name + "\"?",
+            "Close Tab",
+            "Cancel");
+    }
+
+    return false;
+}
+
+void MainComponent::showTabContextMenu(int tabIndex)
+{
+    juce::PopupMenu menu;
+    menu.addItem(1, "New Tab");
+    menu.addItem(2, "Clear Tab",
+                 juce::isPositiveAndBelow(tabIndex, tabs.getNumTabs()));
+    menu.addItem(3, "Close Tab",
+                 juce::isPositiveAndBelow(tabIndex, tabs.getNumTabs()));
+
+    menu.showMenuAsync(juce::PopupMenu::Options(),
+                       [this, tabIndex](int result)
+                       {
+                           if (result == 1)
+                           {
+                               addEmptyTab();
+                               return;
+                           }
+
+                           if (!juce::isPositiveAndBelow(tabIndex, tabs.getNumTabs()))
+                               return;
+
+                           if (result == 2)
+                           {
+                               if (!confirmClearTab(tabIndex))
+                                   return;
+
+                               if (auto* tc = getTabComponent(tabIndex))
+                               {
+                                   tc->clearPlugin();
+                                   refreshTabAppearance(tabIndex);
+                                   refreshRoutingView();
+                                   unresolvedMissingPlugins.clear();
+                                   markSessionDirty();
+                               }
+                               return;
+                           }
+
+                           if (result != 3)
+                               return;
+
+                           if (!confirmCloseTab(tabIndex))
+                               return;
+
+                           if (tabIndex == tabs.getCurrentTabIndex())
+                           {
+                               closeCurrentTab();
+                               return;
+                           }
+
+                           if (tabs.getNumTabs() == 1)
+                           {
+                               if (auto* tc = getTabComponent(tabIndex))
+                               {
+                                   tc->clearPlugin();
+                                   refreshTabAppearance(tabIndex);
+                                   refreshRoutingView();
+                                   unresolvedMissingPlugins.clear();
+                                   markSessionDirty();
+                               }
+                               return;
+                           }
+
+                           if (auto* tc = getTabComponent(tabIndex))
+                               tc->removeChangeListener(this);
+
+                           auto currentIndex = tabs.getCurrentTabIndex();
+
+                           tabs.removeTab(tabIndex);
+
+                           if (tabIndex < currentIndex)
+                               --currentIndex;
+
+                           currentIndex = juce::jlimit(0, tabs.getNumTabs() - 1, currentIndex);
+                           tabs.setCurrentTabIndex(currentIndex);
+
+                           for (int i = 0; i < tabs.getNumTabs(); ++i)
+                               refreshTabAppearance(i);
+
+                           refreshRoutingView();
+                           unresolvedMissingPlugins.clear();
+                           markSessionDirty();
+                       });
+}
+
+bool MainComponent::confirmClearTab(int tabIndex) const
+{
+    if (auto* tc = getTabComponent(tabIndex))
+    {
+        if (!tc->hasPlugin())
+            return true;
+
+        auto name = tc->getPluginName();
+        if (name.isEmpty())
+            name = "this tab";
+
+        return juce::AlertWindow::showOkCancelBox(
+            juce::AlertWindow::WarningIcon,
+            "Clear Tab",
+            "Remove the plugin from \"" + name + "\" and keep the tab open?",
+            "Clear Tab",
+            "Cancel");
+    }
+
+    return false;
+}
+
+void MainComponent::moveTabEarlier(int tabIndex)
+{
+    if (!juce::isPositiveAndBelow(tabIndex, tabs.getNumTabs()))
+        return;
+
+    int targetIndex = -1;
+    for (int i = tabIndex - 1; i >= 0; --i)
+    {
+        if (auto* tc = getTabComponent(i))
+        {
+            if (tc->hasPlugin())
+            {
+                targetIndex = i;
+                break;
+            }
+        }
+    }
+
+    if (targetIndex < 0)
+        return;
+
+    juce::Array<TabSnapshot> snapshots;
+    snapshots.ensureStorageAllocated(tabs.getNumTabs());
+
+    for (int i = 0; i < tabs.getNumTabs(); ++i)
+    {
+        TabSnapshot snap;
+
+        if (auto* tc = getTabComponent(i))
+        {
+            snap.hasPlugin = tc->hasPlugin();
+            snap.type = tc->getType();
+            snap.tabName = tabs.getTabNames()[i];
+
+            if (snap.hasPlugin)
+            {
+                snap.pluginFile = tc->getPluginFile();
+                snap.pluginState = tc->getPluginState();
+            }
+        }
+
+        snapshots.add(snap);
+    }
+
+    snapshots.swap(tabIndex, targetIndex);
+
+    auto selectedIndex = tabs.getCurrentTabIndex();
+
+    for (int i = 0; i < tabs.getNumTabs(); ++i)
+        if (auto* tc = getTabComponent(i))
+            tc->removeChangeListener(this);
+
+    tabs.clearTabs();
+
+    for (int i = 0; i < snapshots.size(); ++i)
+    {
+        auto* tc = new PluginTabComponent(audioEngine, i);
+        tc->addChangeListener(this);
+        tc->setAllowEditorWindowResize(false);
+
+        tabs.addTab("Empty",
+                    PluginTabComponent::colourForType(PluginTabComponent::SlotType::Empty),
+                    tc,
+                    true);
+
+        const auto& snap = snapshots.getReference(i);
+
+        if (snap.hasPlugin)
+        {
+            if (tc->loadPlugin(snap.pluginFile))
+                tc->restorePluginState(snap.pluginState);
+        }
+
+        refreshTabAppearance(i);
+        tc->setAllowEditorWindowResize(true);
+
+        refreshTabAppearance(i);
+    }
+
+    if (selectedIndex == tabIndex)
+        selectedIndex = targetIndex;
+    else if (selectedIndex == targetIndex)
+        selectedIndex = tabIndex;
+
+    selectedIndex = juce::jlimit(0, tabs.getNumTabs() - 1, selectedIndex);
+    tabs.setCurrentTabIndex(selectedIndex);
+
+    refreshRoutingView();
+    markSessionDirty();
+}
+
+void MainComponent::moveTabLater(int tabIndex)
+{
+    if (!juce::isPositiveAndBelow(tabIndex, tabs.getNumTabs()))
+        return;
+
+    int targetIndex = -1;
+    for (int i = tabIndex + 1; i < tabs.getNumTabs(); ++i)
+    {
+        if (auto* tc = getTabComponent(i))
+        {
+            if (tc->hasPlugin())
+            {
+                targetIndex = i;
+                break;
+            }
+        }
+    }
+
+    if (targetIndex < 0)
+        return;
+
+    juce::Array<TabSnapshot> snapshots;
+    snapshots.ensureStorageAllocated(tabs.getNumTabs());
+
+    for (int i = 0; i < tabs.getNumTabs(); ++i)
+    {
+        TabSnapshot snap;
+
+        if (auto* tc = getTabComponent(i))
+        {
+            snap.hasPlugin = tc->hasPlugin();
+            snap.type = tc->getType();
+            snap.tabName = tabs.getTabNames()[i];
+
+            if (snap.hasPlugin)
+            {
+                snap.pluginFile = tc->getPluginFile();
+                snap.pluginState = tc->getPluginState();
+            }
+        }
+
+        snapshots.add(snap);
+    }
+
+    snapshots.swap(tabIndex, targetIndex);
+
+    auto selectedIndex = tabs.getCurrentTabIndex();
+
+    for (int i = 0; i < tabs.getNumTabs(); ++i)
+        if (auto* tc = getTabComponent(i))
+            tc->removeChangeListener(this);
+
+    tabs.clearTabs();
+
+    for (int i = 0; i < snapshots.size(); ++i)
+    {
+        auto* tc = new PluginTabComponent(audioEngine, i);
+        tc->addChangeListener(this);
+        tc->setAllowEditorWindowResize(false);
+
+        tabs.addTab("Empty",
+                    PluginTabComponent::colourForType(PluginTabComponent::SlotType::Empty),
+                    tc,
+                    true);
+
+        const auto& snap = snapshots.getReference(i);
+
+        if (snap.hasPlugin)
+        {
+            if (tc->loadPlugin(snap.pluginFile))
+                tc->restorePluginState(snap.pluginState);
+        }
+
+        refreshTabAppearance(i);
+        tc->setAllowEditorWindowResize(true);
+
+        refreshTabAppearance(i);
+    }
+
+    if (selectedIndex == tabIndex)
+        selectedIndex = targetIndex;
+    else if (selectedIndex == targetIndex)
+        selectedIndex = tabIndex;
+
+    selectedIndex = juce::jlimit(0, tabs.getNumTabs() - 1, selectedIndex);
+    tabs.setCurrentTabIndex(selectedIndex);
+
+    refreshRoutingView();
+    markSessionDirty();
+}
+
+// ===================================
+// TOOLBAR
+// ===================================
+void MainComponent::getAllToolbarItemIds(juce::Array<int>& ids)
+{
+    ids.add(toolbarRoutingToggle);
+}
+
+void MainComponent::getDefaultItemSet(juce::Array<int>& ids)
+{
+    ids.add(toolbarRoutingToggle);
+}
+
+juce::ToolbarItemComponent* MainComponent::createItem(int itemId)
+{
+    if (itemId == toolbarRoutingToggle)
+    {
+        auto* button = new juce::ToolbarButton(itemId, "Routing", nullptr, nullptr);
+
+        button->setTooltip("Show or hide Routing View");
+        button->setWantsKeyboardFocus(false);
+
+        button->onClick = [this, button]
+        {
+            toggleRoutingView();
+            button->setToggleState(showingRoutingView, juce::dontSendNotification);
+        };
+
+        button->setToggleState(showingRoutingView, juce::dontSendNotification);
+        return button;
+    }
+
+    return nullptr;
+}
+
+void MainComponent::setRoutingViewVisible(bool shouldShow)
+{
+    showingRoutingView = shouldShow;
+
+    if (showingRoutingView)
+        refreshRoutingView();
+
+    tabs.setVisible(!showingRoutingView);
+    routingView.setVisible(showingRoutingView);
+
+    if (auto* item = toolbar.getItemComponent(toolbarRoutingToggle))
+        if (auto* button = dynamic_cast<juce::ToolbarButton*>(item))
+            button->setToggleState(showingRoutingView, juce::dontSendNotification);
+
+    resized();
+}
+
+void MainComponent::toggleRoutingView()
+{
+    setRoutingViewVisible(!showingRoutingView);
+}
+
+void MainComponent::refreshRoutingView()
+{
+    juce::Array<RoutingView::ModuleEntry> modules;
+
+    juce::Array<int> loadedTabIndices;
+
+    for (int i = 0; i < tabs.getNumTabs(); ++i)
+    {
+        if (auto* tc = getTabComponent(i))
+        {
+            if (!tc->hasPlugin())
+                continue;
+
+            loadedTabIndices.add(i);
+        }
+    }
+
+    for (int listIndex = 0; listIndex < loadedTabIndices.size(); ++listIndex)
+    {
+        const int tabIndex = loadedTabIndices[listIndex];
+
+        if (auto* tc = getTabComponent(tabIndex))
+        {
+            RoutingView::ModuleEntry entry;
+            entry.tabIndex = tabIndex;
+            entry.name = tc->getPluginName();
+            entry.type = tc->getType();
+            entry.canMoveUp = (listIndex > 0);
+            entry.canMoveDown = (listIndex < loadedTabIndices.size() - 1);
+            modules.add(entry);
+        }
+    }
+
+    routingView.setModules(modules);
 }
 

@@ -107,13 +107,17 @@ void PluginTabComponent::showPluginEditor()
     pluginEditor.reset(proc->createEditor());
     addAndMakeVisible(pluginEditor.get());
 
-    const auto editorBounds = pluginEditor->getLocalBounds();
-    if (auto* top = getTopLevelComponent())
+    if (allowEditorWindowResize)
     {
-        auto bounds = top->getBounds();
-        bounds.setWidth(juce::jmax(bounds.getWidth(),  editorBounds.getWidth()  + 80));
-        bounds.setHeight(juce::jmax(bounds.getHeight(), editorBounds.getHeight() + 140));
-        top->setBounds(bounds);
+        const auto editorBounds = pluginEditor->getLocalBounds();
+
+        if (auto* top = getTopLevelComponent())
+        {
+            auto bounds = top->getBounds();
+            bounds.setWidth(juce::jmax(bounds.getWidth(),  editorBounds.getWidth()  + 80));
+            bounds.setHeight(juce::jmax(bounds.getHeight(), editorBounds.getHeight() + 140));
+            top->setBounds(bounds);
+        }
     }
     resized();
 }

@@ -30,6 +30,7 @@ target_sources(PolyHost PRIVATE
     Source/AudioEngine.cpp
     Source/MidiEngine.cpp
     Source/AppSettings.cpp
+    Source/RoutingView.cpp
 )
 
 # ── Detect whether the portable VST2 SDK is present ──────────────────────────

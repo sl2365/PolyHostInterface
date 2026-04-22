@@ -35,6 +35,8 @@ public:
     juce::AudioProcessorGraph::NodeID getNodeID() const { return nodeId; }
     juce::String getPluginName() const;
 
+    void setAllowEditorWindowResize(bool shouldAllow) { allowEditorWindowResize = shouldAllow; }
+
     juce::File getPluginFile() const;
     juce::MemoryBlock getPluginState() const;
     bool restorePluginState(const juce::MemoryBlock& state);
@@ -59,6 +61,7 @@ private:
 
     juce::TextButton loadButton { "Click to Load Plugin..." };
     juce::Label statusLabel;
+    bool allowEditorWindowResize = true;
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(PluginTabComponent)
 };

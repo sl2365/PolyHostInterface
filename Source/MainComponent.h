@@ -5,10 +5,12 @@
 #include "PluginTabComponent.h"
 #include "AppSettings.h"
 #include "MidiMonitorWindow.h"
+#include "RoutingView.h"
 
 class MainComponent final : public juce::Component,
                             public juce::MenuBarModel,
-                            private juce::ChangeListener
+                            private juce::ChangeListener,
+                            public juce::ToolbarItemFactory
 {
 public:
     static constexpr int kMaxSynthTabs = 2;
@@ -29,6 +31,84 @@ public:
     AppSettings& getSettings() { return settings; }
 
 private:
+    class TabBarMouseListener final : public juce::MouseListener
+    {
+    public:
+        explicit TabBarMouseListener(MainComponent& ownerIn) : owner(ownerIn) {}
+
+        void mouseUp(const juce::MouseEvent& e) override
+        {
+            if (!e.mods.isRightButtonDown())
+                return;
+
+            auto& tabBar = owner.tabs.getTabbedButtonBar();
+
+            for (int i = 0; i < tabBar.getNumTabs(); ++i)
+            {
+                if (auto* button = tabBar.getTabButton(i))
+                {
+                    auto boundsInBar = button->getBounds();
+
+                    if (boundsInBar.contains(e.getEventRelativeTo(&tabBar).position.toInt()))
+                    {
+                        owner.showTabContextMenu(i);
+                        return;
+                    }
+                }
+            }
+        }
+
+    private:
+        MainComponent& owner;
+    };
+
+    class TabBarLookAndFeel final : public juce::LookAndFeel_V4
+    {
+    public:
+        void drawTabButton(juce::TabBarButton& button,
+                           juce::Graphics& g,
+                           bool isMouseOver,
+                           bool /*isMouseDown*/) override
+        {
+            auto area = button.getLocalBounds().toFloat().reduced(2.0f, 2.0f);
+
+            auto activeColour = button.getTabBackgroundColour();
+            auto colour = button.isFrontTab() ? activeColour.brighter(0.1f)
+                                              : activeColour.darker(0.7f);
+
+            if (isMouseOver)
+                colour = colour.brighter(0.1f);
+
+            const float cornerSize = 6.0f;
+
+            juce::Path tabShape;
+            tabShape.startNewSubPath(area.getBottomLeft());
+            tabShape.lineTo(area.getX(), area.getY() + cornerSize);
+            tabShape.quadraticTo(area.getX(), area.getY(),
+                                 area.getX() + cornerSize, area.getY());
+            tabShape.lineTo(area.getRight() - cornerSize, area.getY());
+            tabShape.quadraticTo(area.getRight(), area.getY(),
+                                 area.getRight(), area.getY() + cornerSize);
+            tabShape.lineTo(area.getRight(), area.getBottom());
+            tabShape.closeSubPath();
+
+            g.setColour(colour);
+            g.fillPath(tabShape);
+
+            g.setColour(button.isFrontTab() ? juce::Colours::white
+                                            : juce::Colours::lightgrey);
+
+            g.setFont(juce::Font(juce::FontOptions(
+                14.0f,
+                button.isFrontTab() ? juce::Font::bold : juce::Font::plain)));
+
+            g.drawFittedText(button.getButtonText(),
+                             button.getLocalBounds().reduced(10, 2),
+                             juce::Justification::centred,
+                             1);
+        }
+    };
+
     struct MissingPluginEntry
     {
         int tabIndex = -1;
@@ -51,6 +131,15 @@ private:
         int score = 0;
     };
 
+    struct TabSnapshot
+    {
+        bool hasPlugin = false;
+        juce::File pluginFile;
+        juce::MemoryBlock pluginState;
+        PluginTabComponent::SlotType type = PluginTabComponent::SlotType::Empty;
+        juce::String tabName;
+    };
+
     // Core UI / tab helpers
     void addEmptyTab();
     void refreshTabAppearance(int tabIndex);
@@ -58,6 +147,22 @@ private:
     PluginTabComponent* getTabComponent(int tabIndex) const;
     void changeListenerCallback(juce::ChangeBroadcaster* source) override;
     void closeCurrentTab();
+    void showTabContextMenu(int tabIndex);
+    bool confirmCloseTab(int tabIndex) const;
+    bool confirmClearTab(int tabIndex) const;
+    void setRoutingViewVisible(bool shouldShow);
+    void toggleRoutingView();
+    void refreshRoutingView();
+    void moveTabEarlier(int tabIndex);
+    void moveTabLater(int tabIndex);
+    enum ToolbarItemIds
+    {
+        toolbarRoutingToggle = 10001
+    };
+
+    void getAllToolbarItemIds(juce::Array<int>& ids) override;
+    void getDefaultItemSet(juce::Array<int>& ids) override;
+    juce::ToolbarItemComponent* createItem(int itemId) override;
 
     // Preset/session helpers
     void newPreset();
@@ -119,7 +224,12 @@ private:
 
     juce::MenuBarComponent menuBar { this };
     juce::TabbedComponent tabs { juce::TabbedButtonBar::TabsAtTop };
+    TabBarLookAndFeel tabBarLookAndFeel;
+    TabBarMouseListener tabBarMouseListener { *this };
     juce::Label statusBar;
+    juce::Toolbar toolbar;
+    RoutingView routingView;
+    bool showingRoutingView = false;
     std::unique_ptr<MidiMonitorWindow> midiMonitorWindow;
     juce::File currentPresetFile;
     juce::File lastPluginRepairDirectory;
