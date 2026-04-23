@@ -11,11 +11,22 @@ RoutingView::ModuleRow::ModuleRow()
     typeLabel.setColour(juce::Label::backgroundColourId, juce::Colour(0xFF555555));
     addAndMakeVisible(typeLabel);
 
-    bypassButton.setEnabled(false);
-
+    addAndMakeVisible(midiButton);
     addAndMakeVisible(bypassButton);
     addAndMakeVisible(upButton);
     addAndMakeVisible(downButton);
+
+    midiButton.onClick = [this]
+    {
+        if (onShowMidiAssignments)
+            onShowMidiAssignments(entry.tabIndex, &midiButton);
+    };
+
+    bypassButton.onClick = [this]
+    {
+        if (onToggleBypass)
+            onToggleBypass(entry.tabIndex);
+    };
 
     upButton.onClick = [this]
     {
@@ -52,6 +63,16 @@ void RoutingView::ModuleRow::setModule(const ModuleEntry& newEntry)
         typeLabel.setColour(juce::Label::backgroundColourId, juce::Colour(0xFF555555));
     }
 
+    if (entry.midiAssignmentCount > 0)
+        midiButton.setButtonText("MIDI (" + juce::String(entry.midiAssignmentCount) + ")");
+    else
+        midiButton.setButtonText("MIDI");
+
+    bypassButton.setButtonText(entry.isBypassed ? "Bypassed" : "Active");
+    bypassButton.setColour(juce::TextButton::buttonColourId,
+                           entry.isBypassed ? juce::Colour(0xFF7F8C8D)
+                                            : juce::Colour(0xFF27AE60));
+
     upButton.setEnabled(entry.canMoveUp);
     downButton.setEnabled(entry.canMoveDown);
 
@@ -78,9 +99,14 @@ void RoutingView::ModuleRow::resized()
 
     downButton.setBounds(area.removeFromRight(70).reduced(0, 8));
     area.removeFromRight(8);
+
     upButton.setBounds(area.removeFromRight(70).reduced(0, 8));
     area.removeFromRight(8);
+
     bypassButton.setBounds(area.removeFromRight(90).reduced(0, 8));
+    area.removeFromRight(8);
+
+    midiButton.setBounds(area.removeFromRight(90).reduced(0, 8));
     area.removeFromRight(12);
 
     nameLabel.setBounds(area);
@@ -127,6 +153,18 @@ void RoutingView::rebuildModuleRows()
         auto* row = moduleRows.add(new ModuleRow());
         row->setModule(module);
 
+        row->onShowMidiAssignments = [this](int tabIndex, juce::Component* anchorComponent)
+        {
+            if (onShowMidiAssignments)
+                onShowMidiAssignments(tabIndex, anchorComponent);
+        };
+
+        row->onToggleBypass = [this](int tabIndex)
+        {
+            if (onToggleBypass)
+                onToggleBypass(tabIndex);
+        };
+
         row->onMoveUp = [this](int tabIndex)
         {
             if (onMoveUp)
@@ -156,7 +194,6 @@ void RoutingView::resized()
     area.removeFromTop(10);
 
     emptyLabel.setBounds(area);
-
     viewport.setBounds(area);
 
     auto contentArea = viewport.getLocalBounds();

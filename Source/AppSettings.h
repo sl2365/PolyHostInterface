@@ -11,6 +11,9 @@ public:
     juce::String getMidiDeviceName() const;
     void setMidiDeviceName(const juce::String& name);
 
+    juce::StringArray getEnabledMidiDeviceIdentifiers() const;
+    void setEnabledMidiDeviceIdentifiers(const juce::StringArray& identifiers);
+
     juce::String getAudioDeviceName() const;
     void setAudioDeviceName(const juce::String& name);
 

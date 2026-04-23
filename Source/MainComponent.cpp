@@ -1,4 +1,60 @@
 #include "MainComponent.h"
+#include <cmath>
+
+namespace
+{
+    class MidiAssignmentsCallout final : public juce::Component
+    {
+    public:
+        MidiAssignmentsCallout(const juce::Array<juce::MidiDeviceInfo>& availableDevices,
+                               const juce::StringArray& assignedDeviceIdentifiers,
+                               std::function<void(const juce::String& deviceIdentifier)> onToggle)
+            : toggleAssignment(std::move(onToggle))
+        {
+            for (auto& device : availableDevices)
+            {
+                auto* button = deviceButtons.add(new juce::ToggleButton(device.name));
+                button->setToggleState(assignedDeviceIdentifiers.contains(device.identifier),
+                                       juce::dontSendNotification);
+
+                const auto identifier = device.identifier;
+                button->onClick = [this, identifier]
+                {
+                    if (toggleAssignment)
+                        toggleAssignment(identifier);
+                };
+
+                addAndMakeVisible(button);
+            }
+
+            addAndMakeVisible(closeButton);
+            closeButton.setButtonText("Close");
+            closeButton.onClick = [this]
+            {
+                if (auto* parent = findParentComponentOfClass<juce::CallOutBox>())
+                    parent->setVisible(false);
+            };
+
+            setSize(260, 40 + (deviceButtons.size() * 28) + 40);
+        }
+
+        void resized() override
+        {
+            auto area = getLocalBounds().reduced(10);
+
+            for (auto* button : deviceButtons)
+                button->setBounds(area.removeFromTop(28));
+
+            area.removeFromTop(8);
+            closeButton.setBounds(area.removeFromTop(28).removeFromRight(80));
+        }
+
+    private:
+        juce::OwnedArray<juce::ToggleButton> deviceButtons;
+        juce::TextButton closeButton;
+        std::function<void(const juce::String& deviceIdentifier)> toggleAssignment;
+    };
+}
 
 MainComponent::MainComponent()
 {
@@ -8,6 +64,39 @@ MainComponent::MainComponent()
     addAndMakeVisible(menuBar);
     toolbar.addDefaultItems(*this);
     addAndMakeVisible(toolbar);
+    toolbar.setColour(juce::Toolbar::backgroundColourId, juce::Colour(0xFF1D2230));
+
+    addAndMakeVisible(tempoControlBackground);
+    tempoControlBackground.toBack();
+    addAndMakeVisible(beatIndicator);
+    addAndMakeVisible(tempoLabel);
+    tempoLabel.setText("Tempo:", juce::dontSendNotification);
+    tempoLabel.setJustificationType(juce::Justification::centredRight);
+    tempoLabel.setColour(juce::Label::textColourId, juce::Colours::lightgrey);
+
+    addAndMakeVisible(tempoEditor);
+    startTimerHz(10);
+    tempoEditor.setInputRestrictions(6, "0123456789.");
+    tempoEditor.setJustification(juce::Justification::centred);
+    tempoEditor.addListener(this);
+    tempoEditor.setSelectAllWhenFocused(true);
+    tempoEditor.onReturnKey = [this]
+    {
+        setHostTempoBpm(tempoEditor.getText().getDoubleValue());
+    };
+    tempoEditor.onFocusLost = [this]
+    {
+        setHostTempoBpm(tempoEditor.getText().getDoubleValue());
+    };
+
+    addAndMakeVisible(tapTempoButton);
+    tapTempoButton.onClick = [this]
+    {
+        registerTapTempo();
+    };
+
+    refreshTempoUiFromEngine();
+    audioEngine.setTempoBpm(hostTempoBpm);
 
     tabs.setColour(juce::TabbedComponent::backgroundColourId, juce::Colour(0xFF16213E));
     tabs.setTabBarDepth(34);
@@ -15,9 +104,19 @@ MainComponent::MainComponent()
     tabs.getTabbedButtonBar().setLookAndFeel(&tabBarLookAndFeel);
     tabs.getTabbedButtonBar().addMouseListener(&tabBarMouseListener, true);
     addAndMakeVisible(tabs);
+    updateStatusBarText();
+
+    routingView.onShowMidiAssignments = [this](int tabIndex, juce::Component* anchorComponent)
+    {
+        showMidiAssignmentsCallout(tabIndex, anchorComponent);
+    };
 
     addAndMakeVisible(routingView);
     routingView.setVisible(false);
+    routingView.onToggleBypass = [this](int tabIndex)
+    {
+        toggleTabBypass(tabIndex);
+    };
     routingView.onMoveUp = [this](int tabIndex)
     {
         moveTabEarlier(tabIndex);
@@ -27,25 +126,70 @@ MainComponent::MainComponent()
     {
         moveTabLater(tabIndex);
     };
+
     addEmptyTab();
     addEmptyTab();
 
-    auto savedMidiDevice = settings.getMidiDeviceName();
-    if (savedMidiDevice.isNotEmpty())
+    refreshRoutingView();
+
+    auto enabledMidiDeviceIdentifiers = settings.getEnabledMidiDeviceIdentifiers();
+
+    for (auto& identifier : enabledMidiDeviceIdentifiers)
+        midiEngine.openDevice(identifier);
+
+    auto openNames = midiEngine.getOpenDeviceNames();
+
+    if (!openNames.isEmpty())
     {
-        midiEngine.openDevice(savedMidiDevice);
-        statusBar.setText("PolyHost 0.1  |  MIDI: " + midiEngine.getCurrentDeviceName() + "  |  Ready",
+        statusBar.setText("PolyHost 0.1  |  MIDI: " + openNames.joinIntoString(", ") + "  |  Ready",
                           juce::dontSendNotification);
     }
     else
     {
-        statusBar.setText("PolyHost 0.1  |  No MIDI device selected  |  Ready",
-                          juce::dontSendNotification);
+        auto legacySavedMidiDevice = settings.getMidiDeviceName();
+
+        if (legacySavedMidiDevice.isNotEmpty())
+        {
+            midiEngine.openDevice(legacySavedMidiDevice);
+            statusBar.setText("PolyHost 0.1  |  MIDI: " + midiEngine.getCurrentDeviceName() + "  |  Ready",
+                              juce::dontSendNotification);
+        }
+        else
+        {
+            statusBar.setText("PolyHost 0.1  |  No MIDI device selected  |  Ready",
+                              juce::dontSendNotification);
+        }
     }
+
+    midiEngine.onMidiMessageReceived = [this](const MidiEngine::IncomingMidiMessage& incoming)
+    {
+        juce::Array<juce::AudioProcessorGraph::NodeID> targetNodeIds;
+
+        for (int i = 0; i < tabs.getNumTabs(); ++i)
+        {
+            auto* tc = getTabComponent(i);
+            if (tc == nullptr || !tc->hasPlugin())
+                continue;
+
+            if (tc->isBypassed())
+                continue;
+
+            if (auto* midiState = getMidiRoutingStateForTab(i))
+            {
+                if (midiState->assignedDeviceIdentifiers.contains(incoming.deviceIdentifier))
+                    targetNodeIds.add(tc->getNodeID());
+            }
+        }
+
+        if (!targetNodeIds.isEmpty())
+            audioEngine.queueMidiToNodes(incoming.message, targetNodeIds);
+    };
+
     statusBar.setColour(juce::Label::backgroundColourId, juce::Colour(0xFF0F3460));
     statusBar.setColour(juce::Label::textColourId, juce::Colours::lightgrey);
     statusBar.setJustificationType(juce::Justification::centredLeft);
     addAndMakeVisible(statusBar);
+
     markSessionClean();
     updateWindowTitle();
 }
@@ -74,8 +218,8 @@ void MainComponent::changeListenerCallback(juce::ChangeBroadcaster* source)
             if (source == tc)
             {
                 refreshTabAppearance(i);
+                syncRoutingToAudioEngine();
                 refreshRoutingView();
-
                 if (!isLoadingPreset)
                     markSessionDirty();
 
@@ -177,14 +321,52 @@ PluginTabComponent* MainComponent::getTabComponent(int index) const
     return dynamic_cast<PluginTabComponent*>(tabs.getTabContentComponent(index));
 }
 
-void MainComponent::paint(juce::Graphics& g) { g.fillAll(juce::Colour(0xFF1A1A2E)); }
+void MainComponent::paint(juce::Graphics& g) { g.fillAll(juce::Colour(0xFF1D2230)); }
 
 void MainComponent::resized()
 {
     auto area = getLocalBounds();
 
     menuBar.setBounds(area.removeFromTop(juce::LookAndFeel::getDefaultLookAndFeel().getDefaultMenuBarHeight()));
-    toolbar.setBounds(area.removeFromTop(36));
+
+    auto topRow = area.removeFromTop(36);
+    auto tempoArea = topRow.removeFromRight(338);
+    tempoArea.removeFromRight(6);
+    tempoArea.removeFromLeft(3);
+
+    auto tapBounds = tempoArea.removeFromRight(52).reduced(2);
+    tapBounds = tapBounds.withSizeKeepingCentre(tapBounds.getWidth(), 24);
+    tapTempoButton.setBounds(tapBounds);
+
+    tempoArea.removeFromRight(4);
+
+    auto editorBounds = tempoArea.removeFromRight(70).reduced(2);
+    editorBounds = editorBounds.withSizeKeepingCentre(editorBounds.getWidth(), 22);
+    tempoEditor.setBounds(editorBounds);
+
+    tempoArea.removeFromRight(6);
+
+    auto beatBounds = tempoArea.removeFromRight(96).reduced(2);
+    beatBounds = beatBounds.withSizeKeepingCentre(beatBounds.getWidth(), 18);
+    beatIndicator.setBounds(beatBounds);
+
+    tempoArea.removeFromRight(8);
+    tempoLabel.setBounds(tempoArea.removeFromRight(60).reduced(2));
+
+    auto controlBounds = beatIndicator.getBounds()
+                            .getUnion(tempoEditor.getBounds())
+                            .getUnion(tapTempoButton.getBounds())
+                            .expanded(6, 3);
+
+    controlBounds = controlBounds.getUnion(
+        tempoLabel.getBounds().withY(controlBounds.getY()).withHeight(controlBounds.getHeight()));
+
+    tempoControlBackground.setBounds(controlBounds);
+
+    tempoControlBackground.toBack();
+
+    toolbar.setBounds(topRow);
+
     statusBar.setBounds(area.removeFromBottom(24));
 
     tabs.setBounds(area);
@@ -222,6 +404,10 @@ juce::PopupMenu MainComponent::getMenuForIndex(int index, const juce::String&)
             menu.addItem(301, "Select MIDI Input Device");
             menu.addItem(302, "MIDI Monitor");
             menu.addSeparator();
+            menu.addItem(menuHostSyncToggle, "Host Sync", true, hostSyncEnabled);
+            menu.addSeparator();
+            menu.addItem(menuSetFakeHostTempo, "Set Fake Host Tempo 128.0");
+            menu.addItem(menuClearFakeHostTempo, "Clear Fake Host Tempo");
             break;
         case 3: menu.addItem(401, "Record Audio...  [TODO]"); menu.addItem(402, "Record MIDI...  [TODO]"); break;
         case 4:
@@ -290,9 +476,9 @@ void MainComponent::menuItemSelected(int itemId, int)
         case 301:
         {
             juce::PopupMenu midiMenu;
-            auto names = midiEngine.getAvailableDeviceNames();
+            auto devices = midiEngine.getAvailableDevices();
 
-            if (names.isEmpty())
+            if (devices.isEmpty())
             {
                 juce::AlertWindow::showMessageBoxAsync(
                     juce::AlertWindow::WarningIcon,
@@ -301,21 +487,47 @@ void MainComponent::menuItemSelected(int itemId, int)
                 break;
             }
 
-            for (int i = 0; i < names.size(); ++i)
-                midiMenu.addItem(1000 + i, names[i]);
+            for (int i = 0; i < devices.size(); ++i)
+            {
+                const auto& device = devices.getReference(i);
+                midiMenu.addItem(1000 + i,
+                                 device.name,
+                                 true,
+                                 midiEngine.isDeviceOpen(device.identifier));
+            }
 
             midiMenu.showMenuAsync(
                 juce::PopupMenu::Options(),
-                [this, names](int result)
+                [this, devices](int result)
                 {
-                    if (result >= 1000 && result < 1000 + names.size())
+                    if (result >= 1000 && result < 1000 + devices.size())
                     {
-                        auto selectedName = names[result - 1000];
-                        midiEngine.openDevice(selectedName);
-                        settings.setMidiDeviceName(selectedName);
-                        statusBar.setText(
-                            "PolyHost 0.1  |  MIDI: " + midiEngine.getCurrentDeviceName() + "  |  Ready",
-                            juce::dontSendNotification);
+                        const auto& device = devices.getReference(result - 1000);
+
+                        if (midiEngine.isDeviceOpen(device.identifier))
+                            midiEngine.closeDevice(device.identifier);
+                        else
+                            midiEngine.openDevice(device.identifier);
+
+                        auto openNames = midiEngine.getOpenDeviceNames();
+
+                        if (openNames.isEmpty())
+                        {
+                            statusBar.setText(
+                                "PolyHost 0.1  |  No MIDI device selected  |  Ready",
+                                juce::dontSendNotification);
+                            settings.setMidiDeviceName({});
+                            settings.setEnabledMidiDeviceIdentifiers({});
+                        }
+                        else
+                        {
+                            statusBar.setText(
+                                "PolyHost 0.1  |  MIDI: " + openNames.joinIntoString(", ") + "  |  Ready",
+                                juce::dontSendNotification);
+
+                            settings.setMidiDeviceName(openNames[0]); // legacy compatibility
+                            settings.setEnabledMidiDeviceIdentifiers(midiEngine.getOpenDeviceIdentifiers());
+                        }
                     }
                 });
 
@@ -330,6 +542,24 @@ void MainComponent::menuItemSelected(int itemId, int)
             midiMonitorWindow->toFront(true);
             break;
         }
+        case menuHostSyncToggle:
+            hostSyncEnabled = !hostSyncEnabled;
+            audioEngine.setHostSyncEnabled(hostSyncEnabled);
+            lastDisplayedSyncedTempoBpm = -1.0;
+            lastDisplayedHostTempoAvailable = audioEngine.isExternalHostTempoAvailable();
+            refreshTempoUiFromEngine();
+            markSessionDirty();
+            break;
+
+        case menuSetFakeHostTempo:
+            audioEngine.setExternalHostTempoBpm(128.0);
+            refreshTempoUiFromEngine();
+            break;
+
+        case menuClearFakeHostTempo:
+            audioEngine.clearExternalHostTempo();
+            refreshTempoUiFromEngine();
+            break;
 
         case 501:
             settings.setAutoSaveAfterPluginRepair(!settings.getAutoSaveAfterPluginRepair());
@@ -353,7 +583,9 @@ void MainComponent::clearAllPlugins()
             tc->removeChangeListener(this);
 
     tabs.clearTabs();
+    midiRoutingStates.clear();
     refreshRoutingView();
+    syncRoutingToAudioEngine();
     markSessionDirty();
 }
 
@@ -405,6 +637,7 @@ void MainComponent::loadPreset()
     juce::Array<MissingPluginEntry> missingPlugins;
 
     rebuildTabsFromPresetXml(*xml);
+    ensureMidiRoutingStateForCurrentTabs();
 
     int tabIndex = 0;
     for (auto* tabXml : xml->getChildIterator())
@@ -427,6 +660,25 @@ void MainComponent::loadPreset()
             auto isInstrument            = tabXml->getBoolAttribute("isInstrument", typeString == "Synth");
             auto pluginManufacturer      = tabXml->getStringAttribute("pluginManufacturer");
             auto pluginVersion           = tabXml->getStringAttribute("pluginVersion");
+            auto bypassed               = tabXml->getBoolAttribute("bypassed", false);
+
+            if (auto* midiState = getMidiRoutingStateForTab(tabIndex))
+            {
+                midiState->assignedDeviceIdentifiers.clear();
+
+                if (auto* midiAssignmentsXml = tabXml->getChildByName("MidiAssignments"))
+                {
+                    for (auto* deviceXml : midiAssignmentsXml->getChildIterator())
+                    {
+                        if (deviceXml->hasTagName("Device"))
+                        {
+                            auto identifier = deviceXml->getStringAttribute("identifier").trim();
+                            if (identifier.isNotEmpty())
+                                midiState->assignedDeviceIdentifiers.addIfNotAlreadyThere(identifier);
+                        }
+                    }
+                }
+            }
 
             if (pluginPath.isNotEmpty() || pluginPathRelative.isNotEmpty() || pluginPathDriveFlexible.isNotEmpty())
             {
@@ -468,6 +720,7 @@ void MainComponent::loadPreset()
                     if (state.fromBase64Encoding(stateBase64))
                         tc->restorePluginState(state);
 
+                    tc->setBypassed(bypassed);
                     refreshTabAppearance(tabIndex);
                 }
             }
@@ -480,6 +733,7 @@ void MainComponent::loadPreset()
         refreshTabAppearance(i);
 
     refreshRoutingView();
+    syncRoutingToAudioEngine();
 
     auto selectedTab = xml->getIntAttribute("selectedTab", 0);
     if (juce::isPositiveAndBelow(selectedTab, tabs.getNumTabs()))
@@ -895,11 +1149,13 @@ void MainComponent::newPreset()
             tc->removeChangeListener(this);
 
     tabs.clearTabs();
+    midiRoutingStates.clear();
 
     addEmptyTab();
     addEmptyTab();
 
     refreshRoutingView();
+    syncRoutingToAudioEngine();
     currentPresetFile = {};
     unresolvedMissingPlugins.clear();
     markSessionClean();
@@ -984,6 +1240,8 @@ bool MainComponent::writePresetToFile(const juce::File& file)
     juce::XmlElement presetXml("PolyHostPreset");
     presetXml.setAttribute("name", file.getFileNameWithoutExtension());
     presetXml.setAttribute("selectedTab", tabs.getCurrentTabIndex());
+    presetXml.setAttribute("hostTempoBpm", hostTempoBpm);
+    presetXml.setAttribute("hostSyncEnabled", hostSyncEnabled);
 
     if (auto* top = findParentComponentOfClass<juce::DocumentWindow>())
     {
@@ -1004,6 +1262,21 @@ bool MainComponent::writePresetToFile(const juce::File& file)
             tabXml->setAttribute("index", i);
             tabXml->setAttribute("type", tc->getType() == PluginTabComponent::SlotType::Synth ? "Synth" : "FX");
             tabXml->setAttribute("tabName", tabs.getTabNames()[i]);
+            tabXml->setAttribute("bypassed", tc->isBypassed());
+
+            if (auto* midiState = getMidiRoutingStateForTab(i))
+            {
+                if (!midiState->assignedDeviceIdentifiers.isEmpty())
+                {
+                    auto* midiAssignmentsXml = tabXml->createNewChildElement("MidiAssignments");
+
+                    for (auto& identifier : midiState->assignedDeviceIdentifiers)
+                    {
+                        auto* deviceXml = midiAssignmentsXml->createNewChildElement("Device");
+                        deviceXml->setAttribute("identifier", identifier);
+                    }
+                }
+            }
 
             if (tc->hasPlugin())
             {
@@ -1047,6 +1320,13 @@ void MainComponent::rebuildTabsFromPresetXml(const juce::XmlElement& presetXml)
         tc->removeChangeListener(this);
 
     tabs.clearTabs();
+    hostSyncEnabled = presetXml.getBoolAttribute("hostSyncEnabled", false);
+    audioEngine.setHostSyncEnabled(hostSyncEnabled);
+    defaultTempoBpm = presetXml.getDoubleAttribute("hostTempoBpm", 120.0);
+    setHostTempoBpm(defaultTempoBpm);
+    lastDisplayedSyncedTempoBpm = -1.0;
+    lastDisplayedHostTempoAvailable = audioEngine.isExternalHostTempoAvailable();
+    refreshTempoUiFromEngine();
 
     for (auto* tabXml : presetXml.getChildIterator())
     {
@@ -1373,6 +1653,7 @@ bool MainComponent::applyReplacementPlugin(const MissingPluginEntry& entry,
             tc->restorePluginState(state);
 
         refreshTabAppearance(entry.tabIndex);
+        syncRoutingToAudioEngine();
         refreshRoutingView();
         markSessionDirty();
         return true;
@@ -1598,8 +1879,12 @@ void MainComponent::moveTabEarlier(int tabIndex)
         if (auto* tc = getTabComponent(i))
         {
             snap.hasPlugin = tc->hasPlugin();
+            snap.bypassed = tc->isBypassed();
             snap.type = tc->getType();
             snap.tabName = tabs.getTabNames()[i];
+
+            if (auto* midiState = getMidiRoutingStateForTab(i))
+                snap.midiAssignedDeviceIdentifiers = midiState->assignedDeviceIdentifiers;
 
             if (snap.hasPlugin)
             {
@@ -1637,13 +1922,17 @@ void MainComponent::moveTabEarlier(int tabIndex)
         if (snap.hasPlugin)
         {
             if (tc->loadPlugin(snap.pluginFile))
+            {
                 tc->restorePluginState(snap.pluginState);
+                tc->setBypassed(snap.bypassed);
+            }
         }
+
+        if (auto* midiState = getMidiRoutingStateForTab(i))
+            midiState->assignedDeviceIdentifiers = snap.midiAssignedDeviceIdentifiers;
 
         refreshTabAppearance(i);
         tc->setAllowEditorWindowResize(true);
-
-        refreshTabAppearance(i);
     }
 
     if (selectedIndex == tabIndex)
@@ -1654,6 +1943,7 @@ void MainComponent::moveTabEarlier(int tabIndex)
     selectedIndex = juce::jlimit(0, tabs.getNumTabs() - 1, selectedIndex);
     tabs.setCurrentTabIndex(selectedIndex);
 
+    syncRoutingToAudioEngine();
     refreshRoutingView();
     markSessionDirty();
 }
@@ -1689,8 +1979,12 @@ void MainComponent::moveTabLater(int tabIndex)
         if (auto* tc = getTabComponent(i))
         {
             snap.hasPlugin = tc->hasPlugin();
+            snap.bypassed = tc->isBypassed();
             snap.type = tc->getType();
             snap.tabName = tabs.getTabNames()[i];
+
+            if (auto* midiState = getMidiRoutingStateForTab(i))
+                snap.midiAssignedDeviceIdentifiers = midiState->assignedDeviceIdentifiers;
 
             if (snap.hasPlugin)
             {
@@ -1728,13 +2022,17 @@ void MainComponent::moveTabLater(int tabIndex)
         if (snap.hasPlugin)
         {
             if (tc->loadPlugin(snap.pluginFile))
+            {
                 tc->restorePluginState(snap.pluginState);
+                tc->setBypassed(snap.bypassed);
+            }
         }
+
+        if (auto* midiState = getMidiRoutingStateForTab(i))
+            midiState->assignedDeviceIdentifiers = snap.midiAssignedDeviceIdentifiers;
 
         refreshTabAppearance(i);
         tc->setAllowEditorWindowResize(true);
-
-        refreshTabAppearance(i);
     }
 
     if (selectedIndex == tabIndex)
@@ -1745,12 +2043,13 @@ void MainComponent::moveTabLater(int tabIndex)
     selectedIndex = juce::jlimit(0, tabs.getNumTabs() - 1, selectedIndex);
     tabs.setCurrentTabIndex(selectedIndex);
 
+    syncRoutingToAudioEngine();
     refreshRoutingView();
     markSessionDirty();
 }
 
 // ===================================
-// TOOLBAR
+// ROUTING - AUDIO / MIDI
 // ===================================
 void MainComponent::getAllToolbarItemIds(juce::Array<int>& ids)
 {
@@ -1808,6 +2107,7 @@ void MainComponent::toggleRoutingView()
 
 void MainComponent::refreshRoutingView()
 {
+    ensureMidiRoutingStateForCurrentTabs();
     juce::Array<RoutingView::ModuleEntry> modules;
 
     juce::Array<int> loadedTabIndices;
@@ -1833,12 +2133,340 @@ void MainComponent::refreshRoutingView()
             entry.tabIndex = tabIndex;
             entry.name = tc->getPluginName();
             entry.type = tc->getType();
+            entry.isBypassed = tc->isBypassed();
             entry.canMoveUp = (listIndex > 0);
             entry.canMoveDown = (listIndex < loadedTabIndices.size() - 1);
+
+            if (auto* midiState = getMidiRoutingStateForTab(tabIndex))
+                entry.midiAssignmentCount = midiState->assignedDeviceIdentifiers.size();
+
             modules.add(entry);
         }
     }
 
     routingView.setModules(modules);
 }
+
+void MainComponent::toggleTabBypass(int tabIndex)
+{
+    if (!juce::isPositiveAndBelow(tabIndex, tabs.getNumTabs()))
+        return;
+
+    if (auto* tc = getTabComponent(tabIndex))
+    {
+        if (!tc->hasPlugin())
+            return;
+
+        tc->setBypassed(!tc->isBypassed());
+        syncRoutingToAudioEngine();
+        refreshRoutingView();
+        markSessionDirty();
+    }
+}
+
+void MainComponent::syncRoutingToAudioEngine()
+{
+    juce::Array<juce::AudioProcessorGraph::NodeID> activeSynthIds;
+    juce::Array<juce::AudioProcessorGraph::NodeID> activeFxIds;
+
+    for (int i = 0; i < tabs.getNumTabs(); ++i)
+    {
+        if (auto* tc = getTabComponent(i))
+        {
+            if (!tc->hasPlugin())
+                continue;
+
+            if (tc->isBypassed())
+                continue;
+
+            if (tc->getType() == PluginTabComponent::SlotType::Synth)
+                activeSynthIds.add(tc->getNodeID());
+            else if (tc->getType() == PluginTabComponent::SlotType::FX)
+                activeFxIds.add(tc->getNodeID());
+        }
+    }
+
+    audioEngine.setRoutingState(activeSynthIds, activeFxIds);
+}
+
+MainComponent::MidiTabRoutingState* MainComponent::getMidiRoutingStateForTab(int tabIndex)
+{
+    for (auto& state : midiRoutingStates)
+        if (state.tabIndex == tabIndex)
+            return &state;
+
+    return nullptr;
+}
+
+const MainComponent::MidiTabRoutingState* MainComponent::getMidiRoutingStateForTab(int tabIndex) const
+{
+    for (auto& state : midiRoutingStates)
+        if (state.tabIndex == tabIndex)
+            return &state;
+
+    return nullptr;
+}
+
+void MainComponent::ensureMidiRoutingStateForCurrentTabs()
+{
+    juce::Array<int> existingTabs;
+
+    for (int i = 0; i < tabs.getNumTabs(); ++i)
+        existingTabs.add(i);
+
+    for (int i = midiRoutingStates.size(); --i >= 0;)
+    {
+        if (!existingTabs.contains(midiRoutingStates.getReference(i).tabIndex))
+            midiRoutingStates.remove(i);
+    }
+
+    for (int i = 0; i < tabs.getNumTabs(); ++i)
+    {
+        if (getMidiRoutingStateForTab(i) == nullptr)
+        {
+            MidiTabRoutingState state;
+            state.tabIndex = i;
+            state.expanded = true;
+            midiRoutingStates.add(state);
+        }
+    }
+}
+
+void MainComponent::toggleMidiAssignment(int tabIndex, const juce::String& deviceIdentifier)
+{
+    if (auto* state = getMidiRoutingStateForTab(tabIndex))
+    {
+        if (state->assignedDeviceIdentifiers.contains(deviceIdentifier))
+            state->assignedDeviceIdentifiers.removeString(deviceIdentifier);
+        else
+            state->assignedDeviceIdentifiers.add(deviceIdentifier);
+
+        refreshRoutingView();
+        markSessionDirty();
+    }
+}
+
+void MainComponent::showMidiAssignmentsCallout(int tabIndex, juce::Component* anchorComponent)
+{
+    if (anchorComponent == nullptr)
+        return;
+
+    auto* state = getMidiRoutingStateForTab(tabIndex);
+    if (state == nullptr)
+        return;
+
+    auto availableDevices = midiEngine.getAvailableDevices();
+
+    auto content = std::make_unique<MidiAssignmentsCallout>(
+        availableDevices,
+        state->assignedDeviceIdentifiers,
+        [this, tabIndex](const juce::String& deviceIdentifier)
+        {
+            toggleMidiAssignment(tabIndex, deviceIdentifier);
+        });
+
+    juce::CallOutBox::launchAsynchronously(std::move(content),
+                                           anchorComponent->getScreenBounds(),
+                                           nullptr);
+}
+
+
+// ===================================
+// TEMPO
+// ===================================
+void MainComponent::setHostTempoBpm(double bpm)
+{
+    bpm = juce::jlimit(20.0, 300.0, bpm);
+    bpm = std::round(bpm * 10.0) / 10.0;
+
+    hostTempoBpm = bpm;
+    audioEngine.setTempoBpm(hostTempoBpm);
+    updateTempoUi();
+    markSessionDirty();
+}
+
+void MainComponent::updateTempoUi()
+{
+    const double displayedTempo = hostSyncEnabled ? audioEngine.getCurrentTempoBpm()
+                                                  : hostTempoBpm;
+
+    tempoEditor.setText(juce::String(displayedTempo, 1), juce::dontSendNotification);
+}
+
+void MainComponent::registerTapTempo()
+{
+    const double nowMs = juce::Time::getMillisecondCounterHiRes();
+
+    if (! tapTimesMs.isEmpty())
+    {
+        const double gapSinceLastTap = nowMs - tapTimesMs.getLast();
+
+        if (gapSinceLastTap > 2000.0)
+            tapTimesMs.clear();
+    }
+
+    tapTimesMs.add(nowMs);
+
+    while (tapTimesMs.size() > 6)
+        tapTimesMs.remove(0);
+
+    if (tapTimesMs.size() < 2)
+        return;
+
+    juce::Array<double> validIntervalsMs;
+
+    for (int i = 1; i < tapTimesMs.size(); ++i)
+    {
+        const double intervalMs = tapTimesMs[i] - tapTimesMs[i - 1];
+
+        if (intervalMs >= 200.0 && intervalMs <= 3000.0)
+            validIntervalsMs.add(intervalMs);
+    }
+
+    if (validIntervalsMs.isEmpty())
+        return;
+
+    double totalMs = 0.0;
+
+    for (auto interval : validIntervalsMs)
+        totalMs += interval;
+
+    const double averageIntervalMs = totalMs / (double) validIntervalsMs.size();
+    const double bpm = 60000.0 / averageIntervalMs;
+
+    setHostTempoBpm(bpm);
+}
+
+void MainComponent::commitTempoFromEditor()
+{
+    auto text = tempoEditor.getText().trim();
+
+    if (text.isEmpty())
+    {
+        updateTempoUi();
+        return;
+    }
+
+    if (text.containsOnly("0123456789.") == false
+        || text.containsChar('.')
+           && text.fromFirstOccurrenceOf(".", false, false).containsChar('.'))
+    {
+        updateTempoUi();
+        return;
+    }
+
+    auto parsed = text.getDoubleValue();
+
+    if (parsed <= 0.0)
+    {
+        updateTempoUi();
+        return;
+    }
+
+    setHostTempoBpm(parsed);
+}
+
+void MainComponent::textEditorReturnKeyPressed(juce::TextEditor& editor)
+{
+    if (&editor == &tempoEditor)
+    {
+        commitTempoFromEditor();
+        editor.moveKeyboardFocusToSibling(true);
+    }
+}
+
+void MainComponent::textEditorEscapeKeyPressed(juce::TextEditor& editor)
+{
+    if (&editor == &tempoEditor)
+        updateTempoUi();
+}
+
+void MainComponent::textEditorFocusLost(juce::TextEditor& editor)
+{
+    if (&editor == &tempoEditor)
+        commitTempoFromEditor();
+}
+
+void MainComponent::updateTempoTooltip()
+{
+    if (hostSyncEnabled)
+    {
+        if (audioEngine.isExternalHostTempoAvailable())
+            tempoEditor.setTooltip("Host Sync enabled.\nTempo is controlled by the host.");
+        else
+            tempoEditor.setTooltip("Host Sync enabled.\nWaiting for external host tempo.");
+    }
+    else
+    {
+        tempoEditor.setTooltip("Scroll to adjust. Shift+Scroll: Fine Adjust.\nDouble-click: Reset to "
+                               + juce::String(defaultTempoBpm, 1) + ".");
+    }
+}
+
+void MainComponent::updateTempoControlState()
+{
+    const bool editable = !hostSyncEnabled;
+
+    tempoEditor.setEnabled(editable);
+    tapTempoButton.setEnabled(editable);
+}
+
+void MainComponent::updateStatusBarText()
+{
+    juce::String midiText = "No MIDI device selected";
+    auto openNames = midiEngine.getOpenDeviceNames();
+
+    if (!openNames.isEmpty())
+        midiText = "MIDI: " + openNames.joinIntoString(", ");
+
+    juce::String tempoModeText;
+
+    if (hostSyncEnabled)
+    {
+        if (audioEngine.isExternalHostTempoAvailable())
+            tempoModeText = "Host Sync ON";
+        else
+            tempoModeText = "Host Sync ON (No Host Tempo)";
+    }
+    else
+    {
+        tempoModeText = "Internal Tempo";
+    }
+
+    statusBar.setText("PolyHost 0.1  |  " + midiText + "  |  " + tempoModeText + "  |  Ready",
+                      juce::dontSendNotification);
+}
+
+bool MainComponent::isTempoEditorInteractive() const
+{
+    return !hostSyncEnabled;
+}
+
+void MainComponent::refreshTempoUiFromEngine()
+{
+    updateTempoControlState();
+    updateTempoTooltip();
+    updateTempoUi();
+    updateStatusBarText();
+}
+
+void MainComponent::timerCallback()
+{
+    if (!hostSyncEnabled)
+        return;
+
+    const double currentTempo = audioEngine.getCurrentTempoBpm();
+    const bool hostTempoAvailable = audioEngine.isExternalHostTempoAvailable();
+
+    const bool tempoChanged = std::abs(currentTempo - lastDisplayedSyncedTempoBpm) >= 0.05;
+    const bool availabilityChanged = hostTempoAvailable != lastDisplayedHostTempoAvailable;
+
+    if (tempoChanged || availabilityChanged)
+    {
+        lastDisplayedSyncedTempoBpm = currentTempo;
+        lastDisplayedHostTempoAvailable = hostTempoAvailable;
+        refreshTempoUiFromEngine();
+    }
+}
+
 

@@ -10,8 +10,10 @@ public:
         int tabIndex = -1;
         juce::String name;
         PluginTabComponent::SlotType type = PluginTabComponent::SlotType::Empty;
+        bool isBypassed = false;
         bool canMoveUp = false;
         bool canMoveDown = false;
+        int midiAssignmentCount = 0;
     };
 
     RoutingView();
@@ -20,6 +22,8 @@ public:
 
     std::function<void(int tabIndex)> onMoveUp;
     std::function<void(int tabIndex)> onMoveDown;
+    std::function<void(int tabIndex)> onToggleBypass;
+    std::function<void(int tabIndex, juce::Component* anchorComponent)> onShowMidiAssignments;
 
     void paint(juce::Graphics& g) override;
     void resized() override;
@@ -34,6 +38,8 @@ private:
 
         std::function<void(int tabIndex)> onMoveUp;
         std::function<void(int tabIndex)> onMoveDown;
+        std::function<void(int tabIndex)> onToggleBypass;
+        std::function<void(int tabIndex, juce::Component* anchorComponent)> onShowMidiAssignments;
 
         void paint(juce::Graphics& g) override;
         void resized() override;
@@ -42,6 +48,7 @@ private:
         ModuleEntry entry;
         juce::Label nameLabel;
         juce::Label typeLabel;
+        juce::TextButton midiButton { "MIDI" };
         juce::TextButton bypassButton { "Bypass" };
         juce::TextButton upButton { "Up" };
         juce::TextButton downButton { "Down" };

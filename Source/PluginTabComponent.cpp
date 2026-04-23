@@ -76,6 +76,7 @@ void PluginTabComponent::clearPlugin()
 
     loadedPluginFile = {};
     slotType = SlotType::Empty;
+    bypassed = false;
 
     loadButton.setVisible(true);
     statusLabel.setVisible(true);
@@ -196,3 +197,13 @@ bool PluginTabComponent::restorePluginState(const juce::MemoryBlock& state)
 
     return false;
 }
+
+void PluginTabComponent::setBypassed(bool shouldBeBypassed)
+{
+    if (bypassed == shouldBeBypassed)
+        return;
+
+    bypassed = shouldBeBypassed;
+    sendChangeMessage();
+}
+

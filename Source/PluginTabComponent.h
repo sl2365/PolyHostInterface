@@ -34,6 +34,8 @@ public:
     void setSlotIndex(int newIndex) { slotIndex = newIndex; }
     juce::AudioProcessorGraph::NodeID getNodeID() const { return nodeId; }
     juce::String getPluginName() const;
+    bool isBypassed() const { return bypassed; }
+    void setBypassed(bool shouldBeBypassed);
 
     void setAllowEditorWindowResize(bool shouldAllow) { allowEditorWindowResize = shouldAllow; }
 
@@ -62,6 +64,7 @@ private:
     juce::TextButton loadButton { "Click to Load Plugin..." };
     juce::Label statusLabel;
     bool allowEditorWindowResize = true;
+    bool bypassed = false;
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(PluginTabComponent)
 };

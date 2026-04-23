@@ -114,8 +114,8 @@ private:
         if (messages.isEmpty())
             return;
 
-        for (auto& msg : messages)
-            entries.add(makeEntry(msg));
+        for (auto& incoming : messages)
+            entries.add(makeEntry(incoming.message));
 
         if (entries.size() > 1000)
             entries.removeRange(0, entries.size() - 1000);

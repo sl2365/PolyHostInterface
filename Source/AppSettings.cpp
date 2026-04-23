@@ -10,6 +10,10 @@ static constexpr const char* kAutoSaveAfterPluginRepair = "autoSaveAfterPluginRe
 static constexpr const char* kPluginScanFolders         = "PluginScanFolders";
 static constexpr const char* kFolderTag                 = "Folder";
 static constexpr const char* kPathAttribute             = "path";
+static constexpr const char* kEnabledMidiDevices        = "EnabledMidiDevices";
+static constexpr const char* kDeviceTag                 = "Device";
+static constexpr const char* kIdentifierAttribute       = "identifier";
+static constexpr const char* kNameAttribute             = "name";
 
 juce::File AppSettings::getSettingsFile()
 {
@@ -208,3 +212,44 @@ void AppSettings::removePluginScanFolder(const juce::String& folderPath)
     folders.removeString(folderPath.trim(), true);
     setPluginScanFolders(folders);
 }
+
+juce::StringArray AppSettings::getEnabledMidiDeviceIdentifiers() const
+{
+    juce::StringArray identifiers;
+
+    if (auto* devicesXml = xml->getChildByName(kEnabledMidiDevices))
+    {
+        for (auto* child : devicesXml->getChildIterator())
+        {
+            if (child->hasTagName(kDeviceTag))
+            {
+                auto identifier = child->getStringAttribute(kIdentifierAttribute).trim();
+                if (identifier.isNotEmpty())
+                    identifiers.addIfNotAlreadyThere(identifier);
+            }
+        }
+    }
+
+    return identifiers;
+}
+
+void AppSettings::setEnabledMidiDeviceIdentifiers(const juce::StringArray& identifiers)
+{
+    xml->removeChildElement(xml->getChildByName(kEnabledMidiDevices), true);
+
+    auto devicesXml = std::make_unique<juce::XmlElement>(kEnabledMidiDevices);
+
+    for (auto& identifier : identifiers)
+    {
+        auto trimmed = identifier.trim();
+        if (trimmed.isEmpty())
+            continue;
+
+        auto* child = devicesXml->createNewChildElement(kDeviceTag);
+        child->setAttribute(kIdentifierAttribute, trimmed);
+    }
+
+    xml->addChildElement(devicesXml.release());
+    save();
+}
+

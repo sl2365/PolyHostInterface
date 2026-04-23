@@ -1,4 +1,40 @@
 #include "AudioEngine.h"
+#include <cmath>
+
+AudioEngine::QueuedMidiInputProcessor::QueuedMidiInputProcessor()
+    : juce::AudioProcessor(BusesProperties()
+#if ! JucePlugin_IsMidiEffect
+                           .withOutput("Output", juce::AudioChannelSet::stereo(), true)
+#endif
+                           )
+{
+}
+
+template <typename FloatType>
+void AudioEngine::QueuedMidiInputProcessor::process(juce::AudioBuffer<FloatType>& buffer, juce::MidiBuffer& midiMessages)
+{
+    buffer.clear();
+    midiMessages.clear();
+
+    juce::ScopedLock sl(midiLock);
+    midiMessages.swapWith(pendingMidi);
+}
+
+void AudioEngine::QueuedMidiInputProcessor::processBlock(juce::AudioBuffer<float>& buffer, juce::MidiBuffer& midiMessages)
+{
+    process(buffer, midiMessages);
+}
+
+void AudioEngine::QueuedMidiInputProcessor::processBlock(juce::AudioBuffer<double>& buffer, juce::MidiBuffer& midiMessages)
+{
+    process(buffer, midiMessages);
+}
+
+void AudioEngine::QueuedMidiInputProcessor::enqueueMidi(const juce::MidiMessage& message)
+{
+    juce::ScopedLock sl(midiLock);
+    pendingMidi.addEvent(message, 0);
+}
 
 AudioEngine::AudioEngine() : graph() {}
 AudioEngine::~AudioEngine() { shutdown(); }
@@ -22,20 +58,19 @@ void AudioEngine::initialise(const juce::String& savedAudioDeviceState)
 
     if (err.isNotEmpty())
     {
+       #if JUCE_DEBUG
         DBG("AudioDeviceManager init error: " << err);
+       #endif
     }
 
     graph.enableAllBuses();
-
-    midiInNode = graph.addNode(std::make_unique<juce::AudioProcessorGraph::AudioGraphIOProcessor>(
-        juce::AudioProcessorGraph::AudioGraphIOProcessor::midiInputNode));
+    graph.setPlayHead(&hostPlayHead);
 
     audioOutNode = graph.addNode(std::make_unique<juce::AudioProcessorGraph::AudioGraphIOProcessor>(
         juce::AudioProcessorGraph::AudioGraphIOProcessor::audioOutputNode));
 
     graphPlayer.setProcessor(&graph);
-    deviceManager.addAudioCallback(&graphPlayer);
-    deviceManager.addMidiInputDeviceCallback({}, &graphPlayer);
+    deviceManager.addAudioCallback(&tempoAwareGraphPlayer);
 }
 
 juce::String AudioEngine::createAudioDeviceStateXml() const
@@ -48,9 +83,9 @@ juce::String AudioEngine::createAudioDeviceStateXml() const
 
 void AudioEngine::shutdown()
 {
-    deviceManager.removeMidiInputDeviceCallback({}, &graphPlayer);
-    deviceManager.removeAudioCallback(&graphPlayer);
+    deviceManager.removeAudioCallback(&tempoAwareGraphPlayer);
     graphPlayer.setProcessor(nullptr);
+    midiRoutingNodes.clear();
     graph.clear();
 }
 
@@ -59,7 +94,9 @@ juce::AudioProcessorGraph::NodeID AudioEngine::addPlugin(std::unique_ptr<juce::A
     if (instance == nullptr)
         return {};
 
+    instance->setPlayHead(&hostPlayHead);
     instance->enableAllBuses();
+
     auto node = graph.addNode(std::move(instance));
 
     if (node == nullptr)
@@ -70,6 +107,8 @@ juce::AudioProcessorGraph::NodeID AudioEngine::addPlugin(std::unique_ptr<juce::A
     else
         fxNodes.add(node);
 
+    updateNodePlayHeads();
+    rebuildMidiRoutingNodes();
     rebuildConnections();
     return node->nodeID;
 }
@@ -84,27 +123,131 @@ void AudioEngine::removePlugin(juce::AudioProcessorGraph::NodeID nodeId)
         if (fxNodes[i]->nodeID == nodeId)
             fxNodes.remove(i);
 
+    for (int i = midiRoutingNodes.size(); --i >= 0;)
+    {
+        if (midiRoutingNodes.getReference(i).pluginNodeId == nodeId)
+        {
+            if (midiRoutingNodes.getReference(i).midiNode != nullptr)
+                graph.removeNode(midiRoutingNodes.getReference(i).midiNode->nodeID);
+
+            midiRoutingNodes.remove(i);
+        }
+    }
+
     graph.removeNode(nodeId);
     rebuildConnections();
 }
 
-void AudioEngine::setFxOrder(const juce::Array<juce::AudioProcessorGraph::NodeID>& orderedIds)
+void AudioEngine::setRoutingState(const juce::Array<juce::AudioProcessorGraph::NodeID>& synthIds,
+                                  const juce::Array<juce::AudioProcessorGraph::NodeID>& fxIds)
 {
-    juce::Array<juce::AudioProcessorGraph::Node::Ptr> reordered;
+    juce::Array<juce::AudioProcessorGraph::Node::Ptr> reorderedSynths;
+    juce::Array<juce::AudioProcessorGraph::Node::Ptr> reorderedFx;
 
-    for (auto id : orderedIds)
+    for (auto id : synthIds)
         if (auto* n = graph.getNodeForId(id))
-            reordered.add(n);
+            reorderedSynths.add(n);
 
-    fxNodes = reordered;
+    for (auto id : fxIds)
+        if (auto* n = graph.getNodeForId(id))
+            reorderedFx.add(n);
+
+    synthNodes = reorderedSynths;
+    fxNodes = reorderedFx;
+    updateNodePlayHeads();
     rebuildConnections();
 }
 
-void AudioEngine::sendMidiBuffer(const juce::MidiBuffer&) {}
+void AudioEngine::queueMidiToNodes(const juce::MidiMessage& message,
+                                   const juce::Array<juce::AudioProcessorGraph::NodeID>& targetNodeIds)
+{
+    for (auto nodeId : targetNodeIds)
+        if (auto* midiRouter = getMidiRouterForPluginNode(nodeId))
+            midiRouter->enqueueMidi(message);
+}
+
+void AudioEngine::setTempoBpm(double newTempoBpm)
+{
+    internalTempoBpm = juce::jlimit(20.0, 300.0, newTempoBpm);
+    hostPlayHead.setTempoBpm(internalTempoBpm);
+}
+
+AudioEngine::QueuedMidiInputProcessor* AudioEngine::getMidiRouterForPluginNode(juce::AudioProcessorGraph::NodeID pluginNodeId) const
+{
+    for (auto& entry : midiRoutingNodes)
+        if (entry.pluginNodeId == pluginNodeId)
+            return entry.processor;
+
+    return nullptr;
+}
+
+void AudioEngine::updateNodePlayHeads()
+{
+    for (auto& node : synthNodes)
+        if (node != nullptr && node->getProcessor() != nullptr)
+            node->getProcessor()->setPlayHead(&hostPlayHead);
+
+    for (auto& node : fxNodes)
+        if (node != nullptr && node->getProcessor() != nullptr)
+            node->getProcessor()->setPlayHead(&hostPlayHead);
+}
+
+void AudioEngine::rebuildMidiRoutingNodes()
+{
+    juce::Array<juce::AudioProcessorGraph::NodeID> pluginNodeIds;
+
+    for (auto& node : synthNodes)
+        pluginNodeIds.add(node->nodeID);
+
+    for (auto& node : fxNodes)
+        pluginNodeIds.add(node->nodeID);
+
+    for (int i = midiRoutingNodes.size(); --i >= 0;)
+    {
+        auto& entry = midiRoutingNodes.getReference(i);
+
+        if (!pluginNodeIds.contains(entry.pluginNodeId))
+        {
+            if (entry.midiNode != nullptr)
+                graph.removeNode(entry.midiNode->nodeID);
+
+            midiRoutingNodes.remove(i);
+        }
+    }
+
+    for (auto pluginNodeId : pluginNodeIds)
+    {
+        bool exists = false;
+
+        for (auto& entry : midiRoutingNodes)
+        {
+            if (entry.pluginNodeId == pluginNodeId)
+            {
+                exists = true;
+                break;
+            }
+        }
+
+        if (!exists)
+        {
+            auto processor = std::make_unique<QueuedMidiInputProcessor>();
+            auto* processorPtr = processor.get();
+            auto midiNode = graph.addNode(std::move(processor));
+
+            if (midiNode != nullptr)
+            {
+                MidiRoutingNode entry;
+                entry.pluginNodeId = pluginNodeId;
+                entry.midiNode = midiNode;
+                entry.processor = processorPtr;
+                midiRoutingNodes.add(entry);
+            }
+        }
+    }
+}
 
 void AudioEngine::rebuildConnections()
 {
-    graph.disconnectNode(midiInNode->nodeID);
     graph.disconnectNode(audioOutNode->nodeID);
 
     for (auto& n : synthNodes)
@@ -113,27 +256,93 @@ void AudioEngine::rebuildConnections()
     for (auto& n : fxNodes)
         graph.disconnectNode(n->nodeID);
 
-    if (synthNodes.isEmpty())
-        return;
+    for (auto& midiRoute : midiRoutingNodes)
+        if (midiRoute.midiNode != nullptr)
+            graph.disconnectNode(midiRoute.midiNode->nodeID);
 
     const int midiCh = juce::AudioProcessorGraph::midiChannelIndex;
 
-    for (auto& sn : synthNodes)
-        graph.addConnection({ { midiInNode->nodeID, midiCh }, { sn->nodeID, midiCh } });
-
-    juce::Array<juce::AudioProcessorGraph::Node::Ptr> chain;
-
-    for (auto& n : synthNodes)
-        chain.add(n);
-
-    for (auto& n : fxNodes)
-        chain.add(n);
-
-    chain.add(audioOutNode);
-
-    for (int i = 0; i < chain.size() - 1; ++i)
+    for (auto& midiRoute : midiRoutingNodes)
     {
-        graph.addConnection({ { chain[i]->nodeID, 0 }, { chain[i + 1]->nodeID, 0 } });
-        graph.addConnection({ { chain[i]->nodeID, 1 }, { chain[i + 1]->nodeID, 1 } });
+        if (midiRoute.midiNode != nullptr)
+            graph.addConnection({ { midiRoute.midiNode->nodeID, midiCh }, { midiRoute.pluginNodeId, midiCh } });
+    }
+
+    if (!fxNodes.isEmpty())
+    {
+        auto firstFxNode = fxNodes.getFirst();
+
+        for (auto& synthNode : synthNodes)
+        {
+            graph.addConnection({ { synthNode->nodeID, 0 }, { firstFxNode->nodeID, 0 } });
+            graph.addConnection({ { synthNode->nodeID, 1 }, { firstFxNode->nodeID, 1 } });
+        }
+
+        for (int i = 0; i < fxNodes.size() - 1; ++i)
+        {
+            auto src = fxNodes[i];
+            auto dst = fxNodes[i + 1];
+
+            graph.addConnection({ { src->nodeID, 0 }, { dst->nodeID, 0 } });
+            graph.addConnection({ { src->nodeID, 1 }, { dst->nodeID, 1 } });
+        }
+
+        auto lastFxNode = fxNodes.getLast();
+        graph.addConnection({ { lastFxNode->nodeID, 0 }, { audioOutNode->nodeID, 0 } });
+        graph.addConnection({ { lastFxNode->nodeID, 1 }, { audioOutNode->nodeID, 1 } });
+
+        return;
+    }
+
+    for (auto& synthNode : synthNodes)
+    {
+        graph.addConnection({ { synthNode->nodeID, 0 }, { audioOutNode->nodeID, 0 } });
+        graph.addConnection({ { synthNode->nodeID, 1 }, { audioOutNode->nodeID, 1 } });
     }
 }
+
+void AudioEngine::setHostSyncEnabled(bool shouldUseHostSync)
+{
+    hostSyncEnabled = shouldUseHostSync;
+
+    if (hostSyncEnabled && externalHostTempoAvailable)
+        hostPlayHead.setTempoBpm(externalHostTempoBpm);
+    else
+        hostPlayHead.setTempoBpm(internalTempoBpm);
+}
+
+bool AudioEngine::isHostSyncEnabled() const
+{
+    return hostSyncEnabled;
+}
+
+bool AudioEngine::isExternalHostTempoAvailable() const
+{
+    return externalHostTempoAvailable;
+}
+
+double AudioEngine::getCurrentTempoBpm() const
+{
+    if (hostSyncEnabled && externalHostTempoAvailable)
+        return externalHostTempoBpm;
+
+    return internalTempoBpm;
+}
+
+void AudioEngine::setExternalHostTempoBpm(double bpm)
+{
+    externalHostTempoBpm = juce::jlimit(20.0, 300.0, bpm);
+    externalHostTempoAvailable = true;
+
+    if (hostSyncEnabled)
+        hostPlayHead.setTempoBpm(externalHostTempoBpm);
+}
+
+void AudioEngine::clearExternalHostTempo()
+{
+    externalHostTempoAvailable = false;
+
+    if (hostSyncEnabled)
+        hostPlayHead.setTempoBpm(internalTempoBpm);
+}
+
