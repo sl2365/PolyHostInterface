@@ -4,6 +4,8 @@ A lightweight, tabbed VST3 / CLAP plugin host for Windows.
 Play synths and route FX chains, driven by any MIDI device.
 Fully portable: stores all settings next to the exe, touches nothing else on the system.
 
+I always liked tools like TobyBear's MiniHost, SaviHost and Tone2's NanoHost. But wanted something that combines all of them. A quick jamming tool that can open multiple plugin formats. I aim to add support for more formats, but the main ones will most likely be tried first at least. This is a tool that doesn't yet exist elsewhere in a small package like this, at least not as one that you can use file-associations with.
+
 ## Feature Status
 
 | Feature | Status |
