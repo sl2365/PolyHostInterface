@@ -56,23 +56,18 @@ namespace
     };
 }
 
-MainComponent::MainComponent()
+MainComponent::MainComponent(bool shouldLoadLastPreset)
 {
-    setSize(settings.getWindowWidth(), settings.getWindowHeight());
+    setSize(AppSettings::defaultWindowWidth, AppSettings::defaultWindowHeight);
     audioEngine.initialise(settings.getAudioDeviceState());
     audioEngine.getDeviceManager().addChangeListener(this);
+    midiEngine.addChangeListener(this);
     addAndMakeVisible(menuBar);
     toolbar.addDefaultItems(*this);
     addAndMakeVisible(toolbar);
     toolbar.setColour(juce::Toolbar::backgroundColourId, juce::Colour(0xFF1D2230));
 
-    addAndMakeVisible(tempoControlBackground);
-    tempoControlBackground.toBack();
     addAndMakeVisible(beatIndicator);
-    addAndMakeVisible(tempoLabel);
-    tempoLabel.setText("Tempo:", juce::dontSendNotification);
-    tempoLabel.setJustificationType(juce::Justification::centredRight);
-    tempoLabel.setColour(juce::Label::textColourId, juce::Colours::lightgrey);
 
     addAndMakeVisible(tempoEditor);
     startTimerHz(10);
@@ -95,8 +90,21 @@ MainComponent::MainComponent()
         registerTapTempo();
     };
 
+    addAndMakeVisible(presetDropdown);
+    presetDropdown.setTextWhenNothingSelected("Select Preset");
+    presetDropdown.onBeforePopup = [this]
+    {
+        refreshPresetLists();
+    };
+    presetDropdown.onChange = [this]
+    {
+        loadPresetFromDropdown();
+    };
+
+    refreshPresetDropdown();
+
     refreshTempoUiFromEngine();
-    audioEngine.setTempoBpm(hostTempoBpm);
+    audioEngine.setTempoBpm(transportState.hostTempoBpm);
 
     tabs.setColour(juce::TabbedComponent::backgroundColourId, juce::Colour(0xFF16213E));
     tabs.setTabBarDepth(34);
@@ -111,12 +119,27 @@ MainComponent::MainComponent()
         showMidiAssignmentsCallout(tabIndex, anchorComponent);
     };
 
+    routingView.onRefreshMidiDevices = [this]
+    {
+        refreshMidiDevices();
+    };
+
     addAndMakeVisible(routingView);
     routingView.setVisible(false);
     routingView.onToggleBypass = [this](int tabIndex)
     {
         toggleTabBypass(tabIndex);
     };
+
+    routingView.onSelectTab = [this](int tabIndex)
+    {
+        if (juce::isPositiveAndBelow(tabIndex, tabs.getNumTabs()))
+        {
+            tabs.setCurrentTabIndex(tabIndex);
+            setRoutingViewVisible(false);
+        }
+    };
+
     routingView.onMoveUp = [this](int tabIndex)
     {
         moveTabEarlier(tabIndex);
@@ -129,6 +152,19 @@ MainComponent::MainComponent()
 
     addEmptyTab();
     addEmptyTab();
+
+    if (shouldLoadLastPreset)
+    {
+        auto lastPresetPath = settings.getLastPresetPath().trim();
+
+        if (lastPresetPath.isNotEmpty())
+        {
+            juce::File lastPresetFile(lastPresetPath);
+
+            if (lastPresetFile.existsAsFile())
+                loadPresetFromFile(lastPresetFile);
+        }
+    }
 
     refreshRoutingView();
 
@@ -199,6 +235,7 @@ MainComponent::~MainComponent()
     tabs.getTabbedButtonBar().removeMouseListener(&tabBarMouseListener);
     tabs.getTabbedButtonBar().setLookAndFeel(nullptr);
     audioEngine.getDeviceManager().removeChangeListener(this);
+    midiEngine.removeChangeListener(this);
     settings.setAudioDeviceState(audioEngine.createAudioDeviceStateXml());
     audioEngine.shutdown();
 }
@@ -208,6 +245,13 @@ void MainComponent::changeListenerCallback(juce::ChangeBroadcaster* source)
     if (source == &audioEngine.getDeviceManager())
     {
         settings.setAudioDeviceState(audioEngine.createAudioDeviceStateXml());
+        return;
+    }
+
+    if (source == &midiEngine)
+    {
+        refreshRoutingView();
+        updateStatusBarText();
         return;
     }
 
@@ -279,9 +323,34 @@ void MainComponent::loadPluginFromFile(const juce::File& file)
     }
 }
 
+// ===================================
+// TABS
+// ===================================
+void MainComponent::configurePluginTabComponent(PluginTabComponent& tabComponent)
+{
+    tabComponent.onOpenDroppedPluginInNewTab = [this](const juce::File& file)
+    {
+        addEmptyTab();
+
+        const int newTabIndex = tabs.getNumTabs() - 1;
+
+        if (auto* newTab = getTabComponent(newTabIndex))
+        {
+            if (newTab->loadPlugin(file))
+            {
+                tabs.setCurrentTabIndex(newTabIndex);
+                refreshTabAppearance(newTabIndex);
+                refreshRoutingView();
+                markSessionDirty();
+            }
+        }
+    };
+}
+
 void MainComponent::addEmptyTab()
 {
     auto* tc = new PluginTabComponent(audioEngine, tabs.getNumTabs());
+    configurePluginTabComponent(*tc);
     tc->addChangeListener(this);
     tabs.addTab("Empty", PluginTabComponent::colourForType(PluginTabComponent::SlotType::Empty), tc, true);
     markSessionDirty();
@@ -329,13 +398,22 @@ void MainComponent::resized()
 
     menuBar.setBounds(area.removeFromTop(juce::LookAndFeel::getDefaultLookAndFeel().getDefaultMenuBarHeight()));
 
-    auto topRow = area.removeFromTop(36);
-    auto tempoArea = topRow.removeFromRight(338);
-    tempoArea.removeFromRight(6);
-    tempoArea.removeFromLeft(3);
+    // Toolbar  Button height
+    auto topRow = area.removeFromTop(32);
 
-    auto tapBounds = tempoArea.removeFromRight(52).reduced(2);
-    tapBounds = tapBounds.withSizeKeepingCentre(tapBounds.getWidth(), 24);
+    auto presetArea = topRow.removeFromLeft(280);
+    presetArea.removeFromLeft(8);
+    presetArea.removeFromRight(6);
+
+    auto presetBounds = presetArea.reduced(2);
+    presetBounds = presetBounds.withSizeKeepingCentre(presetBounds.getWidth(), topRow.getHeight() - 4);
+    presetDropdown.setBounds(presetBounds);
+
+    auto tempoArea = topRow.removeFromRight(286);
+    tempoArea.removeFromRight(6);
+
+    auto tapBounds = tempoArea.removeFromRight(48).reduced(2);
+    tapBounds = tapBounds.withSizeKeepingCentre(tapBounds.getWidth(), topRow.getHeight() - 4);
     tapTempoButton.setBounds(tapBounds);
 
     tempoArea.removeFromRight(4);
@@ -349,21 +427,6 @@ void MainComponent::resized()
     auto beatBounds = tempoArea.removeFromRight(96).reduced(2);
     beatBounds = beatBounds.withSizeKeepingCentre(beatBounds.getWidth(), 18);
     beatIndicator.setBounds(beatBounds);
-
-    tempoArea.removeFromRight(8);
-    tempoLabel.setBounds(tempoArea.removeFromRight(60).reduced(2));
-
-    auto controlBounds = beatIndicator.getBounds()
-                            .getUnion(tempoEditor.getBounds())
-                            .getUnion(tapTempoButton.getBounds())
-                            .expanded(6, 3);
-
-    controlBounds = controlBounds.getUnion(
-        tempoLabel.getBounds().withY(controlBounds.getY()).withHeight(controlBounds.getHeight()));
-
-    tempoControlBackground.setBounds(controlBounds);
-
-    tempoControlBackground.toBack();
 
     toolbar.setBounds(topRow);
 
@@ -381,20 +444,50 @@ juce::PopupMenu MainComponent::getMenuForIndex(int index, const juce::String&)
     switch (index)
     {
         case 0:
+        {
+            refreshPresetLists();
+
             menu.addItem(100, "New Preset");
             menu.addSeparator();
-            menu.addItem(101, "Add Tab");
+            menu.addItem(101, "New Tab");
             menu.addItem(102, "Close Current Tab");
             menu.addSeparator();
             menu.addItem(103, "Save Preset");
             menu.addItem(104, "Save Preset As...");
-            menu.addItem(105, "Load Preset...");
+            menu.addItem(105, "Load Preset");
+
+            juce::PopupMenu recentMenu;
+            settings.removeMissingRecentPresetPaths();
+            auto recentPresetPaths = settings.getRecentPresetPaths();
+
+            int recentItemCount = 0;
+
+            for (int i = 0; i < recentPresetPaths.size(); ++i)
+            {
+                juce::File presetFile(recentPresetPaths[i]);
+
+                if (!presetFile.existsAsFile())
+                    continue;
+
+                recentMenu.addItem(menuRecentPresetBase + i,
+                                   presetFile.getFileNameWithoutExtension());
+                ++recentItemCount;
+            }
+
+            if (recentItemCount == 0)
+                recentMenu.addItem(1, "(No Recent Presets)", false, false);
+
+            menu.addSubMenu("Recent Presets", recentMenu);
+
             menu.addItem(107, "Locate Missing Plugins...",
                          !unresolvedMissingPlugins.isEmpty());
-            menu.addItem(106, "Delete Preset...");
+            menu.addItem(106, "Delete Current Preset");
+            menu.addSeparator();
+            menu.addItem(menuOpenPresetsFolder, "Open Presets Folder");
             menu.addSeparator();
             menu.addItem(199, "Quit");
             break;
+        }
         case 1:
             menu.addItem(201, "Audio Device Settings");
             menu.addSeparator();
@@ -404,7 +497,7 @@ juce::PopupMenu MainComponent::getMenuForIndex(int index, const juce::String&)
             menu.addItem(301, "Select MIDI Input Device");
             menu.addItem(302, "MIDI Monitor");
             menu.addSeparator();
-            menu.addItem(menuHostSyncToggle, "Host Sync", true, hostSyncEnabled);
+            menu.addItem(menuHostSyncToggle, "Host Sync", true, transportState.hostSyncEnabled);
             menu.addSeparator();
             menu.addItem(menuSetFakeHostTempo, "Set Fake Host Tempo 128.0");
             menu.addItem(menuClearFakeHostTempo, "Clear Fake Host Tempo");
@@ -431,6 +524,26 @@ juce::PopupMenu MainComponent::getMenuForIndex(int index, const juce::String&)
 
 void MainComponent::menuItemSelected(int itemId, int)
 {
+    if (itemId >= menuRecentPresetBase && itemId < menuRecentPresetBase + 100)
+    {
+        auto recentPresetPaths = settings.getRecentPresetPaths();
+        int index = itemId - menuRecentPresetBase;
+
+        if (juce::isPositiveAndBelow(index, recentPresetPaths.size()))
+        {
+            juce::File file(recentPresetPaths[index]);
+
+            if (file.existsAsFile())
+            {
+                if (!maybeSaveChanges())
+                    return;
+
+                loadPresetFromFile(file);
+            }
+        }
+
+        return;
+    }
     switch (itemId)
     {
         case 100: newPreset(); break;
@@ -441,6 +554,9 @@ void MainComponent::menuItemSelected(int itemId, int)
         case 105: loadPreset(); break;
         case 107: locateMissingPlugins(); break;
         case 106: deletePreset(); break;
+        case menuOpenPresetsFolder:
+            AppSettings::getPresetsDirectory().startAsProcess();
+            break;
         case 199:
             if (requestQuit())
                 juce::JUCEApplication::getInstance()->systemRequestedQuit();
@@ -543,8 +659,8 @@ void MainComponent::menuItemSelected(int itemId, int)
             break;
         }
         case menuHostSyncToggle:
-            hostSyncEnabled = !hostSyncEnabled;
-            audioEngine.setHostSyncEnabled(hostSyncEnabled);
+            transportState.hostSyncEnabled = !transportState.hostSyncEnabled;
+            audioEngine.setHostSyncEnabled(transportState.hostSyncEnabled);
             lastDisplayedSyncedTempoBpm = -1.0;
             lastDisplayedHostTempoAvailable = audioEngine.isExternalHostTempoAvailable();
             refreshTempoUiFromEngine();
@@ -589,46 +705,283 @@ void MainComponent::clearAllPlugins()
     markSessionDirty();
 }
 
-void MainComponent::deletePreset()
-{
-    juce::FileChooser chooser("Delete Preset",
-                              AppSettings::getPresetsDirectory(),
-                              "*.xml");
-
-    if (!chooser.browseForFileToOpen())
-        return;
-
-    auto file = chooser.getResult();
-
-    if (juce::AlertWindow::showOkCancelBox(juce::AlertWindow::WarningIcon,
-                                           "Delete Preset",
-                                           "Delete preset:\n" + file.getFileName() + "?"))
-    {
-        if (file.deleteFile() && file == currentPresetFile)
-        {
-            currentPresetFile = {};
-            updateWindowTitle();
-        }
-    }
-}
-
-void MainComponent::loadPreset()
+// ===================================
+// SAVE / LOAD
+// ===================================
+void MainComponent::newPreset()
 {
     if (!maybeSaveChanges())
         return;
 
-    juce::FileChooser chooser("Load Preset",
-                              AppSettings::getPresetsDirectory(),
-                              "*.xml");
+    for (int i = 0; i < tabs.getNumTabs(); ++i)
+        if (auto* tc = getTabComponent(i))
+            tc->removeChangeListener(this);
 
-    if (!chooser.browseForFileToOpen())
+    tabs.clearTabs();
+    midiRoutingStates.clear();
+
+    addEmptyTab();
+    addEmptyTab();
+
+    refreshRoutingView();
+    syncRoutingToAudioEngine();
+    currentPresetFile = {};
+    settings.setLastPresetPath({});
+    unresolvedMissingPlugins.clear();
+
+    if (auto* top = findParentComponentOfClass<juce::DocumentWindow>())
+        top->setSize(AppSettings::defaultWindowWidth, AppSettings::defaultWindowHeight);
+
+    refreshPresetDropdown();
+    markSessionClean();
+}
+
+bool MainComponent::maybeSaveChanges()
+{
+    if (!isSessionDirty)
+        return true;
+
+    auto result = juce::NativeMessageBox::showYesNoCancelBox(
+        juce::AlertWindow::WarningIcon,
+        "Unsaved Changes",
+        "Save changes to the current preset before continuing?");
+
+    if (result == 0) // cancel
+        return false;
+
+    if (result == 1) // yes
+    {
+        if (currentPresetFile == juce::File())
+            savePresetAs();
+        else
+            savePreset();
+
+        return !isSessionDirty;
+    }
+
+    if (result == 2) // no
+        return true;
+
+    return true;
+}
+
+void MainComponent::savePreset()
+{
+    if (currentPresetFile == juce::File())
+    {
+        savePresetAs();
+        return;
+    }
+
+    if (writePresetToFile(currentPresetFile))
+    {
+        settings.setLastPresetPath(currentPresetFile.getFullPathName());
+        settings.addRecentPresetPath(currentPresetFile.getFullPathName());
+        markSessionClean();
+        refreshPresetDropdown();
+    }
+}
+
+void MainComponent::savePresetAs()
+{
+    juce::AlertWindow w("Save Preset As", "Enter a preset name:", juce::AlertWindow::NoIcon);
+    w.addTextEditor("name",
+                    currentPresetFile.existsAsFile() ? currentPresetFile.getFileNameWithoutExtension() : "",
+                    "Preset Name:");
+    w.addButton("Save", 1);
+    w.addButton("Cancel", 0);
+
+    if (w.runModalLoop() != 1)
         return;
 
-    auto file = chooser.getResult();
+    auto presetName = w.getTextEditorContents("name").trim();
+    if (presetName.isEmpty())
+        return;
+
+    auto file = AppSettings::getPresetsDirectory().getChildFile(presetName + ".xml");
+
+    if (writePresetToFile(file))
+    {
+        currentPresetFile = file;
+        settings.setLastPresetPath(currentPresetFile.getFullPathName());
+        settings.addRecentPresetPath(currentPresetFile.getFullPathName());
+        markSessionClean();
+        refreshPresetDropdown();
+    }
+}
+
+bool MainComponent::writePresetToFile(const juce::File& file)
+{
+    juce::XmlElement presetXml("PolyHostPreset");
+    presetXml.setAttribute("name", file.getFileNameWithoutExtension());
+    presetXml.setAttribute("selectedTab", tabs.getCurrentTabIndex());
+    presetXml.setAttribute("hostTempoBpm", transportState.hostTempoBpm);
+    presetXml.setAttribute("hostSyncEnabled", transportState.hostSyncEnabled);
+
+    if (auto* top = findParentComponentOfClass<juce::DocumentWindow>())
+    {
+        presetXml.setAttribute("windowWidth", top->getWidth());
+        presetXml.setAttribute("windowHeight", top->getHeight());
+    }
+    else
+    {
+        presetXml.setAttribute("windowWidth", getWidth());
+        presetXml.setAttribute("windowHeight", getHeight());
+    }
+
+    for (int i = 0; i < tabs.getNumTabs(); ++i)
+    {
+        if (auto* tc = getTabComponent(i))
+        {
+            auto tabXml = std::make_unique<juce::XmlElement>("Tab");
+            tabXml->setAttribute("index", i);
+            tabXml->setAttribute("type", tc->getType() == PluginTabComponent::SlotType::Synth ? "Synth" : "FX");
+            tabXml->setAttribute("tabName", tabs.getTabNames()[i]);
+            tabXml->setAttribute("bypassed", tc->isBypassed());
+
+            if (auto* midiState = getMidiRoutingStateForTab(i))
+            {
+                if (!midiState->assignedDeviceIdentifiers.isEmpty())
+                {
+                    auto* midiAssignmentsXml = tabXml->createNewChildElement("MidiAssignments");
+
+                    for (auto& identifier : midiState->assignedDeviceIdentifiers)
+                    {
+                        auto* deviceXml = midiAssignmentsXml->createNewChildElement("Device");
+                        deviceXml->setAttribute("identifier", identifier);
+                    }
+                }
+            }
+
+            if (tc->hasPlugin())
+            {
+                auto pluginFile = tc->getPluginFile();
+
+                tabXml->setAttribute("pluginName", tc->getPluginName());
+                tabXml->setAttribute("pluginPath", pluginFile.getFullPathName());
+
+                auto relativePath = AppSettings::makePathPortable(pluginFile);
+                if (relativePath.isNotEmpty())
+                    tabXml->setAttribute("pluginPathRelative", relativePath);
+
+                auto driveFlexiblePath = AppSettings::getDriveFlexiblePath(pluginFile);
+                if (driveFlexiblePath.isNotEmpty())
+                    tabXml->setAttribute("pluginPathDriveFlexible", driveFlexiblePath);
+
+                juce::PluginDescription desc;
+                if (scanPluginFile(pluginFile, desc))
+                {
+                    tabXml->setAttribute("pluginFormatName", desc.pluginFormatName);
+                    tabXml->setAttribute("isInstrument", desc.isInstrument);
+                    tabXml->setAttribute("pluginManufacturer", desc.manufacturerName);
+                    tabXml->setAttribute("pluginVersion", desc.version);
+                }
+
+                auto state = tc->getPluginState();
+                tabXml->setAttribute("pluginState", state.toBase64Encoding());
+            }
+
+            presetXml.addChildElement(tabXml.release());
+        }
+    }
+
+    return presetXml.writeTo(file, {});
+}
+
+void MainComponent::rebuildTabsFromPresetXml(const juce::XmlElement& presetXml)
+{
+    for (int i = 0; i < tabs.getNumTabs(); ++i)
+    if (auto* tc = getTabComponent(i))
+        tc->removeChangeListener(this);
+
+    tabs.clearTabs();
+    transportState.hostSyncEnabled = presetXml.getBoolAttribute("hostSyncEnabled", false);
+    audioEngine.setHostSyncEnabled(transportState.hostSyncEnabled);
+    transportState.defaultTempoBpm = presetXml.getDoubleAttribute("hostTempoBpm", 120.0);
+    setHostTempoBpm(transportState.defaultTempoBpm);
+    lastDisplayedSyncedTempoBpm = -1.0;
+    lastDisplayedHostTempoAvailable = audioEngine.isExternalHostTempoAvailable();
+    refreshTempoUiFromEngine();
+
+    for (auto* tabXml : presetXml.getChildIterator())
+    {
+        if (!tabXml->hasTagName("Tab"))
+            continue;
+
+        auto* tc = new PluginTabComponent(audioEngine, tabs.getNumTabs());
+        configurePluginTabComponent(*tc);
+        tc->addChangeListener(this);
+        tabs.addTab("Empty",
+                    PluginTabComponent::colourForType(PluginTabComponent::SlotType::Empty),
+                    tc,
+                    true);
+    }
+
+    if (tabs.getNumTabs() == 0)
+        addEmptyTab();
+}
+
+void MainComponent::deletePreset()
+{
+    if (currentPresetFile == juce::File() || !currentPresetFile.existsAsFile())
+    {
+        juce::AlertWindow::showMessageBoxAsync(
+            juce::AlertWindow::InfoIcon,
+            "Delete Preset",
+            "There is no current preset file to delete.");
+        return;
+    }
+
+    auto fileToDelete = currentPresetFile;
+
+    if (!juce::AlertWindow::showOkCancelBox(juce::AlertWindow::WarningIcon,
+                                            "Delete Preset",
+                                            "Delete current preset:\n" + fileToDelete.getFileName() + "?",
+                                            "Delete",
+                                            "Cancel"))
+    {
+        return;
+    }
+
+    if (!fileToDelete.deleteFile())
+    {
+        juce::AlertWindow::showMessageBoxAsync(
+            juce::AlertWindow::WarningIcon,
+            "Delete Preset",
+            "Failed to delete preset:\n" + fileToDelete.getFullPathName());
+        return;
+    }
+
+    for (int i = 0; i < tabs.getNumTabs(); ++i)
+        if (auto* tc = getTabComponent(i))
+            tc->removeChangeListener(this);
+
+    tabs.clearTabs();
+    midiRoutingStates.clear();
+
+    addEmptyTab();
+    addEmptyTab();
+
+    refreshRoutingView();
+    syncRoutingToAudioEngine();
+
+    currentPresetFile = {};
+    settings.setLastPresetPath({});
+    unresolvedMissingPlugins.clear();
+
+    if (auto* top = findParentComponentOfClass<juce::DocumentWindow>())
+        top->setSize(AppSettings::defaultWindowWidth, AppSettings::defaultWindowHeight);
+
+    refreshPresetDropdown();
+    markSessionClean();
+}
+
+bool MainComponent::loadPresetFromFile(const juce::File& file)
+{
     auto xml = juce::XmlDocument::parse(file);
 
     if (xml == nullptr || !xml->hasTagName("PolyHostPreset"))
-        return;
+        return false;
 
     isLoadingPreset = true;
     unresolvedMissingPlugins.clear();
@@ -650,17 +1003,17 @@ void MainComponent::loadPreset()
 
         if (auto* tc = getTabComponent(tabIndex))
         {
-            auto pluginName               = tabXml->getStringAttribute("pluginName", "Unknown Plugin");
-            auto pluginPath               = tabXml->getStringAttribute("pluginPath");
-            auto pluginPathRelative       = tabXml->getStringAttribute("pluginPathRelative");
-            auto pluginPathDriveFlexible  = tabXml->getStringAttribute("pluginPathDriveFlexible");
-            auto stateBase64              = tabXml->getStringAttribute("pluginState");
-            auto typeString = tabXml->getStringAttribute("type");
+            auto pluginName              = tabXml->getStringAttribute("pluginName", "Unknown Plugin");
+            auto pluginPath              = tabXml->getStringAttribute("pluginPath");
+            auto pluginPathRelative      = tabXml->getStringAttribute("pluginPathRelative");
+            auto pluginPathDriveFlexible = tabXml->getStringAttribute("pluginPathDriveFlexible");
+            auto stateBase64             = tabXml->getStringAttribute("pluginState");
+            auto typeString              = tabXml->getStringAttribute("type");
             auto pluginFormatName        = tabXml->getStringAttribute("pluginFormatName");
             auto isInstrument            = tabXml->getBoolAttribute("isInstrument", typeString == "Synth");
             auto pluginManufacturer      = tabXml->getStringAttribute("pluginManufacturer");
             auto pluginVersion           = tabXml->getStringAttribute("pluginVersion");
-            auto bypassed               = tabXml->getBoolAttribute("bypassed", false);
+            auto bypassed                = tabXml->getBoolAttribute("bypassed", false);
 
             if (auto* midiState = getMidiRoutingStateForTab(tabIndex))
             {
@@ -673,6 +1026,7 @@ void MainComponent::loadPreset()
                         if (deviceXml->hasTagName("Device"))
                         {
                             auto identifier = deviceXml->getStringAttribute("identifier").trim();
+
                             if (identifier.isNotEmpty())
                                 midiState->assignedDeviceIdentifiers.addIfNotAlreadyThere(identifier);
                         }
@@ -689,6 +1043,7 @@ void MainComponent::loadPreset()
                 if (pluginFile == juce::File())
                 {
                     juce::String displayPath = pluginPathRelative.isNotEmpty() ? pluginPathRelative : pluginPath;
+
                     if (displayPath.isEmpty())
                         displayPath = pluginPathDriveFlexible;
 
@@ -712,11 +1067,13 @@ void MainComponent::loadPreset()
                 }
                 else if (!tc->loadPlugin(pluginFile))
                 {
-                    loadErrors.add("Failed to load plugin: " + pluginName + "\n  Path: " + pluginFile.getFullPathName());
+                    loadErrors.add("Failed to load plugin: " + pluginName
+                                   + "\n  Path: " + pluginFile.getFullPathName());
                 }
                 else
                 {
                     juce::MemoryBlock state;
+
                     if (state.fromBase64Encoding(stateBase64))
                         tc->restorePluginState(state);
 
@@ -736,18 +1093,44 @@ void MainComponent::loadPreset()
     syncRoutingToAudioEngine();
 
     auto selectedTab = xml->getIntAttribute("selectedTab", 0);
+
     if (juce::isPositiveAndBelow(selectedTab, tabs.getNumTabs()))
         tabs.setCurrentTabIndex(selectedTab);
 
     if (auto* top = findParentComponentOfClass<juce::DocumentWindow>())
     {
-        auto w = xml->getIntAttribute("windowWidth", top->getWidth());
-        auto h = xml->getIntAttribute("windowHeight", top->getHeight());
-        top->setSize(juce::jmax(900, w), juce::jmax(550, h));
+        bool hasLoadedPlugin = false;
+
+        for (int i = 0; i < tabs.getNumTabs(); ++i)
+        {
+            if (auto* tc = getTabComponent(i))
+            {
+                if (tc->hasPlugin())
+                {
+                    hasLoadedPlugin = true;
+                    break;
+                }
+            }
+        }
+
+        int w = AppSettings::defaultWindowWidth;
+        int h = AppSettings::defaultWindowHeight;
+
+        if (hasLoadedPlugin)
+        {
+            w = xml->getIntAttribute("windowWidth", w);
+            h = xml->getIntAttribute("windowHeight", h);
+        }
+
+        top->setSize(juce::jmax(AppSettings::defaultWindowWidth, w),
+                     juce::jmax(AppSettings::defaultWindowHeight, h));
     }
 
     unresolvedMissingPlugins = missingPlugins;
     currentPresetFile = file;
+    settings.setLastPresetPath(currentPresetFile.getFullPathName());
+    settings.addRecentPresetPath(currentPresetFile.getFullPathName());
+    refreshPresetDropdown();
     showPresetLoadErrors(loadErrors);
 
     promptToLocateMissingPlugins(unresolvedMissingPlugins);
@@ -757,6 +1140,89 @@ void MainComponent::loadPreset()
         isLoadingPreset = false;
         markSessionClean();
     });
+
+    return true;
+}
+
+void MainComponent::loadPreset()
+{
+    if (!maybeSaveChanges())
+        return;
+
+    juce::FileChooser chooser("Load Preset",
+                              AppSettings::getPresetsDirectory(),
+                              "*.xml");
+
+    if (!chooser.browseForFileToOpen())
+        return;
+
+    loadPresetFromFile(chooser.getResult());
+}
+
+void MainComponent::refreshPresetLists()
+{
+    settings.removeMissingRecentPresetPaths();
+    refreshPresetDropdown();
+}
+
+void MainComponent::refreshPresetDropdown()
+{
+    presetDropdown.onChange = nullptr;
+    presetDropdown.clear(juce::dontSendNotification);
+
+    auto presetFiles = AppSettings::getPresetsDirectory().findChildFiles(juce::File::findFiles,
+                                                                         false,
+                                                                         "*.xml");
+
+    presetFiles.sort();
+
+    int itemId = 1;
+    int selectedId = 0;
+
+    for (auto& file : presetFiles)
+    {
+        auto presetName = file.getFileNameWithoutExtension();
+        presetDropdown.addItem(presetName, itemId);
+
+        if (currentPresetFile == file)
+            selectedId = itemId;
+
+        ++itemId;
+    }
+
+    if (selectedId != 0)
+        presetDropdown.setSelectedId(selectedId, juce::dontSendNotification);
+    else if (currentPresetFile.existsAsFile())
+        presetDropdown.setText(currentPresetFile.getFileNameWithoutExtension(), juce::dontSendNotification);
+    else
+        presetDropdown.setSelectedItemIndex(-1, juce::dontSendNotification);
+
+    presetDropdown.onChange = [this]
+    {
+        loadPresetFromDropdown();
+    };
+}
+
+void MainComponent::loadPresetFromDropdown()
+{
+    auto selectedText = presetDropdown.getText().trim();
+
+    if (selectedText.isEmpty())
+        return;
+
+    auto file = AppSettings::getPresetsDirectory().getChildFile(selectedText + ".xml");
+
+    if (!file.existsAsFile())
+        return;
+
+    if (!maybeSaveChanges())
+    {
+        refreshPresetDropdown();
+        return;
+    }
+
+    loadPresetFromFile(file);
+    refreshPresetDropdown();
 }
 
 void MainComponent::showPresetLoadErrors(const juce::StringArray& errors)
@@ -1139,210 +1605,9 @@ void MainComponent::markSessionClean()
     updateWindowTitle();
 }
 
-void MainComponent::newPreset()
-{
-    if (!maybeSaveChanges())
-        return;
-
-    for (int i = 0; i < tabs.getNumTabs(); ++i)
-        if (auto* tc = getTabComponent(i))
-            tc->removeChangeListener(this);
-
-    tabs.clearTabs();
-    midiRoutingStates.clear();
-
-    addEmptyTab();
-    addEmptyTab();
-
-    refreshRoutingView();
-    syncRoutingToAudioEngine();
-    currentPresetFile = {};
-    unresolvedMissingPlugins.clear();
-    markSessionClean();
-}
-
 bool MainComponent::requestQuit()
 {
     return maybeSaveChanges();
-}
-
-// ===================================
-// SAVE / LOAD
-// ===================================
-bool MainComponent::maybeSaveChanges()
-{
-    if (!isSessionDirty)
-        return true;
-
-    auto result = juce::NativeMessageBox::showYesNoCancelBox(
-        juce::AlertWindow::WarningIcon,
-        "Unsaved Changes",
-        "Save changes to the current preset before continuing?");
-
-    if (result == 0) // cancel
-        return false;
-
-    if (result == 1) // yes
-    {
-        if (currentPresetFile == juce::File())
-            savePresetAs();
-        else
-            savePreset();
-
-        return !isSessionDirty;
-    }
-
-    if (result == 2) // no
-        return true;
-
-    return true;
-}
-
-void MainComponent::savePreset()
-{
-    if (currentPresetFile == juce::File())
-    {
-        savePresetAs();
-        return;
-    }
-
-    if (writePresetToFile(currentPresetFile))
-        markSessionClean();
-}
-
-void MainComponent::savePresetAs()
-{
-    juce::AlertWindow w("Save Preset As", "Enter a preset name:", juce::AlertWindow::NoIcon);
-    w.addTextEditor("name",
-                    currentPresetFile.existsAsFile() ? currentPresetFile.getFileNameWithoutExtension() : "",
-                    "Preset Name:");
-    w.addButton("Save", 1);
-    w.addButton("Cancel", 0);
-
-    if (w.runModalLoop() != 1)
-        return;
-
-    auto presetName = w.getTextEditorContents("name").trim();
-    if (presetName.isEmpty())
-        return;
-
-    auto file = AppSettings::getPresetsDirectory().getChildFile(presetName + ".xml");
-
-    if (writePresetToFile(file))
-    {
-        currentPresetFile = file;
-        markSessionClean();
-    }
-}
-
-bool MainComponent::writePresetToFile(const juce::File& file)
-{
-    juce::XmlElement presetXml("PolyHostPreset");
-    presetXml.setAttribute("name", file.getFileNameWithoutExtension());
-    presetXml.setAttribute("selectedTab", tabs.getCurrentTabIndex());
-    presetXml.setAttribute("hostTempoBpm", hostTempoBpm);
-    presetXml.setAttribute("hostSyncEnabled", hostSyncEnabled);
-
-    if (auto* top = findParentComponentOfClass<juce::DocumentWindow>())
-    {
-        presetXml.setAttribute("windowWidth", top->getWidth());
-        presetXml.setAttribute("windowHeight", top->getHeight());
-    }
-    else
-    {
-        presetXml.setAttribute("windowWidth", getWidth());
-        presetXml.setAttribute("windowHeight", getHeight());
-    }
-
-    for (int i = 0; i < tabs.getNumTabs(); ++i)
-    {
-        if (auto* tc = getTabComponent(i))
-        {
-            auto tabXml = std::make_unique<juce::XmlElement>("Tab");
-            tabXml->setAttribute("index", i);
-            tabXml->setAttribute("type", tc->getType() == PluginTabComponent::SlotType::Synth ? "Synth" : "FX");
-            tabXml->setAttribute("tabName", tabs.getTabNames()[i]);
-            tabXml->setAttribute("bypassed", tc->isBypassed());
-
-            if (auto* midiState = getMidiRoutingStateForTab(i))
-            {
-                if (!midiState->assignedDeviceIdentifiers.isEmpty())
-                {
-                    auto* midiAssignmentsXml = tabXml->createNewChildElement("MidiAssignments");
-
-                    for (auto& identifier : midiState->assignedDeviceIdentifiers)
-                    {
-                        auto* deviceXml = midiAssignmentsXml->createNewChildElement("Device");
-                        deviceXml->setAttribute("identifier", identifier);
-                    }
-                }
-            }
-
-            if (tc->hasPlugin())
-            {
-                auto pluginFile = tc->getPluginFile();
-
-                tabXml->setAttribute("pluginName", tc->getPluginName());
-                tabXml->setAttribute("pluginPath", pluginFile.getFullPathName());
-
-                auto relativePath = AppSettings::makePathPortable(pluginFile);
-                if (relativePath.isNotEmpty())
-                    tabXml->setAttribute("pluginPathRelative", relativePath);
-
-                auto driveFlexiblePath = AppSettings::getDriveFlexiblePath(pluginFile);
-                if (driveFlexiblePath.isNotEmpty())
-                    tabXml->setAttribute("pluginPathDriveFlexible", driveFlexiblePath);
-
-                juce::PluginDescription desc;
-                if (scanPluginFile(pluginFile, desc))
-                {
-                    tabXml->setAttribute("pluginFormatName", desc.pluginFormatName);
-                    tabXml->setAttribute("isInstrument", desc.isInstrument);
-                    tabXml->setAttribute("pluginManufacturer", desc.manufacturerName);
-                    tabXml->setAttribute("pluginVersion", desc.version);
-                }
-
-                auto state = tc->getPluginState();
-                tabXml->setAttribute("pluginState", state.toBase64Encoding());
-            }
-
-            presetXml.addChildElement(tabXml.release());
-        }
-    }
-
-    return presetXml.writeTo(file, {});
-}
-
-void MainComponent::rebuildTabsFromPresetXml(const juce::XmlElement& presetXml)
-{
-    for (int i = 0; i < tabs.getNumTabs(); ++i)
-    if (auto* tc = getTabComponent(i))
-        tc->removeChangeListener(this);
-
-    tabs.clearTabs();
-    hostSyncEnabled = presetXml.getBoolAttribute("hostSyncEnabled", false);
-    audioEngine.setHostSyncEnabled(hostSyncEnabled);
-    defaultTempoBpm = presetXml.getDoubleAttribute("hostTempoBpm", 120.0);
-    setHostTempoBpm(defaultTempoBpm);
-    lastDisplayedSyncedTempoBpm = -1.0;
-    lastDisplayedHostTempoAvailable = audioEngine.isExternalHostTempoAvailable();
-    refreshTempoUiFromEngine();
-
-    for (auto* tabXml : presetXml.getChildIterator())
-    {
-        if (!tabXml->hasTagName("Tab"))
-            continue;
-
-        auto* tc = new PluginTabComponent(audioEngine, tabs.getNumTabs());
-        tc->addChangeListener(this);
-        tabs.addTab("Empty",
-                    PluginTabComponent::colourForType(PluginTabComponent::SlotType::Empty),
-                    tc,
-                    true);
-    }
-
-    if (tabs.getNumTabs() == 0)
-        addEmptyTab();
 }
 
 // ===================================
@@ -1909,6 +2174,7 @@ void MainComponent::moveTabEarlier(int tabIndex)
     for (int i = 0; i < snapshots.size(); ++i)
     {
         auto* tc = new PluginTabComponent(audioEngine, i);
+        configurePluginTabComponent(*tc);
         tc->addChangeListener(this);
         tc->setAllowEditorWindowResize(false);
 
@@ -2009,6 +2275,7 @@ void MainComponent::moveTabLater(int tabIndex)
     for (int i = 0; i < snapshots.size(); ++i)
     {
         auto* tc = new PluginTabComponent(audioEngine, i);
+        configurePluginTabComponent(*tc);
         tc->addChangeListener(this);
         tc->setAllowEditorWindowResize(false);
 
@@ -2061,19 +2328,34 @@ void MainComponent::getDefaultItemSet(juce::Array<int>& ids)
     ids.add(toolbarRoutingToggle);
 }
 
+juce::String MainComponent::getToolbarIconGlyph(int itemId)
+{
+    switch (itemId)
+    {
+        case toolbarRoutingToggle:
+            return juce::String::charToString((juce_wchar) 0xf003);
+        default:
+            break;
+    }
+
+    return "?";
+}
+
 juce::ToolbarItemComponent* MainComponent::createItem(int itemId)
 {
     if (itemId == toolbarRoutingToggle)
     {
-        auto* button = new juce::ToolbarButton(itemId, "Routing", nullptr, nullptr);
-
-        button->setTooltip("Show or hide Routing View");
-        button->setWantsKeyboardFocus(false);
+        auto* button = new StyledToolbarButton(itemId,
+                                               "Toggle Routing View",
+                                               getToolbarIconGlyph(itemId),
+                                               StyledToolbarButton::ContentType::IconGlyph,
+                                               32);
 
         button->onClick = [this, button]
         {
             toggleRoutingView();
             button->setToggleState(showingRoutingView, juce::dontSendNotification);
+            button->repaint();
         };
 
         button->setToggleState(showingRoutingView, juce::dontSendNotification);
@@ -2094,8 +2376,11 @@ void MainComponent::setRoutingViewVisible(bool shouldShow)
     routingView.setVisible(showingRoutingView);
 
     if (auto* item = toolbar.getItemComponent(toolbarRoutingToggle))
-        if (auto* button = dynamic_cast<juce::ToolbarButton*>(item))
+        if (auto* button = dynamic_cast<juce::Button*>(item))
+        {
             button->setToggleState(showingRoutingView, juce::dontSendNotification);
+            button->repaint();
+        }
 
     resized();
 }
@@ -2138,7 +2423,24 @@ void MainComponent::refreshRoutingView()
             entry.canMoveDown = (listIndex < loadedTabIndices.size() - 1);
 
             if (auto* midiState = getMidiRoutingStateForTab(tabIndex))
-                entry.midiAssignmentCount = midiState->assignedDeviceIdentifiers.size();
+            {
+                int availableAssignedCount = 0;
+                auto availableDevices = midiEngine.getAvailableDevices();
+
+                for (auto& identifier : midiState->assignedDeviceIdentifiers)
+                {
+                    for (auto& device : availableDevices)
+                    {
+                        if (device.identifier == identifier)
+                        {
+                            ++availableAssignedCount;
+                            break;
+                        }
+                    }
+                }
+
+                entry.midiAssignmentCount = availableAssignedCount;
+            }
 
             modules.add(entry);
         }
@@ -2246,6 +2548,12 @@ void MainComponent::toggleMidiAssignment(int tabIndex, const juce::String& devic
     }
 }
 
+void MainComponent::refreshMidiDevices()
+{
+    refreshRoutingView();
+    updateStatusBarText();
+}
+
 void MainComponent::showMidiAssignmentsCallout(int tabIndex, juce::Component* anchorComponent)
 {
     if (anchorComponent == nullptr)
@@ -2270,7 +2578,6 @@ void MainComponent::showMidiAssignmentsCallout(int tabIndex, juce::Component* an
                                            nullptr);
 }
 
-
 // ===================================
 // TEMPO
 // ===================================
@@ -2279,16 +2586,16 @@ void MainComponent::setHostTempoBpm(double bpm)
     bpm = juce::jlimit(20.0, 300.0, bpm);
     bpm = std::round(bpm * 10.0) / 10.0;
 
-    hostTempoBpm = bpm;
-    audioEngine.setTempoBpm(hostTempoBpm);
+    transportState.hostTempoBpm = bpm;
+    audioEngine.setTempoBpm(transportState.hostTempoBpm);
     updateTempoUi();
     markSessionDirty();
 }
 
 void MainComponent::updateTempoUi()
 {
-    const double displayedTempo = hostSyncEnabled ? audioEngine.getCurrentTempoBpm()
-                                                  : hostTempoBpm;
+    const double displayedTempo = transportState.hostSyncEnabled ? audioEngine.getCurrentTempoBpm()
+                                                  : transportState.hostTempoBpm;
 
     tempoEditor.setText(juce::String(displayedTempo, 1), juce::dontSendNotification);
 }
@@ -2389,7 +2696,7 @@ void MainComponent::textEditorFocusLost(juce::TextEditor& editor)
 
 void MainComponent::updateTempoTooltip()
 {
-    if (hostSyncEnabled)
+    if (transportState.hostSyncEnabled)
     {
         if (audioEngine.isExternalHostTempoAvailable())
             tempoEditor.setTooltip("Host Sync enabled.\nTempo is controlled by the host.");
@@ -2399,13 +2706,13 @@ void MainComponent::updateTempoTooltip()
     else
     {
         tempoEditor.setTooltip("Scroll to adjust. Shift+Scroll: Fine Adjust.\nDouble-click: Reset to "
-                               + juce::String(defaultTempoBpm, 1) + ".");
+                               + juce::String(transportState.defaultTempoBpm, 1) + ".");
     }
 }
 
 void MainComponent::updateTempoControlState()
 {
-    const bool editable = !hostSyncEnabled;
+    const bool editable = !transportState.hostSyncEnabled;
 
     tempoEditor.setEnabled(editable);
     tapTempoButton.setEnabled(editable);
@@ -2421,7 +2728,7 @@ void MainComponent::updateStatusBarText()
 
     juce::String tempoModeText;
 
-    if (hostSyncEnabled)
+    if (transportState.hostSyncEnabled)
     {
         if (audioEngine.isExternalHostTempoAvailable())
             tempoModeText = "Host Sync ON";
@@ -2439,7 +2746,7 @@ void MainComponent::updateStatusBarText()
 
 bool MainComponent::isTempoEditorInteractive() const
 {
-    return !hostSyncEnabled;
+    return !transportState.hostSyncEnabled;
 }
 
 void MainComponent::refreshTempoUiFromEngine()
@@ -2452,7 +2759,7 @@ void MainComponent::refreshTempoUiFromEngine()
 
 void MainComponent::timerCallback()
 {
-    if (!hostSyncEnabled)
+    if (!transportState.hostSyncEnabled)
         return;
 
     const double currentTempo = audioEngine.getCurrentTempoBpm();
@@ -2468,5 +2775,4 @@ void MainComponent::timerCallback()
         refreshTempoUiFromEngine();
     }
 }
-
 

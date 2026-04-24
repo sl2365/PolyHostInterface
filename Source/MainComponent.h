@@ -7,6 +7,7 @@
 #include "AppSettings.h"
 #include "MidiMonitorWindow.h"
 #include "RoutingView.h"
+#include "TransportState.h"
 
 class MainComponent final : public juce::Component,
                             public juce::MenuBarModel,
@@ -19,7 +20,7 @@ public:
     static constexpr int kMaxSynthTabs = 2;
     static constexpr int kMaxFxTabs    = 8;
 
-    MainComponent();
+    explicit MainComponent(bool shouldLoadLastPreset);
     ~MainComponent() override;
 
     void loadPluginFromFile(const juce::File& file);
@@ -34,6 +35,20 @@ public:
     AppSettings& getSettings() { return settings; }
 
 private:
+    class PresetComboBox final : public juce::ComboBox
+    {
+    public:
+        std::function<void()> onBeforePopup;
+
+        void mouseDown(const juce::MouseEvent& event) override
+        {
+            if (onBeforePopup)
+                onBeforePopup();
+
+            juce::ComboBox::mouseDown(event);
+        }
+    };
+
     class TabBarMouseListener final : public juce::MouseListener
     {
     public:
@@ -63,6 +78,107 @@ private:
 
     private:
         MainComponent& owner;
+    };
+
+    class StyledToolbarButton final : public juce::ToolbarButton
+    {
+    public:
+        enum class ContentType
+        {
+            IconGlyph,
+            TextLabel
+        };
+
+        StyledToolbarButton(int itemId,
+                            const juce::String& tooltipText,
+                            const juce::String& contentText,
+                            ContentType contentTypeIn,
+                            int preferredWidthIn)
+            : juce::ToolbarButton(itemId, "", nullptr, nullptr),
+              tooltip(tooltipText),
+              content(contentText),
+              contentType(contentTypeIn),
+              preferredWidth(preferredWidthIn)
+        {
+            setTooltip(tooltip);
+            setWantsKeyboardFocus(false);
+        }
+
+        bool getToolbarItemSizes(int toolbarDepth, bool isVertical,
+                                 int& preferredSizeOut, int& minSize, int& maxSize) override
+        {
+            juce::ignoreUnused(toolbarDepth, isVertical);
+            preferredSizeOut = preferredWidth;
+            minSize = preferredWidth;
+            maxSize = preferredWidth;
+            return true;
+        }
+
+        void paintButtonArea(juce::Graphics& g,
+                             int width, int height,
+                             bool isMouseOver, bool isMouseDown) override
+        {
+            auto area = juce::Rectangle<float>(0.0f, 0.0f, (float) width, (float) height).reduced(2.0f);
+
+            auto base = juce::Colour(0xFF2A3142);
+
+            if (getToggleState())
+                base = juce::Colour(0xFF3A7BD5);
+            else if (isMouseDown)
+                base = base.darker(0.15f);
+            else if (isMouseOver)
+                base = base.brighter(0.12f);
+
+            g.setColour(base);
+            g.fillRoundedRectangle(area, 4.0f);
+
+            g.setColour(juce::Colours::white.withAlpha(0.14f));
+            g.drawRoundedRectangle(area, 4.0f, 1.0f);
+        }
+
+        void contentAreaChanged(const juce::Rectangle<int>& newArea) override
+        {
+            contentArea = newArea;
+        }
+
+        void paint(juce::Graphics& g) override
+        {
+            auto bounds = getLocalBounds();
+            auto isOver = isMouseOver(true);
+            auto isDown = isMouseButtonDown();
+
+            paintButtonArea(g, bounds.getWidth(), bounds.getHeight(), isOver, isDown);
+
+            auto drawArea = contentArea.isEmpty() ? bounds : contentArea;
+            g.setColour(getToggleState() ? juce::Colours::white
+                                         : juce::Colours::lightgrey);
+
+            if (contentType == ContentType::IconGlyph)
+            {
+               #if JUCE_WINDOWS
+                juce::Font font(juce::FontOptions("Segoe Fluent Icons", 18.0f, juce::Font::plain));
+               #else
+                juce::Font font(juce::FontOptions(18.0f));
+               #endif
+                g.setFont(font);
+            }
+            else
+            {
+                g.setFont(juce::Font(juce::FontOptions(14.0f, juce::Font::bold)));
+            }
+
+            g.drawFittedText(content,
+                             drawArea.reduced(4, 1),
+                             juce::Justification::centred,
+                             1);
+        }
+
+    private:
+        juce::String tooltip;
+        juce::String content;
+        ContentType contentType;
+        int preferredWidth = 32;
+        juce::Rectangle<int> contentArea;
     };
 
     class TabBarLookAndFeel final : public juce::LookAndFeel_V4
@@ -120,10 +236,10 @@ private:
             auto r = getLocalBounds().toFloat().reduced(0.5f);
 
             g.setColour(juce::Colour(0xFF16213E));
-            g.fillRoundedRectangle(r, 8.0f);
+            g.fillRoundedRectangle(r, 6.0f);
 
             g.setColour(juce::Colours::white.withAlpha(0.08f));
-            g.drawRoundedRectangle(r, 8.0f, 1.0f);
+            g.drawRoundedRectangle(r, 6.0f, 1.0f);
         }
     };
 
@@ -151,7 +267,7 @@ private:
             const double step = fineAdjust ? 0.1 : 1.0;
             const double direction = (wheel.deltaY > 0.0f) ? 1.0 : -1.0;
 
-            owner.setHostTempoBpm(owner.hostTempoBpm + direction * step);
+            owner.setHostTempoBpm(owner.transportState.hostTempoBpm + direction * step);
         }
 
         void mouseDoubleClick(const juce::MouseEvent& event) override
@@ -159,7 +275,7 @@ private:
             juce::ignoreUnused(event);
             if (! isInteractive())
                 return;
-            owner.setHostTempoBpm(owner.defaultTempoBpm);
+            owner.setHostTempoBpm(owner.transportState.defaultTempoBpm);
         }
 
         bool keyPressed(const juce::KeyPress& key) override
@@ -169,25 +285,25 @@ private:
 
             if (key == juce::KeyPress(juce::KeyPress::upKey, juce::ModifierKeys::shiftModifier, 0))
             {
-                owner.setHostTempoBpm(owner.hostTempoBpm + 0.1);
+                owner.setHostTempoBpm(owner.transportState.hostTempoBpm + 0.1);
                 return true;
             }
 
             if (key == juce::KeyPress(juce::KeyPress::downKey, juce::ModifierKeys::shiftModifier, 0))
             {
-                owner.setHostTempoBpm(owner.hostTempoBpm - 0.1);
+                owner.setHostTempoBpm(owner.transportState.hostTempoBpm - 0.1);
                 return true;
             }
 
             if (key == juce::KeyPress::upKey)
             {
-                owner.setHostTempoBpm(owner.hostTempoBpm + 1.0);
+                owner.setHostTempoBpm(owner.transportState.hostTempoBpm + 1.0);
                 return true;
             }
 
             if (key == juce::KeyPress::downKey)
             {
-                owner.setHostTempoBpm(owner.hostTempoBpm - 1.0);
+                owner.setHostTempoBpm(owner.transportState.hostTempoBpm - 1.0);
                 return true;
             }
 
@@ -217,7 +333,7 @@ private:
             auto area = getLocalBounds().toFloat().reduced(2.0f);
             auto beatWidth = area.getWidth() / 4.0f;
 
-            const auto bpm = owner.hostTempoBpm;
+            const auto bpm = owner.transportState.hostTempoBpm;
             const auto nowMs = juce::Time::getMillisecondCounterHiRes();
             const auto beatLengthMs = 60000.0 / juce::jmax(1.0, bpm);
             const int beatIndex = (int) std::floor(nowMs / beatLengthMs) % 4;
@@ -315,6 +431,7 @@ private:
     // Core UI / tab helpers
     void addEmptyTab();
     void refreshTabAppearance(int tabIndex);
+    void configurePluginTabComponent(PluginTabComponent& tabComponent);
     int countTabsOfType(PluginTabComponent::SlotType type) const;
     PluginTabComponent* getTabComponent(int tabIndex) const;
     void changeListenerCallback(juce::ChangeBroadcaster* source) override;
@@ -336,6 +453,8 @@ private:
     };
     enum MenuItemIds
     {
+        menuRecentPresetBase = 2000,
+        menuOpenPresetsFolder = 2101,
         menuHostSyncToggle = 303,
         menuSetFakeHostTempo = 304,
         menuClearFakeHostTempo = 305
@@ -344,6 +463,7 @@ private:
     void getAllToolbarItemIds(juce::Array<int>& ids) override;
     void getDefaultItemSet(juce::Array<int>& ids) override;
     juce::ToolbarItemComponent* createItem(int itemId) override;
+    static juce::String getToolbarIconGlyph(int itemId);
 
     // MIDI
     MidiTabRoutingState* getMidiRoutingStateForTab(int tabIndex);
@@ -354,6 +474,7 @@ private:
     void toggleMidiAssignment(int tabIndex, const juce::String& deviceIdentifier);
     juce::Array<MidiTabRoutingState> midiRoutingStates;
     void showMidiAssignmentsCallout(int tabIndex, juce::Component* anchorComponent);
+    void refreshMidiDevices();
 
     // Preset/session helpers
     void newPreset();
@@ -369,6 +490,10 @@ private:
     void markSessionDirty();
     void markSessionClean();
     void showPresetLoadErrors(const juce::StringArray& errors);
+    bool loadPresetFromFile(const juce::File& file);
+    void refreshPresetLists();
+    void refreshPresetDropdown();
+    void loadPresetFromDropdown();
 
     // Missing plugin repair
     void locateMissingPlugins();
@@ -405,19 +530,15 @@ private:
                                                  const juce::StringArray& skipped) const;
 
     // Tempo
-    bool hostSyncEnabled = false;
     bool isTempoEditorInteractive() const;
-    double hostTempoBpm = 120.0;
-    double defaultTempoBpm = 120.0;
+    TransportState transportState;
     double lastDisplayedSyncedTempoBpm = -1.0;
     bool lastDisplayedHostTempoAvailable = false;
 
     BeatIndicatorComponent beatIndicator { *this };
-    TempoControlBackgroundComponent tempoControlBackground;
     juce::TooltipWindow tooltipWindow { this };
-    juce::Label tempoLabel;
     TempoTextEditor tempoEditor { *this };
-    juce::TextButton tapTempoButton { "Tap" };
+    StyledToolbarButton tapTempoButton { 0, "Tap Tempo", "Tap", StyledToolbarButton::ContentType::TextLabel, 48 };
     juce::Array<double> tapTimesMs;
 
     void timerCallback() override;
@@ -456,6 +577,7 @@ private:
     bool isLoadingPreset = false;
     bool isSessionDirty = false;
     juce::Array<MissingPluginEntry> unresolvedMissingPlugins;
+    PresetComboBox presetDropdown;
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(MainComponent)
 };

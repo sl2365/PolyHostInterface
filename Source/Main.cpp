@@ -29,20 +29,36 @@ public:
             : DocumentWindow(name, juce::Colour(0xFF1A1A2E), DocumentWindow::allButtons)
         {
             setUsingNativeTitleBar(true);
-            mainComponent = new MainComponent();
+            const bool launchedWithFile = commandLineContainsExistingFile(commandLine);
+            mainComponent = new MainComponent(!launchedWithFile);
             setContentOwned(mainComponent, true);
             setResizable(true, true);
             setResizeLimits(900, 550, 3840, 2160);
             auto& s = mainComponent->getSettings();
-            centreWithSize(s.getWindowWidth(), s.getWindowHeight());
+
+            const int w = s.getWindowWidth();
+            const int h = s.getWindowHeight();
+            const int x = s.getWindowX();
+            const int y = s.getWindowY();
+
+            if (x >= 0 && y >= 0)
+                setBounds(x, y, w, h);
+            else
+                centreWithSize(w, h);
+
             setVisible(true);
-            if (commandLine.isNotEmpty()) handleCommandLine(commandLine);
+
+            if (commandLine.isNotEmpty())
+                handleCommandLine(commandLine);
         }
 
         ~MainWindow() override
         {
             if (mainComponent)
+            {
                 mainComponent->getSettings().setWindowSize(getWidth(), getHeight());
+                mainComponent->getSettings().setWindowPosition(getX(), getY());
+            }
         }
 
         void handleCommandLine(const juce::String& cmdLine)
@@ -61,7 +77,22 @@ public:
             if (mainComponent == nullptr || mainComponent->requestQuit())
                 juce::JUCEApplication::getInstance()->systemRequestedQuit();
         }
-        
+
+        static bool commandLineContainsExistingFile(const juce::String& cmdLine)
+        {
+            juce::StringArray tokens;
+            tokens.addTokens(cmdLine, true);
+
+            for (auto& token : tokens)
+            {
+                juce::File f(token.unquoted());
+                if (f.existsAsFile())
+                    return true;
+            }
+
+            return false;
+        }
+
     private:
         MainComponent* mainComponent = nullptr;
         JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(MainWindow)

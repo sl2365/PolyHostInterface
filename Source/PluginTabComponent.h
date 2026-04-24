@@ -43,13 +43,16 @@ public:
     juce::MemoryBlock getPluginState() const;
     bool restorePluginState(const juce::MemoryBlock& state);
 
+    std::function<void(const juce::File&)> onOpenDroppedPluginInNewTab;
+
     void resized() override;
     void paint(juce::Graphics& g) override;
     bool isInterestedInFileDrag(const juce::StringArray& files) override;
     void filesDropped(const juce::StringArray& files, int x, int y) override;
 
-private:
     static bool isPluginFile(const juce::File& f);
+
+private:
     void showPluginEditor();
 
     AudioEngine& audioEngine;

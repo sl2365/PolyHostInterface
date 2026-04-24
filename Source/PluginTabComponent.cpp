@@ -157,13 +157,61 @@ void PluginTabComponent::resized()
 
 bool PluginTabComponent::isInterestedInFileDrag(const juce::StringArray& files)
 {
-    for (auto& f : files) if (isPluginFile(juce::File(f))) return true;
+    for (auto& f : files)
+        if (isPluginFile(juce::File(f)))
+            return true;
+
     return false;
 }
 
 void PluginTabComponent::filesDropped(const juce::StringArray& files, int, int)
 {
-    for (auto& f : files) if (isPluginFile(juce::File(f))) { loadPlugin(juce::File(f)); break; }
+    for (auto& f : files)
+    {
+        juce::File file(f);
+
+        if (!isPluginFile(file))
+            continue;
+
+        if (!hasPlugin())
+        {
+            loadPlugin(file);
+            break;
+        }
+
+        auto currentPluginName = getPluginName().trim();
+        if (currentPluginName.isEmpty())
+            currentPluginName = "Current Plugin";
+
+        juce::String message;
+        message << "Replace this tabs plugin:\n"
+                << currentPluginName
+                << "\n\nWith dropped plugin:\n"
+                << file.getFileName()
+                << "\n\nWhat would you like to do?";
+
+        juce::AlertWindow w("Plugin Drop",
+                            message,
+                            juce::AlertWindow::QuestionIcon);
+
+        w.addButton("Open New Tab", 1);
+        w.addButton("Replace Existing Plugin", 2);
+        w.addButton("Cancel", 0);
+
+        const int result = w.runModalLoop();
+
+        if (result == 1)
+        {
+            if (onOpenDroppedPluginInNewTab)
+                onOpenDroppedPluginInNewTab(file);
+        }
+        else if (result == 2)
+        {
+            loadPlugin(file);
+        }
+
+        break;
+    }
 }
 
 bool PluginTabComponent::isPluginFile(const juce::File& f)

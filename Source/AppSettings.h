@@ -4,9 +4,24 @@
 class AppSettings
 {
 public:
+    static constexpr int defaultWindowWidth  = 900;
+    static constexpr int defaultWindowHeight = 520;
+
     AppSettings();
     void load();
     void save();
+
+    int getWindowX() const;
+    int getWindowY() const;
+    void setWindowPosition(int x, int y);
+
+    juce::String getLastPresetPath() const;
+    void setLastPresetPath(const juce::String& path);
+
+    juce::StringArray getRecentPresetPaths() const;
+    void addRecentPresetPath(const juce::String& path);
+    void clearRecentPresetPaths();
+    void removeMissingRecentPresetPaths();
 
     juce::String getMidiDeviceName() const;
     void setMidiDeviceName(const juce::String& name);

@@ -14,6 +14,21 @@ static constexpr const char* kEnabledMidiDevices        = "EnabledMidiDevices";
 static constexpr const char* kDeviceTag                 = "Device";
 static constexpr const char* kIdentifierAttribute       = "identifier";
 static constexpr const char* kNameAttribute             = "name";
+static constexpr auto kLastPresetPath   = "lastPresetPath";
+static constexpr auto kRecentPresets    = "recentPresets";
+static constexpr auto kWindowX = "windowX";
+static constexpr auto kWindowY = "windowY";
+
+juce::String AppSettings::getLastPresetPath() const
+{
+    return xml->getStringAttribute(kLastPresetPath);
+}
+
+void AppSettings::setLastPresetPath(const juce::String& path)
+{
+    xml->setAttribute(kLastPresetPath, path);
+    save();
+}
 
 juce::File AppSettings::getSettingsFile()
 {
@@ -47,8 +62,8 @@ juce::String AppSettings::getMidiDeviceName() const { return xml->getStringAttri
 void AppSettings::setMidiDeviceName(const juce::String& name) { xml->setAttribute(kMidiDevice, name); save(); }
 juce::String AppSettings::getAudioDeviceName() const { return xml->getStringAttribute(kAudioDevice, ""); }
 void AppSettings::setAudioDeviceName(const juce::String& name) { xml->setAttribute(kAudioDevice, name); save(); }
-int AppSettings::getWindowWidth()  const { return xml->getIntAttribute(kWindowWidth,  1100); }
-int AppSettings::getWindowHeight() const { return xml->getIntAttribute(kWindowHeight,  740); }
+int AppSettings::getWindowWidth()  const { return xml->getIntAttribute(kWindowWidth,  defaultWindowWidth); }
+int AppSettings::getWindowHeight() const { return xml->getIntAttribute(kWindowHeight, defaultWindowHeight); }
 void AppSettings::setWindowSize(int w, int h) { xml->setAttribute(kWindowWidth, w); xml->setAttribute(kWindowHeight, h); save(); }
 
 juce::String AppSettings::getAudioDeviceState() const
@@ -250,6 +265,108 @@ void AppSettings::setEnabledMidiDeviceIdentifiers(const juce::StringArray& ident
     }
 
     xml->addChildElement(devicesXml.release());
+    save();
+}
+
+juce::StringArray AppSettings::getRecentPresetPaths() const
+{
+    juce::StringArray paths;
+
+    if (auto* recentXml = xml->getChildByName(kRecentPresets))
+    {
+        for (auto* presetXml : recentXml->getChildIterator())
+        {
+            if (presetXml->hasTagName("Preset"))
+            {
+                auto path = presetXml->getStringAttribute("path").trim();
+                if (path.isNotEmpty())
+                    paths.add(path);
+            }
+        }
+    }
+
+    return paths;
+}
+
+void AppSettings::addRecentPresetPath(const juce::String& path)
+{
+    auto trimmedPath = path.trim();
+
+    if (trimmedPath.isEmpty())
+        return;
+
+    auto previous = getRecentPresetPaths();
+    previous.removeString(trimmedPath);
+    previous.insert(0, trimmedPath);
+
+    while (previous.size() > 10)
+        previous.remove(previous.size() - 1);
+
+    if (auto* existing = xml->getChildByName(kRecentPresets))
+        xml->removeChildElement(existing, true);
+
+    auto* recentXml = xml->createNewChildElement(kRecentPresets);
+
+    for (auto& recentPath : previous)
+    {
+        auto* presetXml = recentXml->createNewChildElement("Preset");
+        presetXml->setAttribute("path", recentPath);
+    }
+
+    save();
+}
+
+void AppSettings::clearRecentPresetPaths()
+{
+    if (auto* existing = xml->getChildByName(kRecentPresets))
+        xml->removeChildElement(existing, true);
+
+    save();
+}
+
+void AppSettings::removeMissingRecentPresetPaths()
+{
+    auto recentPaths = getRecentPresetPaths();
+    juce::StringArray validPaths;
+
+    for (auto& path : recentPaths)
+    {
+        juce::File file(path);
+        if (file.existsAsFile())
+            validPaths.add(path);
+    }
+
+    if (auto* existing = xml->getChildByName(kRecentPresets))
+        xml->removeChildElement(existing, true);
+
+    if (!validPaths.isEmpty())
+    {
+        auto* recentXml = xml->createNewChildElement(kRecentPresets);
+
+        for (auto& validPath : validPaths)
+        {
+            auto* presetXml = recentXml->createNewChildElement("Preset");
+            presetXml->setAttribute("path", validPath);
+        }
+    }
+
+    save();
+}
+
+int AppSettings::getWindowX() const
+{
+    return xml->getIntAttribute(kWindowX, -1);
+}
+
+int AppSettings::getWindowY() const
+{
+    return xml->getIntAttribute(kWindowY, -1);
+}
+
+void AppSettings::setWindowPosition(int x, int y)
+{
+    xml->setAttribute(kWindowX, x);
+    xml->setAttribute(kWindowY, y);
     save();
 }
 

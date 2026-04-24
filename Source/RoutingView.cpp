@@ -6,10 +6,14 @@ RoutingView::ModuleRow::ModuleRow()
     nameLabel.setColour(juce::Label::textColourId, juce::Colours::white);
     addAndMakeVisible(nameLabel);
 
-    typeLabel.setJustificationType(juce::Justification::centred);
-    typeLabel.setColour(juce::Label::textColourId, juce::Colours::white);
-    typeLabel.setColour(juce::Label::backgroundColourId, juce::Colour(0xFF555555));
-    addAndMakeVisible(typeLabel);
+    typeButton.setColour(juce::TextButton::textColourOffId, juce::Colours::white);
+    typeButton.setColour(juce::TextButton::buttonColourId, juce::Colour(0xFF555555));
+    typeButton.onClick = [this]
+    {
+        if (onSelectTab)
+            onSelectTab(entry.tabIndex);
+    };
+    addAndMakeVisible(typeButton);
 
     addAndMakeVisible(midiButton);
     addAndMakeVisible(bypassButton);
@@ -49,18 +53,18 @@ void RoutingView::ModuleRow::setModule(const ModuleEntry& newEntry)
 
     if (entry.type == PluginTabComponent::SlotType::Synth)
     {
-        typeLabel.setText("Synth", juce::dontSendNotification);
-        typeLabel.setColour(juce::Label::backgroundColourId, juce::Colour(0xFF3A7BD5));
+        typeButton.setButtonText("Synth");
+        typeButton.setColour(juce::TextButton::buttonColourId, juce::Colour(0xFF3A7BD5));
     }
     else if (entry.type == PluginTabComponent::SlotType::FX)
     {
-        typeLabel.setText("FX", juce::dontSendNotification);
-        typeLabel.setColour(juce::Label::backgroundColourId, juce::Colour(0xFFE67E22));
+        typeButton.setButtonText("FX");
+        typeButton.setColour(juce::TextButton::buttonColourId, juce::Colour(0xFFE67E22));
     }
     else
     {
-        typeLabel.setText("Empty", juce::dontSendNotification);
-        typeLabel.setColour(juce::Label::backgroundColourId, juce::Colour(0xFF555555));
+        typeButton.setButtonText("Empty");
+        typeButton.setColour(juce::TextButton::buttonColourId, juce::Colour(0xFF555555));
     }
 
     if (entry.midiAssignmentCount > 0)
@@ -94,7 +98,7 @@ void RoutingView::ModuleRow::resized()
 {
     auto area = getLocalBounds().reduced(10);
 
-    typeLabel.setBounds(area.removeFromLeft(80).reduced(0, 8));
+    typeButton.setBounds(area.removeFromLeft(80).reduced(0, 8));
     area.removeFromLeft(10);
 
     downButton.setBounds(area.removeFromRight(70).reduced(0, 8));
@@ -119,6 +123,13 @@ RoutingView::RoutingView()
     titleLabel.setFont(juce::Font(juce::FontOptions(22.0f, juce::Font::bold)));
     titleLabel.setColour(juce::Label::textColourId, juce::Colours::white);
     addAndMakeVisible(titleLabel);
+
+    refreshMidiButton.onClick = [this]
+    {
+        if (onRefreshMidiDevices)
+            onRefreshMidiDevices();
+    };
+    addAndMakeVisible(refreshMidiButton);
 
     emptyLabel.setText("No loaded plugins.\nLoad a synth or FX in the tab view to see it here.",
                        juce::dontSendNotification);
@@ -165,6 +176,12 @@ void RoutingView::rebuildModuleRows()
                 onToggleBypass(tabIndex);
         };
 
+        row->onSelectTab = [this](int tabIndex)
+        {
+            if (onSelectTab)
+                onSelectTab(tabIndex);
+        };
+
         row->onMoveUp = [this](int tabIndex)
         {
             if (onMoveUp)
@@ -190,7 +207,11 @@ void RoutingView::resized()
 {
     auto area = getLocalBounds().reduced(16);
 
-    titleLabel.setBounds(area.removeFromTop(36));
+    auto headerArea = area.removeFromTop(36);
+    refreshMidiButton.setBounds(headerArea.removeFromRight(130));
+    headerArea.removeFromRight(8);
+    titleLabel.setBounds(headerArea);
+
     area.removeFromTop(10);
 
     emptyLabel.setBounds(area);
