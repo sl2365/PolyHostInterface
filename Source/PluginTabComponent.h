@@ -1,5 +1,6 @@
 #pragma once
 #include <JuceHeader.h>
+#include "SessionTypes.h"
 
 class AudioEngine;
 
@@ -8,7 +9,7 @@ class PluginTabComponent final : public juce::Component,
                                  public juce::ChangeBroadcaster
 {
 public:
-    enum class SlotType { Empty, Synth, FX };
+    using SlotType = PluginSlotType;
 
     static juce::Colour colourForType(SlotType t)
     {

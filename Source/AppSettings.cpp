@@ -3,8 +3,6 @@
 static constexpr const char* kRootTag      = "PolyHostSettings";
 static constexpr const char* kMidiDevice   = "midiDevice";
 static constexpr const char* kAudioDevice  = "audioDevice";
-static constexpr const char* kWindowWidth  = "windowWidth";
-static constexpr const char* kWindowHeight = "windowHeight";
 static constexpr const char* kAudioDeviceState = "audioDeviceState";
 static constexpr const char* kAutoSaveAfterPluginRepair = "autoSaveAfterPluginRepair";
 static constexpr const char* kPluginScanFolders         = "PluginScanFolders";
@@ -62,9 +60,6 @@ juce::String AppSettings::getMidiDeviceName() const { return xml->getStringAttri
 void AppSettings::setMidiDeviceName(const juce::String& name) { xml->setAttribute(kMidiDevice, name); save(); }
 juce::String AppSettings::getAudioDeviceName() const { return xml->getStringAttribute(kAudioDevice, ""); }
 void AppSettings::setAudioDeviceName(const juce::String& name) { xml->setAttribute(kAudioDevice, name); save(); }
-int AppSettings::getWindowWidth()  const { return xml->getIntAttribute(kWindowWidth,  defaultWindowWidth); }
-int AppSettings::getWindowHeight() const { return xml->getIntAttribute(kWindowHeight, defaultWindowHeight); }
-void AppSettings::setWindowSize(int w, int h) { xml->setAttribute(kWindowWidth, w); xml->setAttribute(kWindowHeight, h); save(); }
 
 juce::String AppSettings::getAudioDeviceState() const
 {

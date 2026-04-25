@@ -32,10 +32,6 @@ public:
     juce::String getAudioDeviceName() const;
     void setAudioDeviceName(const juce::String& name);
 
-    int getWindowWidth() const;
-    int getWindowHeight() const;
-    void setWindowSize(int w, int h);
-
     juce::String getAudioDeviceState() const;
     void setAudioDeviceState(const juce::String& xmlText);
 

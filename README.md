@@ -1,4 +1,4 @@
-# PolyHost
+# Poly Host Interface
 
 A lightweight, tabbed VST3 / CLAP plugin host for Windows.
 Play synths and route FX chains, driven by any MIDI device.

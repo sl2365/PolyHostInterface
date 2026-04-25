@@ -7,7 +7,14 @@
 #include "AppSettings.h"
 #include "MidiMonitorWindow.h"
 #include "RoutingView.h"
-#include "TransportState.h"
+#include "SessionData.h"
+#include "SessionDocument.h"
+#include "SessionManager.h"
+#include "TransportController.h"
+#include "PresetSessionController.h"
+#include "PresetFileDialogHelper.h"
+#include "RecentPresetMenuHelper.h"
+#include "FileMenuHelper.h"
 
 class MainComponent final : public juce::Component,
                             public juce::MenuBarModel,
@@ -20,9 +27,10 @@ public:
     static constexpr int kMaxSynthTabs = 2;
     static constexpr int kMaxFxTabs    = 8;
 
-    explicit MainComponent(bool shouldLoadLastPreset);
+    MainComponent();
     ~MainComponent() override;
 
+    void performInitialSessionLoad(bool shouldLoadLastPreset);
     void loadPluginFromFile(const juce::File& file);
     void resized() override;
     void paint(juce::Graphics& g) override;
@@ -275,7 +283,7 @@ private:
             const double step = fineAdjust ? 0.1 : 1.0;
             const double direction = (wheel.deltaY > 0.0f) ? 1.0 : -1.0;
 
-            owner.setHostTempoBpm(owner.transportState.hostTempoBpm + direction * step);
+            owner.setHostTempoBpm(owner.getHostTempoBpm() + direction * step);
         }
 
         void mouseDoubleClick(const juce::MouseEvent& event) override
@@ -283,7 +291,7 @@ private:
             juce::ignoreUnused(event);
             if (! isInteractive())
                 return;
-            owner.setHostTempoBpm(owner.transportState.defaultTempoBpm);
+            owner.setHostTempoBpm(owner.getDefaultTempoBpm());
         }
 
         bool keyPressed(const juce::KeyPress& key) override
@@ -293,25 +301,25 @@ private:
 
             if (key == juce::KeyPress(juce::KeyPress::upKey, juce::ModifierKeys::shiftModifier, 0))
             {
-                owner.setHostTempoBpm(owner.transportState.hostTempoBpm + 0.1);
+                owner.setHostTempoBpm(owner.getHostTempoBpm() + 0.1);
                 return true;
             }
 
             if (key == juce::KeyPress(juce::KeyPress::downKey, juce::ModifierKeys::shiftModifier, 0))
             {
-                owner.setHostTempoBpm(owner.transportState.hostTempoBpm - 0.1);
+                owner.setHostTempoBpm(owner.getHostTempoBpm() - 0.1);
                 return true;
             }
 
             if (key == juce::KeyPress::upKey)
             {
-                owner.setHostTempoBpm(owner.transportState.hostTempoBpm + 1.0);
+                owner.setHostTempoBpm(owner.getHostTempoBpm() + 1.0);
                 return true;
             }
 
             if (key == juce::KeyPress::downKey)
             {
-                owner.setHostTempoBpm(owner.transportState.hostTempoBpm - 1.0);
+                owner.setHostTempoBpm(owner.getHostTempoBpm() - 1.0);
                 return true;
             }
 
@@ -321,6 +329,12 @@ private:
         bool isInteractive() const
         {
             return owner.isTempoEditorInteractive();
+        }
+
+        void focusLost(FocusChangeType cause) override
+        {
+            juce::TextEditor::focusLost(cause);
+            owner.commitTempoFromEditor();
         }
 
     private:
@@ -341,7 +355,7 @@ private:
             auto area = getLocalBounds().toFloat().reduced(2.0f);
             auto beatWidth = area.getWidth() / 4.0f;
 
-            const auto bpm = owner.transportState.hostTempoBpm;
+            const auto bpm = owner.getHostTempoBpm();
             const auto nowMs = juce::Time::getMillisecondCounterHiRes();
             const auto beatLengthMs = 60000.0 / juce::jmax(1.0, bpm);
             const int beatIndex = (int) std::floor(nowMs / beatLengthMs) % 4;
@@ -503,6 +517,11 @@ private:
     void refreshPresetDropdown();
     void loadPresetFromDropdown();
 
+    SessionData buildSessionData() const;
+    void applySessionData(const SessionData& session,
+                          juce::StringArray& loadErrors,
+                          juce::Array<MissingPluginEntry>& missingPlugins);
+
     // Missing plugin repair
     void locateMissingPlugins();
     bool promptToLocateMissingPlugins(const juce::Array<MissingPluginEntry>& missingPlugins);
@@ -539,15 +558,16 @@ private:
 
     // Tempo
     bool isTempoEditorInteractive() const;
-    TransportState transportState;
-    double lastDisplayedSyncedTempoBpm = -1.0;
-    bool lastDisplayedHostTempoAvailable = false;
+    TransportController transportController { audioEngine };
+
+    double getHostTempoBpm() const;
+    double getDefaultTempoBpm() const;
+    bool isHostSyncEnabled() const;
 
     BeatIndicatorComponent beatIndicator { *this };
     juce::TooltipWindow tooltipWindow { this };
     TempoTextEditor tempoEditor { *this };
     StyledToolbarButton tapTempoButton { 0, "Tap Tempo", "Tap", StyledToolbarButton::ContentType::TextLabel, 48 };
-    juce::Array<double> tapTimesMs;
 
     void timerCallback() override;
     void refreshTempoUiFromEngine();
@@ -567,7 +587,12 @@ private:
     void showPluginScanFolders();
     void clearPluginScanFolders();
 
+    SessionDocument sessionDocument;
     AppSettings settings;
+    PresetSessionController presetSessionController { settings, sessionDocument };
+    PresetFileDialogHelper presetFileDialogHelper { settings, presetSessionController };
+    RecentPresetMenuHelper recentPresetMenuHelper { presetSessionController };
+    FileMenuHelper fileMenuHelper;
     AudioEngine audioEngine;
     MidiEngine midiEngine { audioEngine.getDeviceManager() };
 
@@ -580,7 +605,6 @@ private:
     RoutingView routingView;
     bool showingRoutingView = false;
     std::unique_ptr<MidiMonitorWindow> midiMonitorWindow;
-    juce::File currentPresetFile;
     juce::File lastPluginRepairDirectory;
     bool isLoadingPreset = false;
     bool isSessionDirty = false;

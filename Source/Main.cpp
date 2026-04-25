@@ -30,21 +30,21 @@ public:
         {
             setUsingNativeTitleBar(true);
             const bool launchedWithFile = commandLineContainsExistingFile(commandLine);
-            mainComponent = new MainComponent(!launchedWithFile);
+            mainComponent = new MainComponent();
             setContentOwned(mainComponent, true);
             setResizable(true, true);
             setResizeLimits(900, 550, 3840, 2160);
-            auto& s = mainComponent->getSettings();
 
-            const int w = s.getWindowWidth();
-            const int h = s.getWindowHeight();
+            auto& s = mainComponent->getSettings();
             const int x = s.getWindowX();
             const int y = s.getWindowY();
 
             if (x >= 0 && y >= 0)
-                setBounds(x, y, w, h);
+                setBounds(x, y, AppSettings::defaultWindowWidth, AppSettings::defaultWindowHeight);
             else
-                centreWithSize(w, h);
+                centreWithSize(AppSettings::defaultWindowWidth, AppSettings::defaultWindowHeight);
+
+            mainComponent->performInitialSessionLoad(!launchedWithFile);
 
             setVisible(true);
 
@@ -56,7 +56,6 @@ public:
         {
             if (mainComponent)
             {
-                mainComponent->getSettings().setWindowSize(getWidth(), getHeight());
                 mainComponent->getSettings().setWindowPosition(getX(), getY());
             }
         }
