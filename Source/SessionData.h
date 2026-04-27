@@ -26,17 +26,9 @@ struct SessionTabData
     SessionPluginData plugin;
 };
 
-struct SessionWindowData
-{
-    int width = 900;
-    int height = 520;
-};
-
 struct SessionData
 {
     juce::String name;
-    int selectedTab = 0;
     double hostTempoBpm = 120.0;
-    SessionWindowData window;
     juce::Array<SessionTabData> tabs;
 };

@@ -30,10 +30,7 @@ bool SessionManager::saveSessionToFile(const SessionData& session, const juce::F
 {
     juce::XmlElement presetXml("PolyHostPreset");
     presetXml.setAttribute("name", session.name);
-    presetXml.setAttribute("selectedTab", session.selectedTab);
     presetXml.setAttribute("hostTempoBpm", session.hostTempoBpm);
-    presetXml.setAttribute("windowWidth", session.window.width);
-    presetXml.setAttribute("windowHeight", session.window.height);
 
     for (auto& tab : session.tabs)
     {
@@ -86,10 +83,7 @@ bool SessionManager::loadSessionFromFile(const juce::File& file,
 
     session = {};
     session.name = xml->getStringAttribute("name", file.getFileNameWithoutExtension());
-    session.selectedTab = xml->getIntAttribute("selectedTab", 0);
     session.hostTempoBpm = xml->getDoubleAttribute("hostTempoBpm", 120.0);
-    session.window.width = xml->getIntAttribute("windowWidth", 900);
-    session.window.height = xml->getIntAttribute("windowHeight", 520);
 
     for (auto* tabXml : xml->getChildIterator())
     {

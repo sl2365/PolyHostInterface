@@ -6,7 +6,8 @@ class AudioEngine;
 
 class PluginTabComponent final : public juce::Component,
                                  public juce::FileDragAndDropTarget,
-                                 public juce::ChangeBroadcaster
+                                 public juce::ChangeBroadcaster,
+                                 private juce::AudioProcessorListener
 {
 public:
     using SlotType = PluginSlotType;
@@ -40,6 +41,7 @@ public:
 
     void setAllowEditorWindowResize(bool shouldAllow) { allowEditorWindowResize = shouldAllow; }
 
+    juce::Rectangle<int> getPreferredContentBounds() const;
     juce::File getPluginFile() const;
     juce::MemoryBlock getPluginState() const;
     bool restorePluginState(const juce::MemoryBlock& state);
@@ -55,6 +57,10 @@ public:
 
 private:
     void showPluginEditor();
+    void attachToCurrentProcessor();
+    void detachFromCurrentProcessor();
+    void audioProcessorParameterChanged(juce::AudioProcessor*, int, float) override;
+    void audioProcessorChanged(juce::AudioProcessor*, const juce::AudioProcessorListener::ChangeDetails&) override;
 
     AudioEngine& audioEngine;
     SlotType slotType { SlotType::Empty };
@@ -63,6 +69,7 @@ private:
     juce::AudioPluginFormatManager formatManager;
     juce::AudioProcessorGraph::NodeID nodeId;
     std::unique_ptr<juce::AudioProcessorEditor> pluginEditor;
+    juce::Rectangle<int> preferredEditorBounds { 0, 0, 360, 220 };
     juce::File loadedPluginFile;
 
     juce::TextButton loadButton { "Click to Load Plugin..." };

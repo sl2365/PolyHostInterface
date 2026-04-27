@@ -90,12 +90,18 @@ MainComponent::MainComponent()
     standaloneTempoSupport.setDefaultTempoBpm(StandaloneTempoState{}.defaultTempoBpm);
     standaloneTempoSupport.setHostTempoBpm(StandaloneTempoState{}.hostTempoBpm);
     standaloneTempoSupport.refreshTempoStrip();
+    standaloneTempoSupport.onTempoChanged = [this]
+    {
+        if (!isLoadingPreset)
+            markSessionDirty();
+    };
 
     tabs.setColour(juce::TabbedComponent::backgroundColourId, juce::Colour(0xFF16213E));
     tabs.setTabBarDepth(34);
     tabs.getTabbedButtonBar().setMinimumTabScaleFactor(0.7f);
     tabs.getTabbedButtonBar().setLookAndFeel(&tabBarLookAndFeel);
     tabs.getTabbedButtonBar().addMouseListener(&tabBarMouseListener, true);
+    tabs.getTabbedButtonBar().addChangeListener(this);
     addAndMakeVisible(tabs);
     updateStatusBarText();
 
@@ -122,6 +128,7 @@ MainComponent::MainComponent()
         {
             tabs.setCurrentTabIndex(tabIndex);
             setRoutingViewVisible(false);
+            handleCurrentTabChanged();
         }
     };
 
@@ -205,6 +212,7 @@ MainComponent::MainComponent()
 MainComponent::~MainComponent()
 {
     tabs.getTabbedButtonBar().removeMouseListener(&tabBarMouseListener);
+    tabs.getTabbedButtonBar().removeChangeListener(this);
     tabs.getTabbedButtonBar().setLookAndFeel(nullptr);
     audioEngine.getDeviceManager().removeChangeListener(this);
     midiEngine.removeChangeListener(this);
@@ -218,19 +226,7 @@ SessionData MainComponent::buildSessionData() const
     SessionData session;
 
     session.name = sessionDocument.getDisplayName();
-    session.selectedTab = tabs.getCurrentTabIndex();
     session.hostTempoBpm = standaloneTempoSupport.getHostTempoBpm();
-
-    if (auto* top = findParentComponentOfClass<juce::DocumentWindow>())
-    {
-        session.window.width = top->getWidth();
-        session.window.height = top->getHeight();
-    }
-    else
-    {
-        session.window.width = getWidth();
-        session.window.height = getHeight();
-    }
 
     for (int i = 0; i < tabs.getNumTabs(); ++i)
     {
@@ -371,37 +367,11 @@ void MainComponent::applySessionData(const SessionData& session,
     refreshRoutingView();
     syncRoutingToAudioEngine();
 
-    if (juce::isPositiveAndBelow(session.selectedTab, tabs.getNumTabs()))
-        tabs.setCurrentTabIndex(session.selectedTab);
+    if (tabs.getNumTabs() > 0)
+        tabs.setCurrentTabIndex(0);
 
-    if (auto* top = findParentComponentOfClass<juce::DocumentWindow>())
-    {
-        bool hasLoadedPlugin = false;
-
-        for (int i = 0; i < tabs.getNumTabs(); ++i)
-        {
-            if (auto* tc = getTabComponent(i))
-            {
-                if (tc->hasPlugin())
-                {
-                    hasLoadedPlugin = true;
-                    break;
-                }
-            }
-        }
-
-        int w = AppSettings::defaultWindowWidth;
-        int h = AppSettings::defaultWindowHeight;
-
-        if (hasLoadedPlugin)
-        {
-            w = session.window.width;
-            h = session.window.height;
-        }
-
-        top->setSize(juce::jmax(AppSettings::defaultWindowWidth, w),
-                     juce::jmax(AppSettings::defaultWindowHeight, h));
-    }
+    setRoutingViewVisible(false);
+    handleCurrentTabChanged();
 }
 
 void MainComponent::changeListenerCallback(juce::ChangeBroadcaster* source)
@@ -416,6 +386,12 @@ void MainComponent::changeListenerCallback(juce::ChangeBroadcaster* source)
     {
         refreshRoutingView();
         updateStatusBarText();
+        return;
+    }
+
+    if (source == &tabs.getTabbedButtonBar())
+    {
+        handleCurrentTabChanged();
         return;
     }
 
@@ -455,7 +431,7 @@ void MainComponent::loadPluginFromFile(const juce::File& file)
                 {
                     tabs.setCurrentTabIndex(i);
                     refreshTabAppearance(i);
-                    refreshRoutingView();
+                    handleCurrentTabChanged();
                     markSessionDirty();
                 }
                 return;
@@ -471,7 +447,7 @@ void MainComponent::loadPluginFromFile(const juce::File& file)
         {
             tabs.setCurrentTabIndex(tabs.getNumTabs() - 1);
             refreshTabAppearance(tabs.getNumTabs() - 1);
-            refreshRoutingView();
+            handleCurrentTabChanged();
             markSessionDirty();
         }
     }
@@ -494,7 +470,7 @@ void MainComponent::configurePluginTabComponent(PluginTabComponent& tabComponent
             {
                 tabs.setCurrentTabIndex(newTabIndex);
                 refreshTabAppearance(newTabIndex);
-                refreshRoutingView();
+                handleCurrentTabChanged();
                 markSessionDirty();
             }
         }
@@ -522,12 +498,10 @@ void MainComponent::refreshTabAppearance(int index)
         auto baseColour = PluginTabComponent::colourForType(tc->getType());
         const bool isSelected = (index == tabs.getCurrentTabIndex());
 
-        auto tabColour = isSelected
-            ? baseColour.brighter(0.10f)
-            : baseColour.darker(0.50f);
-
         tabs.setTabName(index, name);
-        tabs.setTabBackgroundColour(index, tabColour);
+        tabs.setTabBackgroundColour(index,
+                                    isSelected ? baseColour
+                                               : baseColour.darker(0.50f));
     }
 }
 
@@ -542,6 +516,44 @@ int MainComponent::countTabsOfType(PluginTabComponent::SlotType type) const
 PluginTabComponent* MainComponent::getTabComponent(int index) const
 {
     return dynamic_cast<PluginTabComponent*>(tabs.getTabContentComponent(index));
+}
+
+void MainComponent::handleCurrentTabChanged()
+{
+    for (int i = 0; i < tabs.getNumTabs(); ++i)
+        refreshTabAppearance(i);
+
+    refreshRoutingView();
+    resizeWindowToFitCurrentTab();
+}
+
+void MainComponent::resizeWindowToFitCurrentTab()
+{
+    auto* top = findParentComponentOfClass<juce::DocumentWindow>();
+    if (top == nullptr)
+        return;
+
+    auto* tc = getTabComponent(tabs.getCurrentTabIndex());
+    if (tc == nullptr)
+        return;
+
+    const auto preferred = tc->getPreferredContentBounds();
+
+    const int minWidth = AppSettings::defaultWindowWidth;
+    const int minHeight = AppSettings::defaultWindowHeight;
+
+    const int extraWidth = 32;
+    const int extraHeight =
+        juce::LookAndFeel::getDefaultLookAndFeel().getDefaultMenuBarHeight()
+        + 32   // top toolbar/preset row
+        + 34   // tab bar
+        + 24   // status bar
+        + 32;  // outer padding
+
+    const int targetWidth = juce::jmax(minWidth, preferred.getWidth() + extraWidth);
+    const int targetHeight = juce::jmax(minHeight, preferred.getHeight() + extraHeight);
+
+    top->setSize(targetWidth, targetHeight);
 }
 
 void MainComponent::paint(juce::Graphics& g) { g.fillAll(juce::Colour(0xFF1D2230)); }
@@ -828,7 +840,8 @@ void MainComponent::newPreset()
         top->setSize(AppSettings::defaultWindowWidth, AppSettings::defaultWindowHeight);
 
     refreshPresetDropdown();
-    updateWindowTitle();
+    markSessionClean();
+    resizeWindowToFitCurrentTab();
 }
 
 bool MainComponent::maybeSaveChanges()
@@ -981,10 +994,10 @@ bool MainComponent::loadPresetFromFile(const juce::File& file)
 
     promptToLocateMissingPlugins(unresolvedMissingPlugins);
 
-    juce::MessageManager::callAsync([this]
+    juce::Timer::callAfterDelay(250, [this]
     {
         isLoadingPreset = false;
-        updateWindowTitle();
+        markSessionClean();
     });
 
     return true;
@@ -1827,7 +1840,7 @@ void MainComponent::closeCurrentTab()
         refreshTabAppearance(i);
 
     unresolvedMissingPlugins.clear();
-    refreshRoutingView();
+    handleCurrentTabChanged();
     markSessionDirty();
 }
 
@@ -1931,7 +1944,7 @@ void MainComponent::showTabContextMenu(int tabIndex)
                            for (int i = 0; i < tabs.getNumTabs(); ++i)
                                refreshTabAppearance(i);
 
-                           refreshRoutingView();
+                           handleCurrentTabChanged();
                            unresolvedMissingPlugins.clear();
                            markSessionDirty();
                        });
@@ -2056,7 +2069,7 @@ void MainComponent::moveTabEarlier(int tabIndex)
     tabs.setCurrentTabIndex(selectedIndex);
 
     syncRoutingToAudioEngine();
-    refreshRoutingView();
+    handleCurrentTabChanged();
     markSessionDirty();
 }
 
@@ -2157,7 +2170,7 @@ void MainComponent::moveTabLater(int tabIndex)
     tabs.setCurrentTabIndex(selectedIndex);
 
     syncRoutingToAudioEngine();
-    refreshRoutingView();
+    handleCurrentTabChanged();
     markSessionDirty();
 }
 

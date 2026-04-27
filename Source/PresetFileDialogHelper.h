@@ -19,11 +19,11 @@ public:
         {
             juce::File lastPresetFile(lastPresetPath);
 
-            if (lastPresetFile.exists())
+            if (lastPresetFile.existsAsFile())
                 return lastPresetFile.getParentDirectory();
         }
 
-        return juce::File::getSpecialLocation(juce::File::userDocumentsDirectory);
+        return AppSettings::getPresetsDirectory();
     }
 
     juce::String getSuggestedSaveName() const

@@ -26,8 +26,11 @@ PluginTabComponent::PluginTabComponent(AudioEngine& engine, int index)
 
 PluginTabComponent::~PluginTabComponent()
 {
+    detachFromCurrentProcessor();
     pluginEditor.reset();
-    if (nodeId != juce::AudioProcessorGraph::NodeID()) audioEngine.removePlugin(nodeId);
+
+    if (nodeId != juce::AudioProcessorGraph::NodeID())
+        audioEngine.removePlugin(nodeId);
 }
 
 bool PluginTabComponent::loadPlugin(const juce::File& pluginFile)
@@ -56,6 +59,7 @@ bool PluginTabComponent::loadPlugin(const juce::File& pluginFile)
     loadedPluginFile = pluginFile;
     slotType = desc.isInstrument ? SlotType::Synth : SlotType::FX;
     nodeId = audioEngine.addPlugin(std::move(instance), desc.isInstrument);
+    attachToCurrentProcessor();
     showPluginEditor();
     sendChangeMessage();
     return true;
@@ -63,6 +67,8 @@ bool PluginTabComponent::loadPlugin(const juce::File& pluginFile)
 
 void PluginTabComponent::clearPlugin()
 {
+    detachFromCurrentProcessor();
+
     if (pluginEditor != nullptr)
         removeChildComponent(pluginEditor.get());
 
@@ -77,6 +83,7 @@ void PluginTabComponent::clearPlugin()
     loadedPluginFile = {};
     slotType = SlotType::Empty;
     bypassed = false;
+    preferredEditorBounds = { 0, 0, 360, 220 };
 
     loadButton.setVisible(true);
     statusLabel.setVisible(true);
@@ -106,21 +113,70 @@ void PluginTabComponent::showPluginEditor()
     }
 
     pluginEditor.reset(proc->createEditor());
-    addAndMakeVisible(pluginEditor.get());
 
-    if (allowEditorWindowResize)
+    if (pluginEditor != nullptr)
     {
-        const auto editorBounds = pluginEditor->getLocalBounds();
+        auto w = pluginEditor->getWidth();
+        auto h = pluginEditor->getHeight();
 
-        if (auto* top = getTopLevelComponent())
+        if (w <= 0 || h <= 0)
         {
-            auto bounds = top->getBounds();
-            bounds.setWidth(juce::jmax(bounds.getWidth(),  editorBounds.getWidth()  + 80));
-            bounds.setHeight(juce::jmax(bounds.getHeight(), editorBounds.getHeight() + 140));
-            top->setBounds(bounds);
+            auto b = pluginEditor->getBounds();
+            w = b.getWidth();
+            h = b.getHeight();
         }
+
+        preferredEditorBounds = { 0, 0,
+                                  juce::jmax(360, w),
+                                  juce::jmax(220, h) };
     }
+
+    addAndMakeVisible(pluginEditor.get());
     resized();
+}
+
+juce::Rectangle<int> PluginTabComponent::getPreferredContentBounds() const
+{
+    return preferredEditorBounds;
+}
+
+void PluginTabComponent::attachToCurrentProcessor()
+{
+    auto* node = audioEngine.getGraph().getNodeForId(nodeId);
+    if (node == nullptr)
+        return;
+
+    if (auto* proc = node->getProcessor())
+        proc->addListener(this);
+}
+
+void PluginTabComponent::detachFromCurrentProcessor()
+{
+    auto* node = audioEngine.getGraph().getNodeForId(nodeId);
+    if (node == nullptr)
+        return;
+
+    if (auto* proc = node->getProcessor())
+        proc->removeListener(this);
+}
+
+void PluginTabComponent::audioProcessorParameterChanged(juce::AudioProcessor*, int, float)
+{
+    juce::MessageManager::callAsync([safe = juce::Component::SafePointer<PluginTabComponent>(this)]
+    {
+        if (safe != nullptr)
+            safe->sendChangeMessage();
+    });
+}
+
+void PluginTabComponent::audioProcessorChanged(juce::AudioProcessor*,
+                                               const juce::AudioProcessorListener::ChangeDetails&)
+{
+    juce::MessageManager::callAsync([safe = juce::Component::SafePointer<PluginTabComponent>(this)]
+    {
+        if (safe != nullptr)
+            safe->sendChangeMessage();
+    });
 }
 
 juce::String PluginTabComponent::getPluginName() const

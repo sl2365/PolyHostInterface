@@ -347,6 +347,8 @@ private:
     void refreshPresetLists();
     void refreshPresetDropdown();
     void loadPresetFromDropdown();
+    void resizeWindowToFitCurrentTab();
+    void handleCurrentTabChanged();
 
     SessionData buildSessionData() const;
     void applySessionData(const SessionData& session,

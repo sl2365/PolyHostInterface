@@ -299,6 +299,7 @@ public:
     void refreshTempoStrip();
 
     juce::AudioPlayHead* getPlayHead() { return &hostPlayHead; }
+    std::function<void()> onTempoChanged;
 
 private:
     void pushEffectiveTempoToEngine();

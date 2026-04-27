@@ -44,8 +44,14 @@ void StandaloneTempoSupport::setHostTempoBpm(double bpm)
     bpm = juce::jlimit(20.0, 300.0, bpm);
     bpm = std::round(bpm * 10.0) / 10.0;
 
+    if (state.hostTempoBpm == bpm)
+        return;
+
     state.hostTempoBpm = bpm;
     pushEffectiveTempoToEngine();
+
+    if (onTempoChanged)
+        onTempoChanged();
 }
 
 double StandaloneTempoSupport::getHostTempoBpm() const
