@@ -60,6 +60,7 @@ PolyHost\                        ← your project root
 https://visualstudio.microsoft.com/vs/community/
 During install tick: Desktop development with C++
 You never open Visual Studio. It only provides the C++ compiler that CMake calls.
+But this way allows you to use whatever editor you want.
 
 ### 2. Portable CMake (no installer)
 Download the Windows x64 ZIP from: https://cmake.org/download/

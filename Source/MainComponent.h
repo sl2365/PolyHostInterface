@@ -20,6 +20,7 @@
 
 class MainComponent final : public juce::Component,
                             public juce::MenuBarModel,
+                            public juce::FileDragAndDropTarget,
                             private juce::ChangeListener,
                             public juce::ToolbarItemFactory
 {
@@ -32,6 +33,8 @@ public:
 
     void performInitialSessionLoad(bool shouldLoadLastPreset);
     void loadPluginFromFile(const juce::File& file);
+    bool isInterestedInFileDrag(const juce::StringArray& files) override;
+    void filesDropped(const juce::StringArray& files, int x, int y) override;
     void resized() override;
     void paint(juce::Graphics& g) override;
     bool requestQuit();
@@ -244,6 +247,14 @@ private:
         }
     };
 
+    class AddTabButton final : public juce::Button
+    {
+    public:
+        AddTabButton() : juce::Button("Add Tab") {}
+
+        void paintButton(juce::Graphics& g, bool isMouseOverButton, bool isButtonDown) override;
+    };
+
     struct MissingPluginEntry
     {
         int tabIndex = -1;
@@ -287,6 +298,9 @@ private:
     // Core UI / tab helpers
     void addEmptyTab();
     void refreshTabAppearance(int tabIndex);
+    bool handleDroppedPluginFile(const juce::File& file, int targetTabIndex);
+    int promptForDroppedPluginAction(const juce::File& droppedFile, int targetTabIndex) const;
+    bool loadDroppedPluginInNewTab(const juce::File& file);
     void configurePluginTabComponent(PluginTabComponent& tabComponent);
     int countTabsOfType(PluginTabComponent::SlotType type) const;
     PluginTabComponent* getTabComponent(int tabIndex) const;
@@ -305,7 +319,12 @@ private:
     void updateStatusBarText();
     enum ToolbarItemIds
     {
-        toolbarRoutingToggle = 10001
+        toolbarRoutingToggle = 10001,
+        toolbarRefitWindow   = 10002,
+        toolbarSavePreset    = 10003,
+        toolbarSavePresetAs  = 10004,
+        toolbarSpacer        = 10005,
+        toolbarRevertPreset  = 10006
     };
     enum MenuItemIds
     {
@@ -335,6 +354,8 @@ private:
     void savePresetAs();
     void loadPreset();
     void deletePreset();
+    bool confirmRevertCurrentPreset() const;
+    void revertCurrentPreset();
     void clearAllPlugins();
     bool writePresetToFile(const juce::File& file);
     void updateWindowTitle();
@@ -346,6 +367,7 @@ private:
     bool loadPresetFromFile(const juce::File& file);
     void refreshPresetLists();
     void refreshPresetDropdown();
+    void updatePresetDropdownDisplayText();
     void loadPresetFromDropdown();
     void resizeWindowToFitCurrentTab();
     void handleCurrentTabChanged();
@@ -415,6 +437,7 @@ private:
 
     juce::MenuBarComponent menuBar { this };
     juce::TabbedComponent tabs { juce::TabbedButtonBar::TabsAtTop };
+    AddTabButton addTabButton;
     TabBarLookAndFeel tabBarLookAndFeel;
     TabBarMouseListener tabBarMouseListener { *this };
     juce::Label statusBar;
@@ -424,6 +447,7 @@ private:
     std::unique_ptr<MidiMonitorWindow> midiMonitorWindow;
     juce::File lastPluginRepairDirectory;
     bool isLoadingPreset = false;
+    double ignoreDirtyChangesUntilMs = 0.0;
     bool isSessionDirty = false;
     juce::Array<MissingPluginEntry> unresolvedMissingPlugins;
     PresetComboBox presetDropdown;

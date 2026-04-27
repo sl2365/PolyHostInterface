@@ -56,6 +56,67 @@ namespace
     };
 }
 
+    class FixedWidthSpacer final : public juce::ToolbarItemComponent
+    {
+    public:
+        FixedWidthSpacer(int itemId, int widthIn)
+            : juce::ToolbarItemComponent(itemId, "Spacer", false),
+              width(widthIn)
+        {
+        }
+
+        bool getToolbarItemSizes(int toolbarDepth, bool isVertical,
+                                 int& preferredSize, int& minSize, int& maxSize) override
+        {
+            juce::ignoreUnused(toolbarDepth, isVertical);
+            preferredSize = width;
+            minSize = width;
+            maxSize = width;
+            return true;
+        }
+
+        void paintButtonArea(juce::Graphics&, int, int, bool, bool) override {}
+
+        void contentAreaChanged(const juce::Rectangle<int>&) override {}
+
+    private:
+        int width = 10;
+    };
+
+void MainComponent::AddTabButton::paintButton(juce::Graphics& g, bool isMouseOverButton, bool /*isButtonDown*/)
+{
+    auto area = getLocalBounds().toFloat();
+
+    auto baseColour = PluginTabComponent::colourForType(PluginTabComponent::SlotType::Empty);
+    auto colour = baseColour.darker(0.50f);
+
+    if (isMouseOverButton)
+        colour = colour.brighter(0.1f);
+
+    const float cornerSize = 6.0f;
+
+    juce::Path tabShape;
+    tabShape.startNewSubPath(area.getBottomLeft());
+    tabShape.lineTo(area.getX(), area.getY() + cornerSize);
+    tabShape.quadraticTo(area.getX(), area.getY(),
+                         area.getX() + cornerSize, area.getY());
+    tabShape.lineTo(area.getRight() - cornerSize, area.getY());
+    tabShape.quadraticTo(area.getRight(), area.getY(),
+                         area.getRight(), area.getY() + cornerSize);
+    tabShape.lineTo(area.getRight(), area.getBottom());
+    tabShape.closeSubPath();
+
+    g.setColour(colour);
+    g.fillPath(tabShape);
+
+    g.setColour(juce::Colours::lightgrey);
+    g.setFont(juce::Font(juce::FontOptions(14.0f, juce::Font::bold)));
+    g.drawFittedText("+",
+                     getLocalBounds().reduced(2, 0),
+                     juce::Justification::centred,
+                     1);
+}
+
 MainComponent::MainComponent()
 {
     setSize(AppSettings::defaultWindowWidth, AppSettings::defaultWindowHeight);
@@ -76,6 +137,7 @@ MainComponent::MainComponent()
 
     addAndMakeVisible(presetDropdown);
     presetDropdown.setTextWhenNothingSelected("Select Preset");
+    // presetDropdown.setTextWhenNothingSelected("Untitled");
     presetDropdown.onBeforePopup = [this]
     {
         refreshPresetLists();
@@ -92,7 +154,8 @@ MainComponent::MainComponent()
     standaloneTempoSupport.refreshTempoStrip();
     standaloneTempoSupport.onTempoChanged = [this]
     {
-        if (!isLoadingPreset)
+        const auto nowMs = juce::Time::getMillisecondCounterHiRes();
+        if (!isLoadingPreset && nowMs >= ignoreDirtyChangesUntilMs)
             markSessionDirty();
     };
 
@@ -103,6 +166,14 @@ MainComponent::MainComponent()
     tabs.getTabbedButtonBar().addMouseListener(&tabBarMouseListener, true);
     tabs.getTabbedButtonBar().addChangeListener(this);
     addAndMakeVisible(tabs);
+
+    addAndMakeVisible(addTabButton);
+    addTabButton.setTooltip("New Tab");
+    addTabButton.onClick = [this]
+    {
+        addEmptyTab();
+    };
+
     updateStatusBarText();
 
     routingView.onShowMidiAssignments = [this](int tabIndex, juce::Component* anchorComponent)
@@ -404,7 +475,9 @@ void MainComponent::changeListenerCallback(juce::ChangeBroadcaster* source)
                 refreshTabAppearance(i);
                 syncRoutingToAudioEngine();
                 refreshRoutingView();
-                if (!isLoadingPreset)
+
+                const auto nowMs = juce::Time::getMillisecondCounterHiRes();
+                if (!isLoadingPreset && nowMs >= ignoreDirtyChangesUntilMs)
                     markSessionDirty();
 
                 return;
@@ -453,25 +526,141 @@ void MainComponent::loadPluginFromFile(const juce::File& file)
     }
 }
 
+int MainComponent::promptForDroppedPluginAction(const juce::File& droppedFile, int targetTabIndex) const
+{
+    if (!juce::isPositiveAndBelow(targetTabIndex, tabs.getNumTabs()))
+        return 0;
+
+    auto* targetTab = getTabComponent(targetTabIndex);
+    if (targetTab == nullptr || !targetTab->hasPlugin())
+        return 1; // treat as open/load directly
+
+    auto currentPluginName = targetTab->getPluginName().trim();
+    if (currentPluginName.isEmpty())
+        currentPluginName = "Current Plugin";
+
+    juce::String message;
+    message << "Replace this tab's plugin:\n"
+            << currentPluginName
+            << "\n\nWith dropped plugin:\n"
+            << droppedFile.getFileName()
+            << "\n\nWhat would you like to do?";
+
+    juce::AlertWindow w("Plugin Drop",
+                        message,
+                        juce::AlertWindow::QuestionIcon);
+
+    w.addButton("Open New Tab", 1);
+    w.addButton("Replace Plugin", 2);
+    w.addButton("Cancel", 0);
+
+    return w.runModalLoop();
+}
+
+bool MainComponent::loadDroppedPluginInNewTab(const juce::File& file)
+{
+    addEmptyTab();
+
+    const int newTabIndex = tabs.getNumTabs() - 1;
+
+    if (auto* newTab = getTabComponent(newTabIndex))
+    {
+        if (newTab->loadPlugin(file))
+        {
+            tabs.setCurrentTabIndex(newTabIndex);
+            refreshTabAppearance(newTabIndex);
+            handleCurrentTabChanged();
+            markSessionDirty();
+            return true;
+        }
+    }
+
+    return false;
+}
+
+bool MainComponent::handleDroppedPluginFile(const juce::File& file, int targetTabIndex)
+{
+    if (!PluginTabComponent::isPluginFile(file))
+        return false;
+
+    if (!juce::isPositiveAndBelow(targetTabIndex, tabs.getNumTabs()))
+        return false;
+
+    auto* targetTab = getTabComponent(targetTabIndex);
+    if (targetTab == nullptr)
+        return false;
+
+    if (!targetTab->hasPlugin())
+    {
+        if (targetTab->loadPlugin(file))
+        {
+            tabs.setCurrentTabIndex(targetTabIndex);
+            refreshTabAppearance(targetTabIndex);
+            handleCurrentTabChanged();
+            markSessionDirty();
+            return true;
+        }
+
+        return false;
+    }
+
+    const int action = promptForDroppedPluginAction(file, targetTabIndex);
+
+    if (action == 1)
+        return loadDroppedPluginInNewTab(file);
+
+    if (action == 2)
+    {
+        if (targetTab->loadPlugin(file))
+        {
+            tabs.setCurrentTabIndex(targetTabIndex);
+            refreshTabAppearance(targetTabIndex);
+            handleCurrentTabChanged();
+            markSessionDirty();
+            return true;
+        }
+    }
+
+    return false;
+}
+
+bool MainComponent::isInterestedInFileDrag(const juce::StringArray& files)
+{
+    for (auto& path : files)
+    {
+        if (PluginTabComponent::isPluginFile(juce::File(path)))
+            return true;
+    }
+
+    return false;
+}
+
+void MainComponent::filesDropped(const juce::StringArray& files, int, int)
+{
+    auto currentIndex = tabs.getCurrentTabIndex();
+
+    for (auto& path : files)
+    {
+        juce::File file(path);
+
+        if (handleDroppedPluginFile(file, currentIndex))
+            return;
+    }
+}
+
 // ===================================
 // TABS
 // ===================================
 void MainComponent::configurePluginTabComponent(PluginTabComponent& tabComponent)
 {
-    tabComponent.onOpenDroppedPluginInNewTab = [this](const juce::File& file)
+    tabComponent.onOpenDroppedPluginInNewTab = [this, &tabComponent](const juce::File& file)
     {
-        addEmptyTab();
-
-        const int newTabIndex = tabs.getNumTabs() - 1;
-
-        if (auto* newTab = getTabComponent(newTabIndex))
+        for (int i = 0; i < tabs.getNumTabs(); ++i)
         {
-            if (newTab->loadPlugin(file))
+            if (getTabComponent(i) == &tabComponent)
             {
-                tabs.setCurrentTabIndex(newTabIndex);
-                refreshTabAppearance(newTabIndex);
-                handleCurrentTabChanged();
-                markSessionDirty();
+                handleDroppedPluginFile(file, i);
+                return;
             }
         }
     };
@@ -556,7 +745,10 @@ void MainComponent::resizeWindowToFitCurrentTab()
     top->setSize(targetWidth, targetHeight);
 }
 
-void MainComponent::paint(juce::Graphics& g) { g.fillAll(juce::Colour(0xFF1D2230)); }
+void MainComponent::paint(juce::Graphics& g)
+{
+    g.fillAll(juce::Colour(0xFF1D2230));
+}
 
 void MainComponent::resized()
 {
@@ -586,6 +778,16 @@ void MainComponent::resized()
 
     tabs.setBounds(area);
     routingView.setBounds(area);
+
+    const int plusButtonWidth = 28;
+    const int plusButtonHeight = tabs.getTabBarDepth() - 4;
+    const int plusButtonMarginRight = 6;
+    const int plusButtonMarginTop = 2;
+
+    addTabButton.setBounds(tabs.getRight() - plusButtonWidth - plusButtonMarginRight,
+                           tabs.getY() + plusButtonMarginTop,
+                           plusButtonWidth,
+                           plusButtonHeight);
 }
 
 juce::StringArray MainComponent::getMenuBarNames() { return { "File", "Audio", "MIDI", "Recording", "Options", "Help" }; }
@@ -955,6 +1157,42 @@ void MainComponent::deletePreset()
     markSessionClean();
 }
 
+bool MainComponent::confirmRevertCurrentPreset() const
+{
+    if (!sessionDocument.isDirty())
+        return true;
+
+    juce::String targetName = "Untitled";
+
+    if (presetSessionController.getCurrentFile().existsAsFile())
+        targetName = presetSessionController.getCurrentFile().getFileNameWithoutExtension();
+
+    return juce::AlertWindow::showOkCancelBox(
+        juce::AlertWindow::WarningIcon,
+        "Revert Preset",
+        "Discard all unsaved changes and reload \"" + targetName + "\"?",
+        "Revert Changes",
+        "Cancel");
+}
+
+void MainComponent::revertCurrentPreset()
+{
+    if (!confirmRevertCurrentPreset())
+        return;
+
+    auto currentFile = presetSessionController.getCurrentFile();
+
+    if (currentFile.existsAsFile())
+    {
+        loadPresetFromFile(currentFile);
+        refreshPresetDropdown();
+        return;
+    }
+
+    newPreset();
+    refreshPresetDropdown();
+}
+
 void MainComponent::performInitialSessionLoad(bool shouldLoadLastPreset)
 {
     if (!shouldLoadLastPreset)
@@ -980,6 +1218,7 @@ bool MainComponent::loadPresetFromFile(const juce::File& file)
         return false;
 
     isLoadingPreset = true;
+    ignoreDirtyChangesUntilMs = juce::Time::getMillisecondCounterHiRes() + 500.0;
     unresolvedMissingPlugins.clear();
 
     juce::StringArray loadErrors = parseWarnings;
@@ -994,9 +1233,10 @@ bool MainComponent::loadPresetFromFile(const juce::File& file)
 
     promptToLocateMissingPlugins(unresolvedMissingPlugins);
 
-    juce::Timer::callAfterDelay(250, [this]
+    juce::Timer::callAfterDelay(500, [this]
     {
         isLoadingPreset = false;
+        ignoreDirtyChangesUntilMs = 0.0;
         markSessionClean();
     });
 
@@ -1029,13 +1269,19 @@ void MainComponent::refreshPresetDropdown()
     presetDropdown.onChange = nullptr;
     presetDropdown.clear(juce::dontSendNotification);
 
+    constexpr int newPresetItemId = 1;
+    constexpr int firstPresetItemId = 3;
+
+    presetDropdown.addItem("New Preset", newPresetItemId);
+    presetDropdown.addSeparator();
+
     auto presetFiles = AppSettings::getPresetsDirectory().findChildFiles(juce::File::findFiles,
                                                                          false,
                                                                          "*.xml");
 
     presetFiles.sort();
 
-    int itemId = 1;
+    int itemId = firstPresetItemId;
     int selectedId = 0;
 
     for (auto& file : presetFiles)
@@ -1049,12 +1295,10 @@ void MainComponent::refreshPresetDropdown()
         ++itemId;
     }
 
-    if (selectedId != 0)
+    if (selectedId != 0 && !sessionDocument.isDirty())
         presetDropdown.setSelectedId(selectedId, juce::dontSendNotification);
-    else if (presetSessionController.getCurrentFile().existsAsFile())
-        presetDropdown.setText(presetSessionController.getCurrentFileDisplayName(), juce::dontSendNotification);
     else
-        presetDropdown.setSelectedItemIndex(-1, juce::dontSendNotification);
+        updatePresetDropdownDisplayText();
 
     presetDropdown.onChange = [this]
     {
@@ -1062,11 +1306,48 @@ void MainComponent::refreshPresetDropdown()
     };
 }
 
+void MainComponent::updatePresetDropdownDisplayText()
+{
+    juce::String displayName = "Untitled";
+
+    if (presetSessionController.getCurrentFile().existsAsFile())
+        displayName = presetSessionController.getCurrentFileDisplayName();
+
+    if (sessionDocument.isDirty())
+        displayName += " *";
+
+    presetDropdown.setText(displayName, juce::dontSendNotification);
+}
+
 void MainComponent::loadPresetFromDropdown()
 {
+    constexpr int newPresetItemId = 1;
+    constexpr int firstPresetItemId = 3;
+
+    const int selectedId = presetDropdown.getSelectedId();
+
+    if (selectedId == 0)
+        return;
+
+    if (selectedId == newPresetItemId)
+    {
+        if (!maybeSaveChanges())
+        {
+            refreshPresetDropdown();
+            return;
+        }
+
+        newPreset();
+        refreshPresetDropdown();
+        return;
+    }
+
+    if (selectedId < firstPresetItemId)
+        return;
+
     auto selectedText = presetDropdown.getText().trim();
 
-    if (selectedText.isEmpty())
+    if (selectedText.isEmpty() || selectedText == "New Preset")
         return;
 
     auto file = AppSettings::getPresetsDirectory().getChildFile(selectedText + ".xml");
@@ -1456,12 +1737,16 @@ void MainComponent::markSessionDirty()
 {
     sessionDocument.markDirty();
     updateWindowTitle();
+    updatePresetDropdownDisplayText();
+    toolbar.repaint();
 }
 
 void MainComponent::markSessionClean()
 {
     sessionDocument.markClean();
     updateWindowTitle();
+    updatePresetDropdownDisplayText();
+    toolbar.repaint();
 }
 
 bool MainComponent::requestQuit()
@@ -2180,11 +2465,27 @@ void MainComponent::moveTabLater(int tabIndex)
 void MainComponent::getAllToolbarItemIds(juce::Array<int>& ids)
 {
     ids.add(toolbarRoutingToggle);
+    ids.add(toolbarSpacer);
+    ids.add(toolbarRefitWindow);
+    ids.add(toolbarSpacer);
+    ids.add(toolbarSavePreset);
+    ids.add(toolbarSpacer);
+    ids.add(toolbarSavePresetAs);
+    ids.add(toolbarSpacer);
+    ids.add(toolbarRevertPreset);
 }
 
 void MainComponent::getDefaultItemSet(juce::Array<int>& ids)
 {
     ids.add(toolbarRoutingToggle);
+    ids.add(toolbarSpacer);
+    ids.add(toolbarRefitWindow);
+    ids.add(toolbarSpacer);
+    ids.add(toolbarSavePreset);
+    ids.add(toolbarSpacer);
+    ids.add(toolbarSavePresetAs);
+    ids.add(toolbarSpacer);
+    ids.add(toolbarRevertPreset);
 }
 
 juce::String MainComponent::getToolbarIconGlyph(int itemId)
@@ -2193,6 +2494,19 @@ juce::String MainComponent::getToolbarIconGlyph(int itemId)
     {
         case toolbarRoutingToggle:
             return juce::String::charToString((juce_wchar) 0xf003);
+
+        case toolbarRefitWindow:
+            return juce::String::charToString((juce_wchar) 0xe9a6);
+
+        case toolbarSavePreset:
+            return juce::String::charToString((juce_wchar) 0xe74e);
+
+        case toolbarSavePresetAs:
+            return juce::String::charToString((juce_wchar) 0xe792);
+
+        case toolbarRevertPreset:
+            return juce::String::charToString((juce_wchar) 0xe72c);
+
         default:
             break;
     }
@@ -2219,6 +2533,77 @@ juce::ToolbarItemComponent* MainComponent::createItem(int itemId)
         };
 
         button->setToggleState(showingRoutingView, juce::dontSendNotification);
+        return button;
+    }
+
+    if (itemId == toolbarRefitWindow)
+    {
+        auto* button = new StyledToolbarButton(itemId,
+                                               "Fit window to current plugin",
+                                               getToolbarIconGlyph(itemId),
+                                               StyledToolbarButton::ContentType::IconGlyph,
+                                               32);
+
+        button->onClick = [this]
+        {
+            resizeWindowToFitCurrentTab();
+        };
+
+        return button;
+    }
+
+    if (itemId == toolbarSavePreset)
+    {
+        auto* button = new StyledToolbarButton(itemId,
+                                               "Save Preset",
+                                               getToolbarIconGlyph(itemId),
+                                               StyledToolbarButton::ContentType::IconGlyph,
+                                               32,
+                                               [this] { return sessionDocument.isDirty(); });
+
+        button->onClick = [this, button]
+        {
+            savePreset();
+            button->repaint();
+        };
+
+        return button;
+    }
+
+    if (itemId == toolbarSavePresetAs)
+    {
+        auto* button = new StyledToolbarButton(itemId,
+                                               "Save Preset As",
+                                               getToolbarIconGlyph(itemId),
+                                               StyledToolbarButton::ContentType::IconGlyph,
+                                               32,
+                                               [this] { return sessionDocument.isDirty(); });
+
+        button->onClick = [this, button]
+        {
+            savePresetAs();
+            button->repaint();
+        };
+
+        return button;
+    }
+    // Toolbar button spacing
+    if (itemId == toolbarSpacer)
+        return new FixedWidthSpacer(itemId, 0);
+
+    if (itemId == toolbarRevertPreset)
+    {
+        auto* button = new StyledToolbarButton(itemId,
+                                               "Revert preset",
+                                               getToolbarIconGlyph(itemId),
+                                               StyledToolbarButton::ContentType::IconGlyph,
+                                               32);
+
+        button->onClick = [this]
+        {
+            revertCurrentPreset();
+        };
+
         return button;
     }
 
