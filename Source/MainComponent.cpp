@@ -763,10 +763,11 @@ void MainComponent::resized()
     presetArea.removeFromRight(6);
 
     auto presetBounds = presetArea.reduced(2);
-    presetBounds = presetBounds.withSizeKeepingCentre(presetBounds.getWidth(), topRow.getHeight() - 4);
+    presetBounds = presetBounds.withSizeKeepingCentre(presetBounds.getWidth(), topRow.getHeight() - 8);
     presetDropdown.setBounds(presetBounds);
 
-    auto tempoArea = topRow.removeFromRight(322);
+    // Tempo background width
+    auto tempoArea = topRow.removeFromRight(260);
     tempoArea.removeFromRight(6);
 
     if (tempoStrip != nullptr)
@@ -817,6 +818,8 @@ juce::PopupMenu MainComponent::getMenuForIndex(int index, const juce::String&)
         case 2:
             menu.addItem(301, "Select MIDI Input Device");
             menu.addItem(302, "MIDI Monitor");
+            menu.addSeparator();
+            menu.addItem(303, "Panic");
             break;
         case 3: menu.addItem(401, "Record Audio...  [TODO]"); menu.addItem(402, "Record MIDI...  [TODO]"); break;
         case 4:
@@ -968,6 +971,9 @@ void MainComponent::menuItemSelected(int itemId, int)
             midiMonitorWindow->toFront(true);
             break;
         }
+        case 303:
+            sendMidiPanic();
+            break;
 
         case 501:
             settings.setAutoSaveAfterPluginRepair(!settings.getAutoSaveAfterPluginRepair());
@@ -2473,6 +2479,8 @@ void MainComponent::getAllToolbarItemIds(juce::Array<int>& ids)
     ids.add(toolbarSavePresetAs);
     ids.add(toolbarSpacer);
     ids.add(toolbarRevertPreset);
+    ids.add(toolbarSpacer);
+    ids.add(toolbarMidiPanic);
 }
 
 void MainComponent::getDefaultItemSet(juce::Array<int>& ids)
@@ -2486,6 +2494,8 @@ void MainComponent::getDefaultItemSet(juce::Array<int>& ids)
     ids.add(toolbarSavePresetAs);
     ids.add(toolbarSpacer);
     ids.add(toolbarRevertPreset);
+    ids.add(toolbarSpacer);
+    ids.add(toolbarMidiPanic);
 }
 
 juce::String MainComponent::getToolbarIconGlyph(int itemId)
@@ -2507,6 +2517,9 @@ juce::String MainComponent::getToolbarIconGlyph(int itemId)
         case toolbarRevertPreset:
             return juce::String::charToString((juce_wchar) 0xe72c);
 
+        case toolbarMidiPanic:
+            return juce::String::charToString((juce_wchar) 0xe783);
+
         default:
             break;
     }
@@ -2518,11 +2531,12 @@ juce::ToolbarItemComponent* MainComponent::createItem(int itemId)
 {
     if (itemId == toolbarRoutingToggle)
     {
+    // Toolbar button sizing
         auto* button = new StyledToolbarButton(itemId,
                                                "Toggle Routing View",
                                                getToolbarIconGlyph(itemId),
                                                StyledToolbarButton::ContentType::IconGlyph,
-                                               32,
+                                               30,
                                                [this] { return showingRoutingView; });
 
         button->onClick = [this, button]
@@ -2542,7 +2556,7 @@ juce::ToolbarItemComponent* MainComponent::createItem(int itemId)
                                                "Fit window to current plugin",
                                                getToolbarIconGlyph(itemId),
                                                StyledToolbarButton::ContentType::IconGlyph,
-                                               32);
+                                               30);
 
         button->onClick = [this]
         {
@@ -2558,7 +2572,7 @@ juce::ToolbarItemComponent* MainComponent::createItem(int itemId)
                                                "Save Preset",
                                                getToolbarIconGlyph(itemId),
                                                StyledToolbarButton::ContentType::IconGlyph,
-                                               32,
+                                               30,
                                                [this] { return sessionDocument.isDirty(); });
 
         button->onClick = [this, button]
@@ -2576,7 +2590,7 @@ juce::ToolbarItemComponent* MainComponent::createItem(int itemId)
                                                "Save Preset As",
                                                getToolbarIconGlyph(itemId),
                                                StyledToolbarButton::ContentType::IconGlyph,
-                                               32,
+                                               30,
                                                [this] { return sessionDocument.isDirty(); });
 
         button->onClick = [this, button]
@@ -2587,9 +2601,9 @@ juce::ToolbarItemComponent* MainComponent::createItem(int itemId)
 
         return button;
     }
-    // Toolbar button spacing
+
     if (itemId == toolbarSpacer)
-        return new FixedWidthSpacer(itemId, 0);
+        return new FixedWidthSpacer(itemId, 2);
 
     if (itemId == toolbarRevertPreset)
     {
@@ -2597,11 +2611,29 @@ juce::ToolbarItemComponent* MainComponent::createItem(int itemId)
                                                "Revert preset",
                                                getToolbarIconGlyph(itemId),
                                                StyledToolbarButton::ContentType::IconGlyph,
-                                               32);
+                                               30);
 
         button->onClick = [this]
         {
             revertCurrentPreset();
+        };
+
+        return button;
+    }
+
+    if (itemId == toolbarMidiPanic)
+    {
+        auto* button = new StyledToolbarButton(itemId,
+                                               "MIDI Panic",
+                                               getToolbarIconGlyph(itemId),
+                                               StyledToolbarButton::ContentType::IconGlyph,
+                                               30,
+                                               {},
+                                               juce::Colour(0xFF8B2E2E));
+
+        button->onClick = [this]
+        {
+            sendMidiPanic();
         };
 
         return button;
@@ -2822,6 +2854,39 @@ void MainComponent::showMidiAssignmentsCallout(int tabIndex, juce::Component* an
     juce::CallOutBox::launchAsynchronously(std::move(content),
                                            anchorComponent->getScreenBounds(),
                                            nullptr);
+}
+
+void MainComponent::sendMidiPanic()
+{
+    juce::Array<juce::AudioProcessorGraph::NodeID> targetNodeIds;
+
+    for (int i = 0; i < tabs.getNumTabs(); ++i)
+    {
+        if (auto* tc = getTabComponent(i))
+        {
+            if (!tc->hasPlugin())
+                continue;
+
+            if (tc->isBypassed())
+                continue;
+
+            targetNodeIds.add(tc->getNodeID());
+        }
+    }
+
+    if (targetNodeIds.isEmpty())
+        return;
+
+    audioEngine.sendMidiPanicToNodes(targetNodeIds);
+
+    statusBar.setText("PolyHost 0.1  |  MIDI Panic sent",
+                      juce::dontSendNotification);
+
+    juce::Timer::callAfterDelay(1500, [safe = juce::Component::SafePointer<MainComponent>(this)]
+    {
+        if (safe != nullptr)
+            safe->updateStatusBarText();
+    });
 }
 
 void MainComponent::updateStatusBarText()

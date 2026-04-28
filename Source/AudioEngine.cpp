@@ -178,6 +178,22 @@ void AudioEngine::queueMidiToNodes(const juce::MidiMessage& message,
             midiRouter->enqueueMidi(message);
 }
 
+void AudioEngine::sendMidiPanicToNodes(const juce::Array<juce::AudioProcessorGraph::NodeID>& targetNodeIds)
+{
+    for (int channel = 1; channel <= 16; ++channel)
+    {
+        const auto sustainOff = juce::MidiMessage::controllerEvent(channel, 64, 0);
+        const auto allSoundOff = juce::MidiMessage::controllerEvent(channel, 120, 0);
+        const auto resetControllers = juce::MidiMessage::controllerEvent(channel, 121, 0);
+        const auto allNotesOff = juce::MidiMessage::controllerEvent(channel, 123, 0);
+
+        queueMidiToNodes(sustainOff, targetNodeIds);
+        queueMidiToNodes(allSoundOff, targetNodeIds);
+        queueMidiToNodes(resetControllers, targetNodeIds);
+        queueMidiToNodes(allNotesOff, targetNodeIds);
+    }
+}
+
 void AudioEngine::setTempoBpm(double newTempoBpm)
 {
     juce::ignoreUnused(newTempoBpm);

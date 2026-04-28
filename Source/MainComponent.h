@@ -110,13 +110,15 @@ private:
                             const juce::String& contentText,
                             ContentType contentTypeIn,
                             int preferredWidthIn,
-                            std::function<bool()> isActiveProviderIn = {})
+                            std::function<bool()> isActiveProviderIn = {},
+                            juce::Colour baseColourIn = juce::Colour(0xFF3C3C3C))
             : juce::ToolbarButton(itemId, "", nullptr, nullptr),
               tooltip(tooltipText),
               content(contentText),
               contentType(contentTypeIn),
               preferredWidth(preferredWidthIn),
-              isActiveProvider(std::move(isActiveProviderIn))
+              isActiveProvider(std::move(isActiveProviderIn)),
+              baseColour(baseColourIn)
         {
             setTooltip(tooltip);
             setWantsKeyboardFocus(false);
@@ -136,9 +138,9 @@ private:
                              int width, int height,
                              bool isMouseOver, bool isMouseDown) override
         {
-            auto area = juce::Rectangle<float>(0.0f, 0.0f, (float) width, (float) height).reduced(2.0f);
-
-            auto base = juce::Colour(0xFF2A3142);
+            auto area = juce::Rectangle<float>(0.0f, 0.0f, (float) width, (float) height).reduced(2.0f, 4.0f);
+            // Toolbar buttons common background colour
+            auto base = baseColour;
 
             if (isVisuallyActive())
                 base = juce::Colour(0xFF3A7BD5);
@@ -168,6 +170,9 @@ private:
             paintButtonArea(g, bounds.getWidth(), bounds.getHeight(), isOver, isDown);
 
             auto drawArea = contentArea.isEmpty() ? bounds : contentArea;
+
+            if (getItemId() == MainComponent::toolbarMidiPanic)
+                drawArea = drawArea.translated(0, 1);
             g.setColour(isVisuallyActive() ? juce::Colours::white
                                            : juce::Colours::lightgrey);
 
@@ -198,6 +203,7 @@ private:
         int preferredWidth = 32;
         juce::Rectangle<int> contentArea;
         std::function<bool()> isActiveProvider;
+        juce::Colour baseColour;
     };
 
     class TabBarLookAndFeel final : public juce::LookAndFeel_V4
@@ -313,6 +319,7 @@ private:
     void toggleRoutingView();
     void refreshRoutingView();
     void syncRoutingToAudioEngine();
+    void sendMidiPanic();
     void moveTabEarlier(int tabIndex);
     void moveTabLater(int tabIndex);
     void toggleTabBypass(int tabIndex);
@@ -324,7 +331,8 @@ private:
         toolbarSavePreset    = 10003,
         toolbarSavePresetAs  = 10004,
         toolbarSpacer        = 10005,
-        toolbarRevertPreset  = 10006
+        toolbarRevertPreset  = 10006,
+        toolbarMidiPanic     = 10007
     };
     enum MenuItemIds
     {

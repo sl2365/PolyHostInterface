@@ -20,6 +20,7 @@ public:
 
     void queueMidiToNodes(const juce::MidiMessage& message,
                           const juce::Array<juce::AudioProcessorGraph::NodeID>& targetNodeIds);
+    void sendMidiPanicToNodes(const juce::Array<juce::AudioProcessorGraph::NodeID>& targetNodeIds);
 
     void setTempoBpm(double newTempoBpm);
     void setPlayHead(juce::AudioPlayHead* playHead);

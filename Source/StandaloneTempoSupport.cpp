@@ -145,7 +145,15 @@ StandaloneTempoSupport::TempoStripComponent::TempoStripComponent(StandaloneTempo
         resetTempo();
     };
 
+    addAndMakeVisible(metronomeButton);
+    metronomeButton.onClick = [this]
+    {
+        owner.toggleMetronome();
+        metronomeButton.repaint();
+    };
+
     addAndMakeVisible(tapTempoButton);
+    tapTempoButton.setLookAndFeel(&tapButtonLookAndFeel);
     tapTempoButton.onClick = [this]
     {
         registerTapTempo();
@@ -155,29 +163,40 @@ StandaloneTempoSupport::TempoStripComponent::TempoStripComponent(StandaloneTempo
     refreshUi();
 }
 
+StandaloneTempoSupport::TempoStripComponent::~TempoStripComponent()
+{
+    tapTempoButton.setLookAndFeel(nullptr);
+}
+
 void StandaloneTempoSupport::TempoStripComponent::resized()
 {
     auto area = getLocalBounds();
 
-    auto tapBounds = area.removeFromRight(48).reduced(2);
-    tapBounds = tapBounds.withSizeKeepingCentre(tapBounds.getWidth(), area.getHeight() - 4);
+    auto tapBounds = area.removeFromRight(40).reduced(0);
+    tapBounds = tapBounds.withSizeKeepingCentre(tapBounds.getWidth(), area.getHeight() - 6);
     tapTempoButton.setBounds(tapBounds);
 
-    area.removeFromRight(4);
+    area.removeFromRight(2);
 
-    auto resetBounds = area.removeFromRight(32).reduced(2);
+    auto metronomeBounds = area.removeFromRight(30).reduced(0);
+    metronomeBounds = metronomeBounds.withSizeKeepingCentre(metronomeBounds.getWidth(), area.getHeight() - 4);
+    metronomeButton.setBounds(metronomeBounds);
+
+    area.removeFromRight(1);
+
+    auto resetBounds = area.removeFromRight(30).reduced(0);
     resetBounds = resetBounds.withSizeKeepingCentre(resetBounds.getWidth(), area.getHeight() - 4);
     resetTempoButton.setBounds(resetBounds);
 
-    area.removeFromRight(4);
+    area.removeFromRight(2);
 
-    auto editorBounds = area.removeFromRight(70).reduced(2);
+    auto editorBounds = area.removeFromRight(55).reduced(1, 2);
     editorBounds = editorBounds.withSizeKeepingCentre(editorBounds.getWidth(), 22);
     tempoEditor.setBounds(editorBounds);
 
-    area.removeFromRight(6);
+    area.removeFromRight(0);
 
-    auto beatBounds = area.removeFromRight(96).reduced(2);
+    auto beatBounds = area.removeFromRight(85).reduced(2);
     beatBounds = beatBounds.withSizeKeepingCentre(beatBounds.getWidth(), 18);
     beatIndicator.setBounds(beatBounds);
 }
@@ -239,6 +258,7 @@ void StandaloneTempoSupport::TempoStripComponent::refreshUi()
     updateTooltip();
     tempoEditor.setText(juce::String(owner.getDisplayedTempoBpm(), 1),
                         juce::dontSendNotification);
+    metronomeButton.repaint();
 }
 
 void StandaloneTempoSupport::TempoStripComponent::updateTooltip()
@@ -336,29 +356,29 @@ StandaloneTempoSupport::TempoStripComponent::BeatIndicatorComponent::BeatIndicat
 void StandaloneTempoSupport::TempoStripComponent::BeatIndicatorComponent::paint(juce::Graphics& g)
 {
     auto area = getLocalBounds().toFloat().reduced(2.0f);
-    auto beatWidth = area.getWidth() / 4.0f;
 
-    const auto bpm = owner.getHostTempoBpm();
-    const auto nowMs = juce::Time::getMillisecondCounterHiRes();
-    const auto beatLengthMs = 60000.0 / juce::jmax(1.0, bpm);
-    const int beatIndex = (int) std::floor(nowMs / beatLengthMs) % 4;
+    const int beatIndex = owner.getCurrentBeatInBar();
+    const auto beatProgress = owner.getCurrentBeatProgress();
+
+    const float ledDiameter = 11.0f;  // This adjusts LED size
+    const float spacing = 7.0f;
+    const float totalWidth = (ledDiameter * 4.0f) + (spacing * 3.0f);
+    const float startX = area.getCentreX() - (totalWidth * 0.5f);
+    const float y = area.getCentreY() - (ledDiameter * 0.5f);
 
     for (int i = 0; i < 4; ++i)
     {
-        auto r = juce::Rectangle<float>(area.getX() + beatWidth * (float) i + 1.5f,
-                                        area.getY() + 2.0f,
-                                        beatWidth - 6.0f,
-                                        area.getHeight() - 4.0f);
+        auto r = juce::Rectangle<float>(startX + (ledDiameter + spacing) * (float) i,
+                                        y,
+                                        ledDiameter,
+                                        ledDiameter);
 
         const bool isActive = (i == beatIndex);
 
         float pulse = 1.0f;
 
         if (isActive)
-        {
-            auto beatProgress = std::fmod(nowMs, beatLengthMs) / beatLengthMs;
             pulse = 0.75f + 0.25f * (1.0f - (float) beatProgress);
-        }
 
         auto baseColour = (i == 0) ? juce::Colours::red : juce::Colours::limegreen;
         auto fillColour = isActive ? baseColour.brighter(0.35f * pulse + 0.15f)
@@ -370,17 +390,15 @@ void StandaloneTempoSupport::TempoStripComponent::BeatIndicatorComponent::paint(
         auto highlightColour = isActive ? juce::Colours::white.withAlpha(0.20f + 0.12f * pulse)
                                         : juce::Colours::white.withAlpha(0.06f);
 
-        const float cornerSize = 5.0f;
-
         g.setColour(fillColour);
-        g.fillRoundedRectangle(r, cornerSize);
+        g.fillEllipse(r);
 
-        auto highlight = r.reduced(2.0f, 2.0f).removeFromTop(r.getHeight() * 0.38f);
+        auto highlight = r.reduced(2.0f, 2.0f).removeFromTop(r.getHeight() * 0.42f);
         g.setColour(highlightColour);
-        g.fillRoundedRectangle(highlight, cornerSize * 0.75f);
+        g.fillEllipse(highlight);
 
         g.setColour(borderColour);
-        g.drawRoundedRectangle(r, cornerSize, 1.0f);
+        g.drawEllipse(r, 1.0f);
     }
 }
 
@@ -400,5 +418,148 @@ void StandaloneTempoSupport::refreshTempoStrip()
 {
     if (tempoStripComponent != nullptr)
         tempoStripComponent->refreshUi();
+}
+
+void StandaloneTempoSupport::setMetronomeEnabled(bool shouldBeEnabled)
+{
+    if (state.metronomeEnabled == shouldBeEnabled)
+        return;
+
+    state.metronomeEnabled = shouldBeEnabled;
+    refreshTempoStrip();
+}
+
+bool StandaloneTempoSupport::isMetronomeEnabled() const
+{
+    return state.metronomeEnabled;
+}
+
+void StandaloneTempoSupport::toggleMetronome()
+{
+    setMetronomeEnabled(!state.metronomeEnabled);
+}
+
+void StandaloneTempoSupport::PlaybackTracker::audioDeviceIOCallbackWithContext(
+    const float* const* inputChannelData,
+    int numInputChannels,
+    float* const* outputChannelData,
+    int numOutputChannels,
+    int numSamples,
+    const juce::AudioIODeviceCallbackContext& context)
+{
+    if (wrappedCallback != nullptr)
+    {
+        wrappedCallback->audioDeviceIOCallbackWithContext(inputChannelData,
+                                                          numInputChannels,
+                                                          outputChannelData,
+                                                          numOutputChannels,
+                                                          numSamples,
+                                                          context);
+    }
+
+    if (state.metronomeEnabled && outputChannelData != nullptr && numOutputChannels > 0)
+    {
+        renderMetronome(outputChannelData,
+                        numOutputChannels,
+                        numSamples,
+                        currentSampleRate);
+    }
+
+    processedSamples += numSamples;
+    playHead.advance(numSamples);
+}
+
+void StandaloneTempoSupport::PlaybackTracker::audioDeviceAboutToStart(juce::AudioIODevice* device)
+{
+    if (wrappedCallback != nullptr)
+        wrappedCallback->audioDeviceAboutToStart(device);
+
+    currentSampleRate = 44100.0;
+
+    if (device != nullptr)
+    {
+        currentSampleRate = device->getCurrentSampleRate();
+        playHead.prepareToPlay(currentSampleRate);
+    }
+
+    processedSamples = 0;
+    samplesRemainingInClick = 0;
+    clickPhase = 0.0;
+    beatIndex = 0;
+}
+
+void StandaloneTempoSupport::PlaybackTracker::audioDeviceStopped()
+{
+    if (wrappedCallback != nullptr)
+        wrappedCallback->audioDeviceStopped();
+}
+
+void StandaloneTempoSupport::PlaybackTracker::renderMetronome(float* const* outputChannelData,
+                                                              int numOutputChannels,
+                                                              int numSamples,
+                                                              double sampleRate)
+{
+    if (sampleRate <= 0.0)
+        return;
+
+    const double bpm = juce::jmax(1.0, state.hostTempoBpm);
+    const double samplesPerBeat = (60.0 / bpm) * sampleRate;
+    const int clickLengthSamples = (int) (0.050 * sampleRate);
+
+    for (int sample = 0; sample < numSamples; ++sample)
+    {
+        const auto absoluteSample = processedSamples + sample;
+        const auto previousBeat = (int) std::floor((double) juce::jmax<juce::int64>(0, absoluteSample - 1) / samplesPerBeat);
+        const auto currentBeat  = (int) std::floor((double) absoluteSample / samplesPerBeat);
+
+        if (absoluteSample == 0 || currentBeat != previousBeat)
+        {
+            beatIndex = ((currentBeat % 4) + 4) % 4;
+            samplesRemainingInClick = clickLengthSamples;
+            clickPhase = 0.0;
+            clickFrequencyHz = (beatIndex == 0) ? 1760.0 : 1320.0;
+        }
+
+        float clickSample = 0.0f;
+
+        if (samplesRemainingInClick > 0)
+        {
+            const float env = (float) samplesRemainingInClick / (float) clickLengthSamples;
+            clickSample = std::sin((float) clickPhase) * 0.28f * env * env;
+
+            clickPhase += juce::MathConstants<double>::twoPi * clickFrequencyHz / sampleRate;
+            --samplesRemainingInClick;
+        }
+
+        for (int ch = 0; ch < numOutputChannels; ++ch)
+        {
+            if (outputChannelData[ch] != nullptr)
+                outputChannelData[ch][sample] += clickSample;
+        }
+    }
+}
+
+int StandaloneTempoSupport::getCurrentBeatInBar() const
+{
+    auto position = hostPlayHead.getPosition();
+
+    if (!position.hasValue())
+        return 0;
+
+    const auto ppq = position->getPpqPosition().orFallback(0.0);
+    const int beatIndex = ((int) std::floor(ppq)) % 4;
+    return (beatIndex + 4) % 4;
+}
+
+double StandaloneTempoSupport::getCurrentBeatProgress() const
+{
+    auto position = hostPlayHead.getPosition();
+
+    if (!position.hasValue())
+        return 0.0;
+
+    const auto ppq = position->getPpqPosition().orFallback(0.0);
+    const double frac = ppq - std::floor(ppq);
+    return juce::jlimit(0.0, 1.0, frac);
 }
 

@@ -6,6 +6,7 @@ struct StandaloneTempoState
 {
     double hostTempoBpm = 120.0;
     double defaultTempoBpm = 120.0;
+    bool metronomeEnabled = false;
 };
 
 class TempoToolbarButton final : public juce::ToolbarButton
@@ -54,8 +55,8 @@ public:
                          bool isMouseOver, bool isMouseDown) override
     {
         auto area = juce::Rectangle<float>(0.0f, 0.0f, (float) width, (float) height).reduced(2.0f);
-
-        auto base = juce::Colour(0xFF2A3142);
+        // Tempo reset colour
+        auto base = juce::Colour(0xFF3C3C3C);
 
         if (isVisuallyActive())
             base = juce::Colour(0xFF3A7BD5);
@@ -142,6 +143,12 @@ public:
             samplePosition += juce::jmax(0, numSamples);
         }
 
+        double getSampleRate() const
+        {
+            const juce::ScopedLock sl(lock);
+            return sampleRate;
+        }
+
         Optional<PositionInfo> getPosition() const override
         {
             const juce::ScopedLock sl(lock);
@@ -171,7 +178,8 @@ public:
     class PlaybackTracker final : public juce::AudioIODeviceCallback
     {
     public:
-        explicit PlaybackTracker(HostPlayHead& playHeadIn) : playHead(playHeadIn) {}
+        PlaybackTracker(HostPlayHead& playHeadIn, StandaloneTempoState& stateIn)
+            : playHead(playHeadIn), state(stateIn) {}
 
         void setWrappedCallback(juce::AudioIODeviceCallback* callbackToWrap)
         {
@@ -183,39 +191,26 @@ public:
                                               float* const* outputChannelData,
                                               int numOutputChannels,
                                               int numSamples,
-                                              const juce::AudioIODeviceCallbackContext& context) override
-        {
-            if (wrappedCallback != nullptr)
-            {
-                wrappedCallback->audioDeviceIOCallbackWithContext(inputChannelData,
-                                                                  numInputChannels,
-                                                                  outputChannelData,
-                                                                  numOutputChannels,
-                                                                  numSamples,
-                                                                  context);
-            }
+                                              const juce::AudioIODeviceCallbackContext& context) override;
 
-            playHead.advance(numSamples);
-        }
-
-        void audioDeviceAboutToStart(juce::AudioIODevice* device) override
-        {
-            if (wrappedCallback != nullptr)
-                wrappedCallback->audioDeviceAboutToStart(device);
-
-            if (device != nullptr)
-                playHead.prepareToPlay(device->getCurrentSampleRate());
-        }
-
-        void audioDeviceStopped() override
-        {
-            if (wrappedCallback != nullptr)
-                wrappedCallback->audioDeviceStopped();
-        }
+        void audioDeviceAboutToStart(juce::AudioIODevice* device) override;
+        void audioDeviceStopped() override;
 
     private:
+        void renderMetronome(float* const* outputChannelData,
+                             int numOutputChannels,
+                             int numSamples,
+                             double sampleRate);
+
         HostPlayHead& playHead;
+        StandaloneTempoState& state;
         juce::AudioIODeviceCallback* wrappedCallback = nullptr;
+        juce::int64 processedSamples = 0;
+        int samplesRemainingInClick = 0;
+        double clickPhase = 0.0;
+        double clickFrequencyHz = 1000.0;
+        int beatIndex = 0;
+        double currentSampleRate = 44100.0;
     };
 
     class TempoStripComponent final : public juce::Component,
@@ -223,11 +218,38 @@ public:
     {
     public:
         explicit TempoStripComponent(StandaloneTempoSupport& ownerIn);
+        ~TempoStripComponent() override;
 
         void resized() override;
         void refreshUi();
 
     private:
+        class TapButtonLookAndFeel final : public juce::LookAndFeel_V4
+        {
+        public:
+            void drawButtonBackground(juce::Graphics& g,
+                                      juce::Button& button,
+                                      const juce::Colour&,
+                                      bool isMouseOverButton,
+                                      bool isButtonDown) override
+            {
+                auto area = button.getLocalBounds().toFloat().reduced(1.0f);
+
+                auto base = juce::Colour(0xFF3C3C3C);
+
+                if (isButtonDown)
+                    base = base.darker(0.15f);
+                else if (isMouseOverButton)
+                    base = base.brighter(0.12f);
+
+                g.setColour(base);
+                g.fillRoundedRectangle(area, 4.0f);
+
+                g.setColour(juce::Colours::white.withAlpha(0.14f));
+                g.drawRoundedRectangle(area, 4.0f, 1.0f);
+            }
+        };
+
         class TempoTextEditor final : public juce::TextEditor
         {
         public:
@@ -277,7 +299,17 @@ public:
             TempoToolbarButton::ContentType::IconGlyph,
             32
         };
+        TempoToolbarButton metronomeButton
+        {
+            0,
+            "Metronome",
+            juce::String::charToString((juce_wchar) 0xe15d),
+            TempoToolbarButton::ContentType::IconGlyph,
+            32,
+            [this] { return owner.isMetronomeEnabled(); }
+        };
         juce::TextButton tapTempoButton { "Tap" };
+        TapButtonLookAndFeel tapButtonLookAndFeel;
     };
 
     explicit StandaloneTempoSupport(AudioEngine& audioEngineIn);
@@ -292,9 +324,14 @@ public:
     void setHostTempoBpm(double bpm);
     void registerTapTempo();
     void setDefaultTempoBpm(double bpm);
+    void setMetronomeEnabled(bool shouldBeEnabled);
+    bool isMetronomeEnabled() const;
+    void toggleMetronome();
     double getHostTempoBpm() const;
     double getDefaultTempoBpm() const;
     double getDisplayedTempoBpm() const;
+    int getCurrentBeatInBar() const;
+    double getCurrentBeatProgress() const;
     bool isTempoEditorInteractive() const;
     void refreshTempoStrip();
 
@@ -307,7 +344,7 @@ private:
     AudioEngine& audioEngine;
     StandaloneTempoState state;
     HostPlayHead hostPlayHead;
-    PlaybackTracker playbackTracker { hostPlayHead };
+    PlaybackTracker playbackTracker { hostPlayHead, state };
     juce::Array<double> tapTimesMs;
     bool trackerInitialised = false;
     TempoStripComponent* tempoStripComponent = nullptr;
