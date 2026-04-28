@@ -5,11 +5,14 @@
 struct SessionPluginData
 {
     juce::String pluginName;
+    juce::String pluginDescriptiveName;
     juce::String pluginPath;
     juce::String pluginPathRelative;
     juce::String pluginPathDriveFlexible;
     juce::String pluginStateBase64;
     juce::String pluginFormatName;
+    juce::String pluginFileOrIdentifier;
+    int pluginUniqueId = 0;
     bool isInstrument = false;
     juce::String pluginManufacturer;
     juce::String pluginVersion;
@@ -21,6 +24,9 @@ struct SessionTabData
     PluginSlotType type = PluginSlotType::Empty;
     juce::String tabName;
     bool bypassed = false;
+    bool hasSavedWindowBounds = false;
+    int savedWindowWidth = 0;
+    int savedWindowHeight = 0;
     juce::StringArray midiAssignedDeviceIdentifiers;
     bool hasPlugin = false;
     SessionPluginData plugin;

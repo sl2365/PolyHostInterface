@@ -1,6 +1,7 @@
 #pragma once
 #include <JuceHeader.h>
 #include "SessionTypes.h"
+#include "SessionData.h"
 
 class AudioEngine;
 
@@ -28,6 +29,9 @@ public:
     ~PluginTabComponent() override;
 
     bool loadPlugin(const juce::File& pluginFile);
+    bool loadPlugin(const juce::File& pluginFile, const juce::PluginDescription& desc);
+    bool loadPluginFromSessionData(const juce::File& pluginFile,
+                                   const SessionPluginData& sessionPluginData);
     void clearPlugin();
 
     bool hasPlugin() const { return nodeId != juce::AudioProcessorGraph::NodeID(); }
@@ -43,8 +47,14 @@ public:
 
     juce::Rectangle<int> getPreferredContentBounds() const;
     juce::File getPluginFile() const;
+    juce::PluginDescription getLoadedPluginDescription() const;
     juce::MemoryBlock getPluginState() const;
     bool restorePluginState(const juce::MemoryBlock& state);
+
+    void setSavedWindowBounds(int width, int height);
+    void clearSavedWindowBounds();
+    bool hasSavedWindowBounds() const;
+    juce::Rectangle<int> getSavedWindowBounds() const;
 
     std::function<void(const juce::File&)> onOpenDroppedPluginInNewTab;
 
@@ -56,6 +66,13 @@ public:
     static bool isPluginFile(const juce::File& f);
 
 private:
+    bool scanPluginDescriptions(const juce::File& pluginFile,
+                                juce::OwnedArray<juce::PluginDescription>& results);
+    bool choosePluginDescription(const juce::OwnedArray<juce::PluginDescription>& results,
+                                 juce::PluginDescription& chosenDesc) const;
+    bool findMatchingPluginDescription(const juce::OwnedArray<juce::PluginDescription>& results,
+                                       const SessionPluginData& sessionPluginData,
+                                       juce::PluginDescription& matchedDesc) const;
     void showPluginEditor();
     void attachToCurrentProcessor();
     void detachFromCurrentProcessor();
@@ -71,6 +88,9 @@ private:
     std::unique_ptr<juce::AudioProcessorEditor> pluginEditor;
     juce::Rectangle<int> preferredEditorBounds { 0, 0, 360, 220 };
     juce::File loadedPluginFile;
+    juce::PluginDescription loadedPluginDescription;
+    bool hasManualWindowBounds = false;
+    juce::Rectangle<int> savedWindowBounds;
 
     juce::TextButton loadButton { "Click to Load Plugin..." };
     juce::Label statusLabel;

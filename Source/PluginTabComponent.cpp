@@ -33,30 +33,222 @@ PluginTabComponent::~PluginTabComponent()
         audioEngine.removePlugin(nodeId);
 }
 
-bool PluginTabComponent::loadPlugin(const juce::File& pluginFile)
+bool PluginTabComponent::scanPluginDescriptions(const juce::File& pluginFile,
+                                                juce::OwnedArray<juce::PluginDescription>& results)
 {
-    if (!pluginFile.existsAsFile()) return false;
-    juce::OwnedArray<juce::PluginDescription> results;
-    juce::String errorMessage;
+    if (!pluginFile.existsAsFile())
+        return false;
+
+    results.clear();
+
     for (auto* format : formatManager.getFormats())
     {
         format->findAllTypesForFile(results, pluginFile.getFullPathName());
-        if (!results.isEmpty()) break;
+
+        if (!results.isEmpty())
+            return true;
     }
+
+    return false;
+}
+
+bool PluginTabComponent::choosePluginDescription(const juce::OwnedArray<juce::PluginDescription>& results,
+                                                 juce::PluginDescription& chosenDesc) const
+{
     if (results.isEmpty())
+        return false;
+
+    if (results.size() == 1)
+    {
+        chosenDesc = *results.getFirst();
+        return true;
+    }
+
+    juce::StringArray pluginNames;
+
+    for (auto* desc : results)
+    {
+        juce::String typeLabel = desc->isInstrument ? "Synth" : "FX";
+        juce::String label = desc->name + " (" + typeLabel + ")";
+
+        if (desc->descriptiveName.isNotEmpty() && desc->descriptiveName != desc->name)
+            label += " - " + desc->descriptiveName;
+
+        if (desc->manufacturerName.isNotEmpty())
+            label += " [" + desc->manufacturerName + "]";
+
+        pluginNames.add(label);
+    }
+
+    juce::AlertWindow chooser("Select Plugin",
+                              "This plugin file contains multiple plugins. Choose one to open:",
+                              juce::AlertWindow::QuestionIcon);
+
+    chooser.addComboBox("pluginChoice", pluginNames, "Plugin");
+    chooser.addButton("Open", 1, juce::KeyPress(juce::KeyPress::returnKey));
+    chooser.addButton("Cancel", 0, juce::KeyPress(juce::KeyPress::escapeKey));
+
+    if (auto* combo = chooser.getComboBoxComponent("pluginChoice"))
+        combo->setSelectedItemIndex(0);
+
+    if (chooser.runModalLoop() != 1)
+        return false;
+
+    auto* combo = chooser.getComboBoxComponent("pluginChoice");
+    if (combo == nullptr)
+        return false;
+
+    const int selectedIndex = combo->getSelectedItemIndex();
+
+    if (!juce::isPositiveAndBelow(selectedIndex, results.size()))
+        return false;
+
+    chosenDesc = *results.getUnchecked(selectedIndex);
+    return true;
+}
+
+bool PluginTabComponent::findMatchingPluginDescription(const juce::OwnedArray<juce::PluginDescription>& results,
+                                                       const SessionPluginData& sessionPluginData,
+                                                       juce::PluginDescription& matchedDesc) const
+{
+    if (results.isEmpty())
+        return false;
+
+    // 1) Strongest for shell plugins: exact uniqueId
+    if (sessionPluginData.pluginUniqueId != 0)
+    {
+        for (auto* desc : results)
+        {
+            if (desc->uniqueId == sessionPluginData.pluginUniqueId)
+            {
+                matchedDesc = *desc;
+                return true;
+            }
+        }
+    }
+
+    // 2) Exact name + descriptive name + manufacturer + format
+    for (auto* desc : results)
+    {
+        const bool nameMatches =
+            sessionPluginData.pluginName.isNotEmpty()
+            && desc->name == sessionPluginData.pluginName;
+
+        const bool descriptiveMatches =
+            sessionPluginData.pluginDescriptiveName.isEmpty()
+            || desc->descriptiveName == sessionPluginData.pluginDescriptiveName;
+
+        const bool manufacturerMatches =
+            sessionPluginData.pluginManufacturer.isEmpty()
+            || desc->manufacturerName == sessionPluginData.pluginManufacturer;
+
+        const bool formatMatches =
+            sessionPluginData.pluginFormatName.isEmpty()
+            || desc->pluginFormatName == sessionPluginData.pluginFormatName;
+
+        if (nameMatches && descriptiveMatches && manufacturerMatches && formatMatches)
+        {
+            matchedDesc = *desc;
+            return true;
+        }
+    }
+
+    // 3) Exact descriptive name
+    if (sessionPluginData.pluginDescriptiveName.isNotEmpty())
+    {
+        for (auto* desc : results)
+        {
+            if (desc->descriptiveName == sessionPluginData.pluginDescriptiveName)
+            {
+                matchedDesc = *desc;
+                return true;
+            }
+        }
+    }
+
+    // 4) Exact name only
+    if (sessionPluginData.pluginName.isNotEmpty())
+    {
+        for (auto* desc : results)
+        {
+            if (desc->name == sessionPluginData.pluginName)
+            {
+                matchedDesc = *desc;
+                return true;
+            }
+        }
+    }
+
+    return false;
+}
+
+bool PluginTabComponent::loadPluginFromSessionData(const juce::File& pluginFile,
+                                                   const SessionPluginData& sessionPluginData)
+{
+    if (!pluginFile.existsAsFile())
+        return false;
+
+    juce::OwnedArray<juce::PluginDescription> results;
+
+    if (!scanPluginDescriptions(pluginFile, results) || results.isEmpty())
     {
         statusLabel.setText("Could not scan: " + pluginFile.getFileName(), juce::dontSendNotification);
         return false;
     }
-    auto& desc = *results.getFirst();
+
+    juce::PluginDescription matchedDesc;
+
+    if (findMatchingPluginDescription(results, sessionPluginData, matchedDesc))
+    {
+        return loadPlugin(pluginFile, matchedDesc);
+    }
+
+    juce::PluginDescription chosenDesc;
+
+    if (!choosePluginDescription(results, chosenDesc))
+        return false;
+
+    return loadPlugin(pluginFile, chosenDesc);
+}
+
+bool PluginTabComponent::loadPlugin(const juce::File& pluginFile)
+{
+    if (!pluginFile.existsAsFile())
+        return false;
+
+    juce::OwnedArray<juce::PluginDescription> results;
+
+    if (!scanPluginDescriptions(pluginFile, results) || results.isEmpty())
+    {
+        statusLabel.setText("Could not scan: " + pluginFile.getFileName(), juce::dontSendNotification);
+        return false;
+    }
+
+    juce::PluginDescription chosenDesc;
+
+    if (!choosePluginDescription(results, chosenDesc))
+        return false;
+
+    return loadPlugin(pluginFile, chosenDesc);
+}
+
+bool PluginTabComponent::loadPlugin(const juce::File& pluginFile, const juce::PluginDescription& desc)
+{
+    if (!pluginFile.existsAsFile())
+        return false;
+
+    juce::String errorMessage;
     auto instance = formatManager.createPluginInstance(desc, 44100.0, 512, errorMessage);
+
     if (instance == nullptr)
     {
         statusLabel.setText("Load failed: " + errorMessage, juce::dontSendNotification);
         return false;
     }
+
     clearPlugin();
     loadedPluginFile = pluginFile;
+    loadedPluginDescription = desc;
     slotType = desc.isInstrument ? SlotType::Synth : SlotType::FX;
     nodeId = audioEngine.addPlugin(std::move(instance), desc.isInstrument);
     attachToCurrentProcessor();
@@ -81,6 +273,7 @@ void PluginTabComponent::clearPlugin()
     }
 
     loadedPluginFile = {};
+    loadedPluginDescription = {};
     slotType = SlotType::Empty;
     bypassed = false;
     preferredEditorBounds = { 0, 0, 360, 220 };
@@ -125,6 +318,10 @@ void PluginTabComponent::showPluginEditor()
             w = b.getWidth();
             h = b.getHeight();
         }
+
+        auto actualBounds = pluginEditor->getBounds();
+        w = juce::jmax(w, actualBounds.getWidth());
+        h = juce::jmax(h, actualBounds.getHeight());
 
         preferredEditorBounds = { 0, 0,
                                   juce::jmax(360, w),
@@ -279,6 +476,41 @@ bool PluginTabComponent::isPluginFile(const juce::File& f)
 juce::File PluginTabComponent::getPluginFile() const
 {
     return loadedPluginFile;
+}
+
+juce::PluginDescription PluginTabComponent::getLoadedPluginDescription() const
+{
+    return loadedPluginDescription;
+}
+
+void PluginTabComponent::setSavedWindowBounds(int width, int height)
+{
+    if (width <= 0 || height <= 0)
+        return;
+
+    hasManualWindowBounds = true;
+    savedWindowBounds = { 0, 0, width, height };
+    sendChangeMessage();
+}
+
+void PluginTabComponent::clearSavedWindowBounds()
+{
+    if (!hasManualWindowBounds)
+        return;
+
+    hasManualWindowBounds = false;
+    savedWindowBounds = {};
+    sendChangeMessage();
+}
+
+bool PluginTabComponent::hasSavedWindowBounds() const
+{
+    return hasManualWindowBounds;
+}
+
+juce::Rectangle<int> PluginTabComponent::getSavedWindowBounds() const
+{
+    return savedWindowBounds;
 }
 
 juce::MemoryBlock PluginTabComponent::getPluginState() const

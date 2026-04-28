@@ -287,8 +287,12 @@ private:
     {
         bool hasPlugin = false;
         bool bypassed = false;
+        bool hasSavedWindowBounds = false;
+        int savedWindowWidth = 0;
+        int savedWindowHeight = 0;
         juce::File pluginFile;
         juce::MemoryBlock pluginState;
+        juce::PluginDescription pluginDescription;
         PluginTabComponent::SlotType type = PluginTabComponent::SlotType::Empty;
         juce::String tabName;
         juce::StringArray midiAssignedDeviceIdentifiers;
@@ -326,13 +330,15 @@ private:
     void updateStatusBarText();
     enum ToolbarItemIds
     {
-        toolbarRoutingToggle = 10001,
-        toolbarRefitWindow   = 10002,
-        toolbarSavePreset    = 10003,
-        toolbarSavePresetAs  = 10004,
-        toolbarSpacer        = 10005,
-        toolbarRevertPreset  = 10006,
-        toolbarMidiPanic     = 10007
+        toolbarRoutingToggle          = 10001,
+        toolbarRefitWindow            = 10002,
+        toolbarSavePreset             = 10003,
+        toolbarSavePresetAs           = 10004,
+        toolbarSpacer                 = 10005,
+        toolbarRevertPreset           = 10006,
+        toolbarMidiPanic              = 10007,
+        toolbarSaveTabWindowSize      = 10008,
+        toolbarClearTabWindowSize     = 10009
     };
     enum MenuItemIds
     {
@@ -371,6 +377,7 @@ private:
     bool maybeSaveChanges();
     void markSessionDirty();
     void markSessionClean();
+
     void showPresetLoadErrors(const juce::StringArray& errors);
     bool loadPresetFromFile(const juce::File& file);
     void refreshPresetLists();
@@ -378,6 +385,8 @@ private:
     void updatePresetDropdownDisplayText();
     void loadPresetFromDropdown();
     void resizeWindowToFitCurrentTab();
+    void saveCurrentWindowSizeForCurrentTab();
+    void clearSavedWindowSizeForCurrentTab();
     void handleCurrentTabChanged();
 
     SessionData buildSessionData() const;

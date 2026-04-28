@@ -308,6 +308,14 @@ SessionData MainComponent::buildSessionData() const
             tab.type = tc->getType();
             tab.tabName = tabs.getTabNames()[i];
             tab.bypassed = tc->isBypassed();
+            tab.hasSavedWindowBounds = tc->hasSavedWindowBounds();
+
+            if (tab.hasSavedWindowBounds)
+            {
+                auto savedBounds = tc->getSavedWindowBounds();
+                tab.savedWindowWidth = savedBounds.getWidth();
+                tab.savedWindowHeight = savedBounds.getHeight();
+            }
 
             if (auto* midiState = getMidiRoutingStateForTab(i))
                 tab.midiAssignedDeviceIdentifiers = midiState->assignedDeviceIdentifiers;
@@ -317,20 +325,20 @@ SessionData MainComponent::buildSessionData() const
                 auto pluginFile = tc->getPluginFile();
 
                 tab.hasPlugin = true;
-                tab.plugin.pluginName = tc->getPluginName();
+
+                auto desc = tc->getLoadedPluginDescription();
+
+                tab.plugin.pluginName = desc.name;
+                tab.plugin.pluginDescriptiveName = desc.descriptiveName;
                 tab.plugin.pluginPath = pluginFile.getFullPathName();
                 tab.plugin.pluginPathRelative = AppSettings::makePathPortable(pluginFile);
                 tab.plugin.pluginPathDriveFlexible = AppSettings::getDriveFlexiblePath(pluginFile);
-
-                juce::PluginDescription desc;
-                if (scanPluginFile(pluginFile, desc))
-                {
-                    tab.plugin.pluginFormatName = desc.pluginFormatName;
-                    tab.plugin.isInstrument = desc.isInstrument;
-                    tab.plugin.pluginManufacturer = desc.manufacturerName;
-                    tab.plugin.pluginVersion = desc.version;
-                }
-
+                tab.plugin.pluginFormatName = desc.pluginFormatName;
+                tab.plugin.pluginFileOrIdentifier = desc.fileOrIdentifier;
+                tab.plugin.pluginUniqueId = desc.uniqueId;
+                tab.plugin.isInstrument = desc.isInstrument;
+                tab.plugin.pluginManufacturer = desc.manufacturerName;
+                tab.plugin.pluginVersion = desc.version;
                 tab.plugin.pluginStateBase64 = tc->getPluginState().toBase64Encoding();
             }
 
@@ -384,6 +392,18 @@ void MainComponent::applySessionData(const SessionData& session,
 
         if (auto* tc = getTabComponent(i))
         {
+            if (tabData.hasSavedWindowBounds
+                && tabData.savedWindowWidth > 0
+                && tabData.savedWindowHeight > 0)
+            {
+                tc->setSavedWindowBounds(tabData.savedWindowWidth,
+                                         tabData.savedWindowHeight);
+            }
+            else
+            {
+                tc->clearSavedWindowBounds();
+            }
+
             if (tabData.hasPlugin)
             {
                 auto pluginFile = AppSettings::resolvePluginPath(tabData.plugin.pluginPath,
@@ -415,7 +435,7 @@ void MainComponent::applySessionData(const SessionData& session,
                     entry.pluginVersion = tabData.plugin.pluginVersion;
                     missingPlugins.add(entry);
                 }
-                else if (!tc->loadPlugin(pluginFile))
+                else if (!tc->loadPluginFromSessionData(pluginFile, tabData.plugin))
                 {
                     loadErrors.add("Failed to load plugin: " + tabData.plugin.pluginName
                                    + "\n  Path: " + pluginFile.getFullPathName());
@@ -726,23 +746,65 @@ void MainComponent::resizeWindowToFitCurrentTab()
     if (tc == nullptr)
         return;
 
-    const auto preferred = tc->getPreferredContentBounds();
-
     const int minWidth = AppSettings::defaultWindowWidth;
     const int minHeight = AppSettings::defaultWindowHeight;
+
+    if (tc->hasSavedWindowBounds())
+    {
+        auto savedBounds = tc->getSavedWindowBounds();
+
+        const int targetWidth = juce::jmax(minWidth, savedBounds.getWidth());
+        const int targetHeight = juce::jmax(minHeight, savedBounds.getHeight());
+
+        top->setSize(targetWidth, targetHeight);
+        return;
+    }
+
+    const auto preferred = tc->getPreferredContentBounds();
 
     const int extraWidth = 32;
     const int extraHeight =
         juce::LookAndFeel::getDefaultLookAndFeel().getDefaultMenuBarHeight()
-        + 32   // top toolbar/preset row
-        + 34   // tab bar
-        + 24   // status bar
-        + 32;  // outer padding
+        + 32
+        + 34
+        + 24
+        + 32;
 
     const int targetWidth = juce::jmax(minWidth, preferred.getWidth() + extraWidth);
     const int targetHeight = juce::jmax(minHeight, preferred.getHeight() + extraHeight);
 
     top->setSize(targetWidth, targetHeight);
+}
+
+void MainComponent::saveCurrentWindowSizeForCurrentTab()
+{
+    auto* top = findParentComponentOfClass<juce::DocumentWindow>();
+    if (top == nullptr)
+        return;
+
+    auto* tc = getTabComponent(tabs.getCurrentTabIndex());
+    if (tc == nullptr)
+        return;
+
+    tc->setSavedWindowBounds(top->getWidth(), top->getHeight());
+    markSessionDirty();
+    resizeWindowToFitCurrentTab();
+    toolbar.repaint();
+}
+
+void MainComponent::clearSavedWindowSizeForCurrentTab()
+{
+    auto* tc = getTabComponent(tabs.getCurrentTabIndex());
+    if (tc == nullptr)
+        return;
+
+    if (!tc->hasSavedWindowBounds())
+        return;
+
+    tc->clearSavedWindowBounds();
+    markSessionDirty();
+    resizeWindowToFitCurrentTab();
+    toolbar.repaint();
 }
 
 void MainComponent::paint(juce::Graphics& g)
@@ -2111,6 +2173,7 @@ void MainComponent::closeCurrentTab()
     {
         if (auto* tc = getTabComponent(currentIndex))
         {
+            tc->clearSavedWindowBounds();
             tc->clearPlugin();
             refreshTabAppearance(currentIndex);
             unresolvedMissingPlugins.clear();
@@ -2185,6 +2248,7 @@ void MainComponent::showTabContextMenu(int tabIndex)
 
                                if (auto* tc = getTabComponent(tabIndex))
                                {
+                                   tc->clearSavedWindowBounds();
                                    tc->clearPlugin();
                                    refreshTabAppearance(tabIndex);
                                    refreshRoutingView();
@@ -2210,6 +2274,7 @@ void MainComponent::showTabContextMenu(int tabIndex)
                            {
                                if (auto* tc = getTabComponent(tabIndex))
                                {
+                                   tc->clearSavedWindowBounds();
                                    tc->clearPlugin();
                                    refreshTabAppearance(tabIndex);
                                    refreshRoutingView();
@@ -2297,6 +2362,14 @@ void MainComponent::moveTabEarlier(int tabIndex)
             snap.bypassed = tc->isBypassed();
             snap.type = tc->getType();
             snap.tabName = tabs.getTabNames()[i];
+            snap.hasSavedWindowBounds = tc->hasSavedWindowBounds();
+
+            if (snap.hasSavedWindowBounds)
+            {
+                auto savedBounds = tc->getSavedWindowBounds();
+                snap.savedWindowWidth = savedBounds.getWidth();
+                snap.savedWindowHeight = savedBounds.getHeight();
+            }
 
             if (auto* midiState = getMidiRoutingStateForTab(i))
                 snap.midiAssignedDeviceIdentifiers = midiState->assignedDeviceIdentifiers;
@@ -2305,6 +2378,7 @@ void MainComponent::moveTabEarlier(int tabIndex)
             {
                 snap.pluginFile = tc->getPluginFile();
                 snap.pluginState = tc->getPluginState();
+                snap.pluginDescription = tc->getLoadedPluginDescription();
             }
         }
 
@@ -2335,9 +2409,12 @@ void MainComponent::moveTabEarlier(int tabIndex)
 
         const auto& snap = snapshots.getReference(i);
 
+        if (snap.hasSavedWindowBounds)
+            tc->setSavedWindowBounds(snap.savedWindowWidth, snap.savedWindowHeight);
+
         if (snap.hasPlugin)
         {
-            if (tc->loadPlugin(snap.pluginFile))
+            if (tc->loadPlugin(snap.pluginFile, snap.pluginDescription))
             {
                 tc->restorePluginState(snap.pluginState);
                 tc->setBypassed(snap.bypassed);
@@ -2398,6 +2475,14 @@ void MainComponent::moveTabLater(int tabIndex)
             snap.bypassed = tc->isBypassed();
             snap.type = tc->getType();
             snap.tabName = tabs.getTabNames()[i];
+            snap.hasSavedWindowBounds = tc->hasSavedWindowBounds();
+
+            if (snap.hasSavedWindowBounds)
+            {
+                auto savedBounds = tc->getSavedWindowBounds();
+                snap.savedWindowWidth = savedBounds.getWidth();
+                snap.savedWindowHeight = savedBounds.getHeight();
+            }
 
             if (auto* midiState = getMidiRoutingStateForTab(i))
                 snap.midiAssignedDeviceIdentifiers = midiState->assignedDeviceIdentifiers;
@@ -2406,6 +2491,7 @@ void MainComponent::moveTabLater(int tabIndex)
             {
                 snap.pluginFile = tc->getPluginFile();
                 snap.pluginState = tc->getPluginState();
+                snap.pluginDescription = tc->getLoadedPluginDescription();
             }
         }
 
@@ -2436,9 +2522,12 @@ void MainComponent::moveTabLater(int tabIndex)
 
         const auto& snap = snapshots.getReference(i);
 
+        if (snap.hasSavedWindowBounds)
+            tc->setSavedWindowBounds(snap.savedWindowWidth, snap.savedWindowHeight);
+
         if (snap.hasPlugin)
         {
-            if (tc->loadPlugin(snap.pluginFile))
+            if (tc->loadPlugin(snap.pluginFile, snap.pluginDescription))
             {
                 tc->restorePluginState(snap.pluginState);
                 tc->setBypassed(snap.bypassed);
@@ -2474,6 +2563,10 @@ void MainComponent::getAllToolbarItemIds(juce::Array<int>& ids)
     ids.add(toolbarSpacer);
     ids.add(toolbarRefitWindow);
     ids.add(toolbarSpacer);
+    ids.add(toolbarSaveTabWindowSize);
+    ids.add(toolbarSpacer);
+    ids.add(toolbarClearTabWindowSize);
+    ids.add(toolbarSpacer);
     ids.add(toolbarSavePreset);
     ids.add(toolbarSpacer);
     ids.add(toolbarSavePresetAs);
@@ -2488,6 +2581,10 @@ void MainComponent::getDefaultItemSet(juce::Array<int>& ids)
     ids.add(toolbarRoutingToggle);
     ids.add(toolbarSpacer);
     ids.add(toolbarRefitWindow);
+    ids.add(toolbarSpacer);
+    ids.add(toolbarSaveTabWindowSize);
+    ids.add(toolbarSpacer);
+    ids.add(toolbarClearTabWindowSize);
     ids.add(toolbarSpacer);
     ids.add(toolbarSavePreset);
     ids.add(toolbarSpacer);
@@ -2519,6 +2616,12 @@ juce::String MainComponent::getToolbarIconGlyph(int itemId)
 
         case toolbarMidiPanic:
             return juce::String::charToString((juce_wchar) 0xe783);
+
+        case toolbarSaveTabWindowSize:
+            return juce::String::charToString((juce_wchar) 0xe78c);
+
+        case toolbarClearTabWindowSize:
+            return juce::String::charToString((juce_wchar) 0xea39);
 
         default:
             break;
@@ -2566,6 +2669,56 @@ juce::ToolbarItemComponent* MainComponent::createItem(int itemId)
         return button;
     }
 
+    if (itemId == toolbarSaveTabWindowSize)
+    {
+        auto* button = new StyledToolbarButton(itemId,
+                                               "Save current window size for this tab",
+                                               getToolbarIconGlyph(itemId),
+                                               StyledToolbarButton::ContentType::IconGlyph,
+                                               30,
+                                               [this]
+                                               {
+                                                   if (auto* tc = getTabComponent(tabs.getCurrentTabIndex()))
+                                                       return tc->hasSavedWindowBounds();
+
+                                                   return false;
+                                               });
+
+        button->onClick = [this, button]
+        {
+            saveCurrentWindowSizeForCurrentTab();
+            button->repaint();
+            toolbar.repaint();
+        };
+
+        return button;
+    }
+
+    if (itemId == toolbarClearTabWindowSize)
+    {
+        auto* button = new StyledToolbarButton(itemId,
+                                               "Clear saved window size for this tab",
+                                               getToolbarIconGlyph(itemId),
+                                               StyledToolbarButton::ContentType::IconGlyph,
+                                               30,
+                                               [this]
+                                               {
+                                                   if (auto* tc = getTabComponent(tabs.getCurrentTabIndex()))
+                                                       return tc->hasSavedWindowBounds();
+
+                                                   return false;
+                                               });
+
+        button->onClick = [this, button]
+        {
+            clearSavedWindowSizeForCurrentTab();
+            button->repaint();
+            toolbar.repaint();
+        };
+
+        return button;
+    }
+
     if (itemId == toolbarSavePreset)
     {
         auto* button = new StyledToolbarButton(itemId,
@@ -2579,6 +2732,7 @@ juce::ToolbarItemComponent* MainComponent::createItem(int itemId)
         {
             savePreset();
             button->repaint();
+            toolbar.repaint();
         };
 
         return button;
@@ -2597,6 +2751,7 @@ juce::ToolbarItemComponent* MainComponent::createItem(int itemId)
         {
             savePresetAs();
             button->repaint();
+            toolbar.repaint();
         };
 
         return button;
@@ -2661,6 +2816,9 @@ void MainComponent::setRoutingViewVisible(bool shouldShow)
     toolbar.repaint();
     repaint();
     resized();
+
+    if (!showingRoutingView)
+        resizeWindowToFitCurrentTab();
 }
 
 void MainComponent::toggleRoutingView()

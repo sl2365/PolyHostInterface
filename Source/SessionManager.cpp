@@ -39,6 +39,9 @@ bool SessionManager::saveSessionToFile(const SessionData& session, const juce::F
         tabXml->setAttribute("type", slotTypeToString(tab.type));
         tabXml->setAttribute("tabName", tab.tabName);
         tabXml->setAttribute("bypassed", tab.bypassed);
+        tabXml->setAttribute("hasSavedWindowBounds", tab.hasSavedWindowBounds);
+        tabXml->setAttribute("savedWindowWidth", tab.savedWindowWidth);
+        tabXml->setAttribute("savedWindowHeight", tab.savedWindowHeight);
 
         if (!tab.midiAssignedDeviceIdentifiers.isEmpty())
         {
@@ -54,11 +57,14 @@ bool SessionManager::saveSessionToFile(const SessionData& session, const juce::F
         if (tab.hasPlugin)
         {
             tabXml->setAttribute("pluginName", tab.plugin.pluginName);
+            tabXml->setAttribute("pluginDescriptiveName", tab.plugin.pluginDescriptiveName);
             tabXml->setAttribute("pluginPath", tab.plugin.pluginPath);
             tabXml->setAttribute("pluginPathRelative", tab.plugin.pluginPathRelative);
             tabXml->setAttribute("pluginPathDriveFlexible", tab.plugin.pluginPathDriveFlexible);
             tabXml->setAttribute("pluginState", tab.plugin.pluginStateBase64);
             tabXml->setAttribute("pluginFormatName", tab.plugin.pluginFormatName);
+            tabXml->setAttribute("pluginFileOrIdentifier", tab.plugin.pluginFileOrIdentifier);
+            tabXml->setAttribute("pluginUniqueId", tab.plugin.pluginUniqueId);
             tabXml->setAttribute("isInstrument", tab.plugin.isInstrument);
             tabXml->setAttribute("pluginManufacturer", tab.plugin.pluginManufacturer);
             tabXml->setAttribute("pluginVersion", tab.plugin.pluginVersion);
@@ -95,6 +101,9 @@ bool SessionManager::loadSessionFromFile(const juce::File& file,
         tab.type = slotTypeFromString(tabXml->getStringAttribute("type", "Empty"));
         tab.tabName = tabXml->getStringAttribute("tabName", "Empty");
         tab.bypassed = tabXml->getBoolAttribute("bypassed", false);
+        tab.hasSavedWindowBounds = tabXml->getBoolAttribute("hasSavedWindowBounds", false);
+        tab.savedWindowWidth = tabXml->getIntAttribute("savedWindowWidth", 0);
+        tab.savedWindowHeight = tabXml->getIntAttribute("savedWindowHeight", 0);
 
         if (auto* midiAssignmentsXml = tabXml->getChildByName("MidiAssignments"))
         {
@@ -111,11 +120,14 @@ bool SessionManager::loadSessionFromFile(const juce::File& file,
         }
 
         tab.plugin.pluginName = tabXml->getStringAttribute("pluginName");
+        tab.plugin.pluginDescriptiveName = tabXml->getStringAttribute("pluginDescriptiveName");
         tab.plugin.pluginPath = tabXml->getStringAttribute("pluginPath");
         tab.plugin.pluginPathRelative = tabXml->getStringAttribute("pluginPathRelative");
         tab.plugin.pluginPathDriveFlexible = tabXml->getStringAttribute("pluginPathDriveFlexible");
         tab.plugin.pluginStateBase64 = tabXml->getStringAttribute("pluginState");
         tab.plugin.pluginFormatName = tabXml->getStringAttribute("pluginFormatName");
+        tab.plugin.pluginFileOrIdentifier = tabXml->getStringAttribute("pluginFileOrIdentifier");
+        tab.plugin.pluginUniqueId = tabXml->getIntAttribute("pluginUniqueId", 0);
         tab.plugin.isInstrument = tabXml->getBoolAttribute("isInstrument", tab.type == PluginSlotType::Synth);
         tab.plugin.pluginManufacturer = tabXml->getStringAttribute("pluginManufacturer");
         tab.plugin.pluginVersion = tabXml->getStringAttribute("pluginVersion");
