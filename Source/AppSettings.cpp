@@ -1,9 +1,11 @@
 #include "AppSettings.h"
+#include <cmath>
 
-static constexpr const char* kRootTag      = "PolyHostSettings";
-static constexpr const char* kMidiDevice   = "midiDevice";
-static constexpr const char* kAudioDevice  = "audioDevice";
-static constexpr const char* kAudioDeviceState = "audioDeviceState";
+static constexpr const char* kRootTag           = "PolyHostSettings";
+static constexpr const char* kMidiDevice        = "midiDevice";
+static constexpr const char* kAudioDevice       = "audioDevice";
+static constexpr const char* kDefaultTempoBpm   = "defaultTempoBpm";
+static constexpr const char* kAudioDeviceState  = "audioDeviceState";
 static constexpr const char* kAutoSaveAfterPluginRepair = "autoSaveAfterPluginRepair";
 static constexpr const char* kPluginScanFolders         = "PluginScanFolders";
 static constexpr const char* kFolderTag                 = "Folder";
@@ -69,6 +71,20 @@ juce::String AppSettings::getAudioDeviceState() const
 void AppSettings::setAudioDeviceState(const juce::String& xmlText)
 {
     xml->setAttribute(kAudioDeviceState, xmlText);
+    save();
+}
+
+double AppSettings::getDefaultTempoBpm() const
+{
+    return xml->getDoubleAttribute(kDefaultTempoBpm, 120.0);
+}
+
+void AppSettings::setDefaultTempoBpm(double bpm)
+{
+    bpm = juce::jlimit(20.0, 300.0, bpm);
+    bpm = std::round(bpm * 10.0) / 10.0;
+
+    xml->setAttribute(kDefaultTempoBpm, bpm);
     save();
 }
 

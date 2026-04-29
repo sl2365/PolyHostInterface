@@ -259,6 +259,9 @@ public:
                                 const juce::MouseWheelDetails& wheel) override;
 
             void mouseDoubleClick(const juce::MouseEvent& event) override;
+            void addPopupMenuItems(juce::PopupMenu& menu,
+                                   const juce::MouseEvent* mouseClickEvent) override;
+            void performPopupMenuAction(int menuItemID) override;
             bool keyPressed(const juce::KeyPress& key) override;
             void focusLost(FocusChangeType cause) override;
 
@@ -337,6 +340,7 @@ public:
 
     juce::AudioPlayHead* getPlayHead() { return &hostPlayHead; }
     std::function<void()> onTempoChanged;
+    std::function<void(double)> onSetCurrentTempoAsDefaultRequested;
 
 private:
     void pushEffectiveTempoToEngine();

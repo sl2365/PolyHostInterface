@@ -18,6 +18,95 @@
 #include "UnsavedChangesHelper.h"
 #include "PresetNamePromptHelper.h"
 
+namespace
+{
+    class StatusMetersComponent final : public juce::Component,
+                                        private juce::Timer
+    {
+    public:
+        explicit StatusMetersComponent(AudioEngine& engineIn)
+            : engine(engineIn)
+        {
+            startTimerHz(24);
+        }
+
+        void paint(juce::Graphics& g) override
+        {
+            g.fillAll(juce::Colour(0xFF0F3460));
+
+            auto area = getLocalBounds().reduced(4, 4);
+
+            constexpr int rowHeight = 7;
+            constexpr int rowGap = 3;
+
+            drawMeterRow(g, area.removeFromTop(rowHeight), "IN",
+                         juce::jmax(engine.getInputMeterLevelL(), engine.getInputMeterLevelR()));
+
+            area.removeFromTop(rowGap);
+
+            drawMeterRow(g, area.removeFromTop(rowHeight), "OUT",
+                         juce::jmax(engine.getOutputMeterLevelL(), engine.getOutputMeterLevelR()));
+        }
+
+    private:
+        void timerCallback() override
+        {
+            repaint();
+        }
+
+        void drawMeterRow(juce::Graphics& g,
+                          juce::Rectangle<int> row,
+                          const juce::String& label,
+                          float level)
+        {
+            auto labelArea = row.removeFromLeft(24);
+
+            auto meterArea = row;
+            const int meterHeight = 6;
+            meterArea = meterArea.withSizeKeepingCentre(meterArea.getWidth(), meterHeight);
+
+            g.setColour(juce::Colours::lightgrey.withAlpha(0.85f));
+            g.setFont(juce::Font(juce::FontOptions(10.0f, juce::Font::plain)));
+            g.drawText(label, labelArea, juce::Justification::centredLeft);
+
+            g.setColour(juce::Colour(0xFF0F3460).darker(0.35f));
+            g.fillRect(meterArea);
+
+            const auto innerMeterArea = meterArea.reduced(1, 1);
+
+            const float clamped = juce::jlimit(0.0f, 1.0f, level);
+            auto fillWidth = (int) std::round((float) innerMeterArea.getWidth() * clamped);
+
+            if (fillWidth > 0)
+            {
+                auto fill = innerMeterArea.withWidth(fillWidth);
+
+                juce::ColourGradient meterGradient(
+                    juce::Colour(0xFF42D96B), (float) innerMeterArea.getX(),     (float) innerMeterArea.getCentreY(),
+                    juce::Colour(0xFFFF4545), (float) innerMeterArea.getRight(), (float) innerMeterArea.getCentreY(),
+                    false);
+
+                meterGradient.clearColours();
+                meterGradient.addColour(0.00, juce::Colour(0xFF42D96B)); // green
+                meterGradient.addColour(0.55, juce::Colour(0xFF42D96B)); // stay green for most of meter
+                meterGradient.addColour(0.72, juce::Colour(0xFFE6E64A)); // yellow-green transition
+                meterGradient.addColour(0.84, juce::Colour(0xFFFFB347)); // amber
+                meterGradient.addColour(0.92, juce::Colour(0xFFFF7A3A)); // orange-red transition
+                meterGradient.addColour(0.97, juce::Colour(0xFFFF4A3A)); // red
+                meterGradient.addColour(1.00, juce::Colour(0xFFFF3B3B)); // full red
+
+                g.setGradientFill(meterGradient);
+                g.fillRect(fill);
+            }
+
+            g.setColour(juce::Colours::white.withAlpha(0.18f));
+            g.drawRect(meterArea, 1);
+        }
+
+        AudioEngine& engine;
+    };
+}
+
 class MainComponent final : public juce::Component,
                             public juce::MenuBarModel,
                             public juce::FileDragAndDropTarget,
@@ -309,10 +398,14 @@ private:
     void addEmptyTab();
     void refreshTabAppearance(int tabIndex);
     bool handleDroppedPluginFile(const juce::File& file, int targetTabIndex);
+    void browseAndLoadPluginInCurrentTab();
+    void browseAndLoadPluginInNewTab();
     int promptForDroppedPluginAction(const juce::File& droppedFile, int targetTabIndex) const;
     bool loadDroppedPluginInNewTab(const juce::File& file);
     void configurePluginTabComponent(PluginTabComponent& tabComponent);
+    int getLoadedPluginTabCount() const;
     int countTabsOfType(PluginTabComponent::SlotType type) const;
+    bool shouldSuppressDirtyForSinglePluginQuickOpen() const;
     PluginTabComponent* getTabComponent(int tabIndex) const;
     void changeListenerCallback(juce::ChangeBroadcaster* source) override;
     void closeCurrentTab();
@@ -323,11 +416,14 @@ private:
     void toggleRoutingView();
     void refreshRoutingView();
     void syncRoutingToAudioEngine();
+    void autoAssignGlobalMidiToTabIfAppropriate(int tabIndex);
+    void assignEnabledGlobalMidiDevicesToTab(int tabIndex);
     void sendMidiPanic();
     void moveTabEarlier(int tabIndex);
     void moveTabLater(int tabIndex);
     void toggleTabBypass(int tabIndex);
     void updateStatusBarText();
+    void showAboutDialog();
     enum ToolbarItemIds
     {
         toolbarRoutingToggle          = 10001,
@@ -358,6 +454,8 @@ private:
     void refreshMidiRoutingView();
     void toggleMidiRoutingExpanded(int tabIndex);
     void toggleMidiAssignment(int tabIndex, const juce::String& deviceIdentifier);
+    void assignAllEnabledMidiDevicesToTab(int tabIndex);
+    void clearMidiAssignmentsForTab(int tabIndex);
     juce::Array<MidiTabRoutingState> midiRoutingStates;
     void showMidiAssignmentsCallout(int tabIndex, juce::Component* anchorComponent);
     void refreshMidiDevices();
@@ -458,6 +556,7 @@ private:
     TabBarLookAndFeel tabBarLookAndFeel;
     TabBarMouseListener tabBarMouseListener { *this };
     juce::Label statusBar;
+    std::unique_ptr<StatusMetersComponent> statusMeters;
     juce::Toolbar toolbar;
     RoutingView routingView;
     bool showingRoutingView = false;
@@ -466,6 +565,7 @@ private:
     bool isLoadingPreset = false;
     double ignoreDirtyChangesUntilMs = 0.0;
     bool isSessionDirty = false;
+    bool suppressDirtyForSinglePluginQuickOpen = false;
     juce::Array<MissingPluginEntry> unresolvedMissingPlugins;
     PresetComboBox presetDropdown;
 

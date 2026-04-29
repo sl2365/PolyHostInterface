@@ -35,6 +35,9 @@ public:
     juce::String getAudioDeviceState() const;
     void setAudioDeviceState(const juce::String& xmlText);
 
+    double getDefaultTempoBpm() const;
+    void setDefaultTempoBpm(double bpm);
+
     bool getAutoSaveAfterPluginRepair() const;
     void setAutoSaveAfterPluginRepair(bool shouldAutoSave);
 

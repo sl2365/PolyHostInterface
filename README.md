@@ -12,13 +12,13 @@ I always liked tools like TobyBear's MiniHost, SaviHost and Tone2's NanoHost. Bu
 |---|---|
 | VST3 x64 | ✅ Working |
 | CLAP x64 | ✅ Working (via clap-juce-extensions) |
-| VST2 x64 | ⚠️ Requires Steinberg VST2 SDK — see below |
+| VST2 x64 | ✅ Working - Requires Steinberg VST2 SDK — see below |
 | VST2/VST3 **32-bit** in 64-bit host | 🔴 Needs plugin bridge — see below - planned |
 | MIDI 1.0 | ✅ Working |
 | MIDI 2.0 (Windows MIDI Services) | ⚠️ Requires JUCE 8+ and Windows 11 - planned |
-| Tabbed interface (2 Synth + 8 FX) | ✅ Working |
+| Tabbed interface (Synth = parallel + FX = serial) | ✅ Working |
 | Tab-order = FX routing order | ✅ Working |
-| Portable settings (no AppData/registry) | Working |
+| Portable settings (no AppData/registry) | ✅ Working |
 | Audio/MIDI recording | 🔲 Planned |
 
 ## Folder Structure

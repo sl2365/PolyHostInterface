@@ -1,5 +1,8 @@
 cmake_minimum_required(VERSION 3.22)
-project(PolyHost VERSION 0.1.0 LANGUAGES CXX)
+
+set(POLYHOST_VERSION "1.0.0")
+
+project(PolyHost VERSION ${POLYHOST_VERSION} LANGUAGES CXX)
 
 set(CMAKE_MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
 set(CMAKE_CXX_STANDARD 17)
@@ -11,12 +14,12 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(VST2_SDK_PATH "${CMAKE_SOURCE_DIR}/tools/vstsdk2.4")
 
 add_subdirectory(tools/JUCE)
-# add_subdirectory(tools/clap-juce-extensions)
+add_subdirectory(tools/clap-juce-extensions)
 
 # ── Application target ────────────────────────────────────────────────────────
 juce_add_gui_app(PolyHost
     PRODUCT_NAME        "PolyHost"
-    VERSION             "0.1.0"
+    VERSION             "${POLYHOST_VERSION}"
     COMPANY_NAME        "PolyHost Project"
     BUNDLE_ID           "com.polyhost.app"
 )
@@ -33,6 +36,7 @@ target_sources(PolyHost PRIVATE
     Source/RoutingView.cpp
     Source/SessionManager.cpp
     Source/StandaloneTempoSupport.cpp
+    Source/PolyHost.rc
 )
 
 # ── Detect whether the portable VST2 SDK is present ──────────────────────────
@@ -46,12 +50,13 @@ else()
 endif()
 
 target_compile_definitions(PolyHost PRIVATE
+    POLYHOST_VERSION_STRING="${POLYHOST_VERSION}"
     JUCE_WEB_BROWSER=0
     JUCE_USE_CURL=0
     JUCE_MODAL_LOOPS_PERMITTED=1
 
     JUCE_PLUGINHOST_VST3=1          # VST3 x64 -- always enabled
-#     JUCE_PLUGINHOST_CLAP=1          # CLAP -- via clap-juce-extensions
+    JUCE_PLUGINHOST_CLAP=1          # CLAP -- via clap-juce-extensions
 
     # VST2 -- enabled automatically if tools\vstsdk2.4 is present
     $<$<BOOL:${VST2_ENABLED}>:JUCE_PLUGINHOST_VST=1>
@@ -75,7 +80,7 @@ target_link_libraries(PolyHost
         juce::juce_graphics
         juce::juce_gui_basics
         juce::juce_gui_extra
-#         clap_juce_extensions
+        clap_juce_extensions
     PUBLIC
         juce::juce_recommended_config_flags
         juce::juce_recommended_warning_flags

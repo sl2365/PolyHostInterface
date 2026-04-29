@@ -124,6 +124,13 @@ RoutingView::RoutingView()
     titleLabel.setColour(juce::Label::textColourId, juce::Colours::white);
     addAndMakeVisible(titleLabel);
 
+    midiHelpLabel.setText("NOTE: Additional plugins require MIDI assignment per tab using the MIDI button. Only the first tab is auto-assigned.",
+                          juce::dontSendNotification);
+    midiHelpLabel.setJustificationType(juce::Justification::centredLeft);
+    midiHelpLabel.setColour(juce::Label::textColourId, juce::Colours::lightgrey);
+    midiHelpLabel.setFont(juce::Font(juce::FontOptions(14.0f)));
+    addAndMakeVisible(midiHelpLabel);
+
     refreshMidiButton.onClick = [this]
     {
         if (onRefreshMidiDevices)
@@ -211,6 +218,9 @@ void RoutingView::resized()
     refreshMidiButton.setBounds(headerArea.removeFromRight(130));
     headerArea.removeFromRight(8);
     titleLabel.setBounds(headerArea);
+
+    area.removeFromTop(6);
+    midiHelpLabel.setBounds(area.removeFromTop(24));
 
     area.removeFromTop(10);
 

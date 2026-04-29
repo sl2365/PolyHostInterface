@@ -69,6 +69,9 @@ void AudioEngine::initialise(const juce::String& savedAudioDeviceState)
     audioOutNode = graph.addNode(std::make_unique<juce::AudioProcessorGraph::AudioGraphIOProcessor>(
         juce::AudioProcessorGraph::AudioGraphIOProcessor::audioOutputNode));
 
+    inputMeterNode = graph.addNode(std::make_unique<MeterTapProcessor>(inputMeterLevelL, inputMeterLevelR));
+    outputMeterNode = graph.addNode(std::make_unique<MeterTapProcessor>(outputMeterLevelL, outputMeterLevelR));
+
     graphPlayer.setProcessor(&graph);
 }
 
@@ -277,6 +280,12 @@ void AudioEngine::rebuildConnections()
 {
     graph.disconnectNode(audioOutNode->nodeID);
 
+    if (inputMeterNode != nullptr)
+        graph.disconnectNode(inputMeterNode->nodeID);
+
+    if (outputMeterNode != nullptr)
+        graph.disconnectNode(outputMeterNode->nodeID);
+
     for (auto& n : synthNodes)
         graph.disconnectNode(n->nodeID);
 
@@ -295,15 +304,32 @@ void AudioEngine::rebuildConnections()
             graph.addConnection({ { midiRoute.midiNode->nodeID, midiCh }, { midiRoute.pluginNodeId, midiCh } });
     }
 
+    if (synthNodes.isEmpty())
+    {
+        if (inputMeterNode != nullptr && outputMeterNode != nullptr)
+        {
+            graph.addConnection({ { inputMeterNode->nodeID, 0 }, { outputMeterNode->nodeID, 0 } });
+            graph.addConnection({ { inputMeterNode->nodeID, 1 }, { outputMeterNode->nodeID, 1 } });
+
+            graph.addConnection({ { outputMeterNode->nodeID, 0 }, { audioOutNode->nodeID, 0 } });
+            graph.addConnection({ { outputMeterNode->nodeID, 1 }, { audioOutNode->nodeID, 1 } });
+        }
+
+        return;
+    }
+
     if (!fxNodes.isEmpty())
     {
         auto firstFxNode = fxNodes.getFirst();
 
         for (auto& synthNode : synthNodes)
         {
-            graph.addConnection({ { synthNode->nodeID, 0 }, { firstFxNode->nodeID, 0 } });
-            graph.addConnection({ { synthNode->nodeID, 1 }, { firstFxNode->nodeID, 1 } });
+            graph.addConnection({ { synthNode->nodeID, 0 }, { inputMeterNode->nodeID, 0 } });
+            graph.addConnection({ { synthNode->nodeID, 1 }, { inputMeterNode->nodeID, 1 } });
         }
+
+        graph.addConnection({ { inputMeterNode->nodeID, 0 }, { firstFxNode->nodeID, 0 } });
+        graph.addConnection({ { inputMeterNode->nodeID, 1 }, { firstFxNode->nodeID, 1 } });
 
         for (int i = 0; i < fxNodes.size() - 1; ++i)
         {
@@ -315,17 +341,45 @@ void AudioEngine::rebuildConnections()
         }
 
         auto lastFxNode = fxNodes.getLast();
-        graph.addConnection({ { lastFxNode->nodeID, 0 }, { audioOutNode->nodeID, 0 } });
-        graph.addConnection({ { lastFxNode->nodeID, 1 }, { audioOutNode->nodeID, 1 } });
+        graph.addConnection({ { lastFxNode->nodeID, 0 }, { outputMeterNode->nodeID, 0 } });
+        graph.addConnection({ { lastFxNode->nodeID, 1 }, { outputMeterNode->nodeID, 1 } });
+
+        graph.addConnection({ { outputMeterNode->nodeID, 0 }, { audioOutNode->nodeID, 0 } });
+        graph.addConnection({ { outputMeterNode->nodeID, 1 }, { audioOutNode->nodeID, 1 } });
 
         return;
     }
 
     for (auto& synthNode : synthNodes)
     {
-        graph.addConnection({ { synthNode->nodeID, 0 }, { audioOutNode->nodeID, 0 } });
-        graph.addConnection({ { synthNode->nodeID, 1 }, { audioOutNode->nodeID, 1 } });
+        graph.addConnection({ { synthNode->nodeID, 0 }, { inputMeterNode->nodeID, 0 } });
+        graph.addConnection({ { synthNode->nodeID, 1 }, { inputMeterNode->nodeID, 1 } });
     }
+
+    graph.addConnection({ { inputMeterNode->nodeID, 0 }, { outputMeterNode->nodeID, 0 } });
+    graph.addConnection({ { inputMeterNode->nodeID, 1 }, { outputMeterNode->nodeID, 1 } });
+
+    graph.addConnection({ { outputMeterNode->nodeID, 0 }, { audioOutNode->nodeID, 0 } });
+    graph.addConnection({ { outputMeterNode->nodeID, 1 }, { audioOutNode->nodeID, 1 } });
 }
 
+float AudioEngine::getInputMeterLevelL() const
+{
+    return inputMeterLevelL.load(std::memory_order_relaxed);
+}
+
+float AudioEngine::getInputMeterLevelR() const
+{
+    return inputMeterLevelR.load(std::memory_order_relaxed);
+}
+
+float AudioEngine::getOutputMeterLevelL() const
+{
+    return outputMeterLevelL.load(std::memory_order_relaxed);
+}
+
+float AudioEngine::getOutputMeterLevelR() const
+{
+    return outputMeterLevelR.load(std::memory_order_relaxed);
+}
 

@@ -90,6 +90,7 @@ private:
     void rebuildModuleRows();
 
     juce::Label titleLabel;
+    juce::Label midiHelpLabel;
     juce::TextButton refreshMidiButton { "Refresh MIDI" };
     juce::Label emptyLabel;
     juce::Viewport viewport;

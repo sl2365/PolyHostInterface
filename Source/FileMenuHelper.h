@@ -14,6 +14,8 @@ public:
         loadPreset = 105,
         deleteCurrentPreset = 106,
         locateMissingPlugins = 107,
+        replacePlugin = 108,
+        newPlugin = 109,
         quit = 199
     };
 
@@ -26,6 +28,9 @@ public:
         menu.addSeparator();
         menu.addItem(newTab, "New Tab");
         menu.addItem(closeCurrentTab, "Close Current Tab");
+        menu.addSeparator();
+        menu.addItem(replacePlugin, "Replace Plugin...");
+        menu.addItem(newPlugin, "New Plugin...");
         menu.addSeparator();
         menu.addItem(savePreset, "Save Preset");
         menu.addItem(savePresetAs, "Save Preset As...");
@@ -53,6 +58,8 @@ public:
             case loadPreset:
             case deleteCurrentPreset:
             case locateMissingPlugins:
+            case replacePlugin:
+            case newPlugin:
             case quit:
                 return true;
             default:

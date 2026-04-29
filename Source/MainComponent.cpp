@@ -6,10 +6,17 @@ namespace
     class MidiAssignmentsCallout final : public juce::Component
     {
     public:
-        MidiAssignmentsCallout(const juce::Array<juce::MidiDeviceInfo>& availableDevices,
+        MidiAssignmentsCallout(const juce::Array<juce::MidiDeviceInfo>& availableDevicesIn,
                                const juce::StringArray& assignedDeviceIdentifiers,
-                               std::function<void(const juce::String& deviceIdentifier)> onToggle)
-            : toggleAssignment(std::move(onToggle))
+                               std::function<void(const juce::String& deviceIdentifier)> onToggle,
+                               std::function<void()> onAssignAllEnabled,
+                               std::function<void()> onClearAll,
+                               std::function<juce::StringArray()> getAssignedIdentifiers)
+            : availableDevices(availableDevicesIn),
+              toggleAssignment(std::move(onToggle)),
+              assignAllEnabled(std::move(onAssignAllEnabled)),
+              clearAllAssignments(std::move(onClearAll)),
+              getAssignedIdentifiers(std::move(getAssignedIdentifiers))
         {
             for (auto& device : availableDevices)
             {
@@ -22,20 +29,51 @@ namespace
                 {
                     if (toggleAssignment)
                         toggleAssignment(identifier);
+
+                    refreshToggleStatesFromAssignedIdentifiers();
                 };
 
                 addAndMakeVisible(button);
             }
+
+            addAndMakeVisible(assignAllButton);
+            assignAllButton.setButtonText("Assign All Enabled");
+            assignAllButton.onClick = [this]
+            {
+                if (assignAllEnabled)
+                    assignAllEnabled();
+
+                refreshToggleStatesFromAssignedIdentifiers();
+            };
+
+            addAndMakeVisible(clearAllButton);
+            clearAllButton.setButtonText("Clear All");
+            clearAllButton.onClick = [this]
+            {
+                if (clearAllAssignments)
+                    clearAllAssignments();
+
+                refreshToggleStatesFromAssignedIdentifiers();
+            };
 
             addAndMakeVisible(closeButton);
             closeButton.setButtonText("Close");
             closeButton.onClick = [this]
             {
                 if (auto* parent = findParentComponentOfClass<juce::CallOutBox>())
-                    parent->setVisible(false);
+                    parent->dismiss();
             };
 
-            setSize(260, 40 + (deviceButtons.size() * 28) + 40);
+            const int width = 280;
+            const int height = 20
+                             + (deviceButtons.size() * 28)
+                             + 13   // space between device list and buttons
+                             + 28
+                             + 13   // space between buttons
+                             + 28
+                             + 2;   // bottom margin
+
+            setSize(width, height);
         }
 
         void resized() override
@@ -45,14 +83,107 @@ namespace
             for (auto* button : deviceButtons)
                 button->setBounds(area.removeFromTop(28));
 
-            area.removeFromTop(8);
-            closeButton.setBounds(area.removeFromTop(28).removeFromRight(80));
+            area.removeFromTop(13); // original 8 + 5 lower
+
+            auto actionRow = area.removeFromTop(28);
+            const int gap = 8;
+            const int assignWidth = 130;
+            const int clearWidth = 80;
+            const int totalWidth = assignWidth + gap + clearWidth;
+            auto centredActionRow = actionRow.withSizeKeepingCentre(totalWidth, 28);
+
+            assignAllButton.setBounds(centredActionRow.removeFromLeft(assignWidth));
+            centredActionRow.removeFromLeft(gap);
+            clearAllButton.setBounds(centredActionRow.removeFromLeft(clearWidth));
+
+            area.removeFromTop(13); // more separation before Close
+            closeButton.setBounds(area.removeFromTop(28).withSizeKeepingCentre(80, 28));
         }
 
     private:
+        void refreshToggleStatesFromAssignedIdentifiers()
+        {
+            if (!getAssignedIdentifiers)
+                return;
+
+            auto assigned = getAssignedIdentifiers();
+
+            for (int i = 0; i < deviceButtons.size(); ++i)
+            {
+                if (auto* button = deviceButtons[i])
+                    button->setToggleState(assigned.contains(availableDevices[i].identifier),
+                                           juce::dontSendNotification);
+            }
+
+            repaint();
+        }
+
+        juce::Array<juce::MidiDeviceInfo> availableDevices;
         juce::OwnedArray<juce::ToggleButton> deviceButtons;
+        juce::TextButton assignAllButton;
+        juce::TextButton clearAllButton;
         juce::TextButton closeButton;
         std::function<void(const juce::String& deviceIdentifier)> toggleAssignment;
+        std::function<void()> assignAllEnabled;
+        std::function<void()> clearAllAssignments;
+        std::function<juce::StringArray()> getAssignedIdentifiers;
+    };
+
+    class AboutDialogContent final : public juce::Component
+    {
+    public:
+        AboutDialogContent()
+        {
+            titleLabel.setText("PolyHost", juce::dontSendNotification);
+            titleLabel.setJustificationType(juce::Justification::centred);
+            titleLabel.setFont(juce::Font(juce::FontOptions(24.0f, juce::Font::bold)));
+            titleLabel.setColour(juce::Label::textColourId, juce::Colours::white);
+            addAndMakeVisible(titleLabel);
+
+            versionLabel.setText("Version " + juce::String(POLYHOST_VERSION_STRING), juce::dontSendNotification);
+            versionLabel.setJustificationType(juce::Justification::centred);
+            versionLabel.setColour(juce::Label::textColourId, juce::Colours::lightgrey);
+            addAndMakeVisible(versionLabel);
+
+            infoLabel.setText("A lightweight tabbed plugin host for VST3 and CLAP.\nBuilt with JUCE.\n\nVST2 and 32-bit bridging planned.",
+                              juce::dontSendNotification);
+            infoLabel.setJustificationType(juce::Justification::centred);
+            infoLabel.setColour(juce::Label::textColourId, juce::Colours::lightgrey);
+            addAndMakeVisible(infoLabel);
+
+            closeButton.setButtonText("Close");
+            closeButton.onClick = [this]
+            {
+                if (auto* parent = findParentComponentOfClass<juce::DialogWindow>())
+                    parent->exitModalState(0);
+            };
+            addAndMakeVisible(closeButton);
+
+            setSize(360, 220);
+        }
+
+        void paint(juce::Graphics& g) override
+        {
+            g.fillAll(juce::Colour(0xFF1D2230));
+        }
+
+        void resized() override
+        {
+            auto area = getLocalBounds().reduced(20);
+
+            titleLabel.setBounds(area.removeFromTop(34));
+            versionLabel.setBounds(area.removeFromTop(22));
+            area.removeFromTop(14);
+            infoLabel.setBounds(area.removeFromTop(80));
+            area.removeFromTop(12);
+            closeButton.setBounds(area.removeFromTop(30).withSizeKeepingCentre(90, 30));
+        }
+
+    private:
+        juce::Label titleLabel;
+        juce::Label versionLabel;
+        juce::Label infoLabel;
+        juce::TextButton closeButton;
     };
 }
 
@@ -120,6 +251,7 @@ void MainComponent::AddTabButton::paintButton(juce::Graphics& g, bool isMouseOve
 MainComponent::MainComponent()
 {
     setSize(AppSettings::defaultWindowWidth, AppSettings::defaultWindowHeight);
+    tooltipWindow.setOpaque(false);
     audioEngine.initialise(settings.getAudioDeviceState());
     audioEngine.setPlayHead(standaloneTempoSupport.getPlayHead());
     standaloneTempoSupport.setWrappedAudioCallback(&audioEngine.getGraphPlayer());
@@ -149,14 +281,36 @@ MainComponent::MainComponent()
 
     refreshPresetDropdown();
 
-    standaloneTempoSupport.setDefaultTempoBpm(StandaloneTempoState{}.defaultTempoBpm);
-    standaloneTempoSupport.setHostTempoBpm(StandaloneTempoState{}.hostTempoBpm);
+    const auto savedDefaultTempo = settings.getDefaultTempoBpm();
+    standaloneTempoSupport.setDefaultTempoBpm(savedDefaultTempo);
+    standaloneTempoSupport.setHostTempoBpm(savedDefaultTempo);
     standaloneTempoSupport.refreshTempoStrip();
     standaloneTempoSupport.onTempoChanged = [this]
     {
         const auto nowMs = juce::Time::getMillisecondCounterHiRes();
         if (!isLoadingPreset && nowMs >= ignoreDirtyChangesUntilMs)
-            markSessionDirty();
+        {
+            if (!shouldSuppressDirtyForSinglePluginQuickOpen())
+                markSessionDirty();
+        }
+    };
+
+    standaloneTempoSupport.onSetCurrentTempoAsDefaultRequested = [this](double bpm)
+    {
+        settings.setDefaultTempoBpm(bpm);
+        standaloneTempoSupport.setDefaultTempoBpm(bpm);
+        standaloneTempoSupport.refreshTempoStrip();
+
+        statusBar.setText("PolyHost 0.1  |  Default BPM set to " + juce::String(bpm, 1),
+                          juce::dontSendNotification);
+
+        auto safe = juce::Component::SafePointer<MainComponent>(this);
+
+        juce::Timer::callAfterDelay(1500, [safe]
+        {
+            if (safe != nullptr)
+                safe->updateStatusBarText();
+        });
     };
 
     tabs.setColour(juce::TabbedComponent::backgroundColourId, juce::Colour(0xFF16213E));
@@ -213,7 +367,6 @@ MainComponent::MainComponent()
         moveTabLater(tabIndex);
     };
 
-    addEmptyTab();
     addEmptyTab();
 
     refreshRoutingView();
@@ -276,8 +429,16 @@ MainComponent::MainComponent()
     statusBar.setJustificationType(juce::Justification::centredLeft);
     addAndMakeVisible(statusBar);
 
+    statusMeters = std::make_unique<StatusMetersComponent>(audioEngine);
+    addAndMakeVisible(*statusMeters);
+
     markSessionClean();
     updateWindowTitle();
+
+    resized();
+
+    if (tempoStrip != nullptr)
+        tempoStrip->toFront(false);
 }
 
 MainComponent::~MainComponent()
@@ -498,7 +659,10 @@ void MainComponent::changeListenerCallback(juce::ChangeBroadcaster* source)
 
                 const auto nowMs = juce::Time::getMillisecondCounterHiRes();
                 if (!isLoadingPreset && nowMs >= ignoreDirtyChangesUntilMs)
-                    markSessionDirty();
+                {
+                    if (!shouldSuppressDirtyForSinglePluginQuickOpen())
+                        markSessionDirty();
+                }
 
                 return;
             }
@@ -523,9 +687,16 @@ void MainComponent::loadPluginFromFile(const juce::File& file)
                 if (tc->loadPlugin(file))
                 {
                     tabs.setCurrentTabIndex(i);
+                    autoAssignGlobalMidiToTabIfAppropriate(i);
                     refreshTabAppearance(i);
                     handleCurrentTabChanged();
-                    markSessionDirty();
+
+                    suppressDirtyForSinglePluginQuickOpen = (getLoadedPluginTabCount() <= 1);
+
+                    if (shouldSuppressDirtyForSinglePluginQuickOpen())
+                        markSessionClean();
+                    else
+                        markSessionDirty();
                 }
                 return;
             }
@@ -539,11 +710,60 @@ void MainComponent::loadPluginFromFile(const juce::File& file)
         if (tc->loadPlugin(file))
         {
             tabs.setCurrentTabIndex(tabs.getNumTabs() - 1);
+            autoAssignGlobalMidiToTabIfAppropriate(tabs.getNumTabs() - 1);
             refreshTabAppearance(tabs.getNumTabs() - 1);
+            handleCurrentTabChanged();
+
+            suppressDirtyForSinglePluginQuickOpen = (getLoadedPluginTabCount() <= 1);
+
+            if (shouldSuppressDirtyForSinglePluginQuickOpen())
+                markSessionClean();
+            else
+                markSessionDirty();
+        }
+    }
+}
+
+void MainComponent::browseAndLoadPluginInCurrentTab()
+{
+    juce::FileChooser chooser("Open Plugin", juce::File(), "*.vst3;*.dll;*.clap");
+
+    if (!chooser.browseForFileToOpen())
+        return;
+
+    auto file = chooser.getResult();
+    auto currentIndex = tabs.getCurrentTabIndex();
+
+    if (!juce::isPositiveAndBelow(currentIndex, tabs.getNumTabs()))
+        currentIndex = 0;
+
+    if (!juce::isPositiveAndBelow(currentIndex, tabs.getNumTabs()))
+    {
+        addEmptyTab();
+        currentIndex = tabs.getNumTabs() - 1;
+    }
+
+    if (auto* tc = getTabComponent(currentIndex))
+    {
+        if (tc->loadPlugin(file))
+        {
+            tabs.setCurrentTabIndex(currentIndex);
+            autoAssignGlobalMidiToTabIfAppropriate(currentIndex);
+            refreshTabAppearance(currentIndex);
             handleCurrentTabChanged();
             markSessionDirty();
         }
     }
+}
+
+void MainComponent::browseAndLoadPluginInNewTab()
+{
+    juce::FileChooser chooser("Open Plugin", juce::File(), "*.vst3;*.dll;*.clap");
+
+    if (!chooser.browseForFileToOpen())
+        return;
+
+    loadDroppedPluginInNewTab(chooser.getResult());
 }
 
 int MainComponent::promptForDroppedPluginAction(const juce::File& droppedFile, int targetTabIndex) const
@@ -615,6 +835,7 @@ bool MainComponent::handleDroppedPluginFile(const juce::File& file, int targetTa
         if (targetTab->loadPlugin(file))
         {
             tabs.setCurrentTabIndex(targetTabIndex);
+            autoAssignGlobalMidiToTabIfAppropriate(targetTabIndex);
             refreshTabAppearance(targetTabIndex);
             handleCurrentTabChanged();
             markSessionDirty();
@@ -634,6 +855,7 @@ bool MainComponent::handleDroppedPluginFile(const juce::File& file, int targetTa
         if (targetTab->loadPlugin(file))
         {
             tabs.setCurrentTabIndex(targetTabIndex);
+            autoAssignGlobalMidiToTabIfAppropriate(targetTabIndex);
             refreshTabAppearance(targetTabIndex);
             handleCurrentTabChanged();
             markSessionDirty();
@@ -692,7 +914,8 @@ void MainComponent::addEmptyTab()
     configurePluginTabComponent(*tc);
     tc->addChangeListener(this);
     tabs.addTab("Empty", PluginTabComponent::colourForType(PluginTabComponent::SlotType::Empty), tc, true);
-    markSessionDirty();
+    if (!shouldSuppressDirtyForSinglePluginQuickOpen())
+        markSessionDirty();
 }
 
 void MainComponent::refreshTabAppearance(int index)
@@ -720,6 +943,28 @@ int MainComponent::countTabsOfType(PluginTabComponent::SlotType type) const
     for (int i = 0; i < tabs.getNumTabs(); ++i)
         if (auto* tc = getTabComponent(i)) if (tc->getType() == type) ++count;
     return count;
+}
+
+int MainComponent::getLoadedPluginTabCount() const
+{
+    int count = 0;
+
+    for (int i = 0; i < tabs.getNumTabs(); ++i)
+    {
+        if (auto* tc = getTabComponent(i))
+        {
+            if (tc->hasPlugin())
+                ++count;
+        }
+    }
+
+    return count;
+}
+
+bool MainComponent::shouldSuppressDirtyForSinglePluginQuickOpen() const
+{
+    return suppressDirtyForSinglePluginQuickOpen
+           && getLoadedPluginTabCount() <= 1;
 }
 
 PluginTabComponent* MainComponent::getTabComponent(int index) const
@@ -832,12 +1077,20 @@ void MainComponent::resized()
     auto tempoArea = topRow.removeFromRight(260);
     tempoArea.removeFromRight(6);
 
-    if (tempoStrip != nullptr)
-        tempoStrip->setBounds(tempoArea);
-
     toolbar.setBounds(topRow);
 
-    statusBar.setBounds(area.removeFromBottom(24));
+    if (tempoStrip != nullptr)
+    {
+        tempoStrip->setBounds(tempoArea);
+        tempoStrip->toFront(false);
+    }
+
+    auto statusArea = area.removeFromBottom(24);
+    auto metersArea = statusArea.removeFromRight(150);
+
+    statusBar.setBounds(statusArea);
+    if (statusMeters != nullptr)
+        statusMeters->setBounds(metersArea);
 
     tabs.setBounds(area);
     routingView.setBounds(area);
@@ -924,6 +1177,8 @@ void MainComponent::menuItemSelected(int itemId, int)
         case FileMenuHelper::newPreset: newPreset(); break;
         case FileMenuHelper::newTab: addEmptyTab(); break;
         case FileMenuHelper::closeCurrentTab: closeCurrentTab(); break;
+        case FileMenuHelper::replacePlugin: browseAndLoadPluginInCurrentTab(); break;
+        case FileMenuHelper::newPlugin: browseAndLoadPluginInNewTab(); break;
         case FileMenuHelper::savePreset: savePreset(); break;
         case FileMenuHelper::savePresetAs: savePresetAs(); break;
         case FileMenuHelper::loadPreset: loadPreset(); break;
@@ -1045,8 +1300,7 @@ void MainComponent::menuItemSelected(int itemId, int)
         case 504: clearPluginScanFolders(); break;
 
         case 601:
-            juce::NativeMessageBox::showMessageBoxAsync(juce::AlertWindow::InfoIcon, "About PolyHost",
-                "PolyHost v0.1\n\nA lightweight tabbed plugin host for VST3 and CLAP.\nBuilt with JUCE.\n\nVST2 and 32-bit bridging planned.");
+            showAboutDialog();
             break;
         default: break;
     }
@@ -1065,6 +1319,22 @@ void MainComponent::clearAllPlugins()
     markSessionDirty();
 }
 
+void MainComponent::showAboutDialog()
+{
+    auto content = std::make_unique<AboutDialogContent>();
+
+    juce::DialogWindow::LaunchOptions options;
+    options.content.setOwned(content.release());
+    options.dialogTitle = "About PolyHost";
+    options.dialogBackgroundColour = juce::Colour(0xFF1D2230);
+    options.escapeKeyTriggersCloseButton = true;
+    options.useNativeTitleBar = true;
+    options.resizable = false;
+
+    if (auto* window = options.launchAsync())
+        window->centreWithSize(360, 220);
+}
+
 // ===================================
 // SAVE / LOAD
 // ===================================
@@ -1080,7 +1350,6 @@ bool MainComponent::saveCurrentSessionOrSaveAs()
 
 void MainComponent::handleSuccessfulPresetSave(const juce::File& file)
 {
-    standaloneTempoSupport.setDefaultTempoBpm(standaloneTempoSupport.getHostTempoBpm());
     presetSessionController.handleSuccessfulSave(file);
     updateWindowTitle();
     refreshPresetDropdown();
@@ -1099,12 +1368,17 @@ void MainComponent::newPreset()
     midiRoutingStates.clear();
 
     addEmptyTab();
-    addEmptyTab();
+
+    const auto savedDefaultTempo = settings.getDefaultTempoBpm();
+    standaloneTempoSupport.setDefaultTempoBpm(savedDefaultTempo);
+    standaloneTempoSupport.setHostTempoBpm(savedDefaultTempo);
+    standaloneTempoSupport.refreshTempoStrip();
 
     refreshRoutingView();
     syncRoutingToAudioEngine();
     presetSessionController.clearCurrentSessionReference();
     unresolvedMissingPlugins.clear();
+    suppressDirtyForSinglePluginQuickOpen = false;
 
     if (auto* top = findParentComponentOfClass<juce::DocumentWindow>())
         top->setSize(AppSettings::defaultWindowWidth, AppSettings::defaultWindowHeight);
@@ -1210,7 +1484,6 @@ void MainComponent::deletePreset()
     midiRoutingStates.clear();
 
     addEmptyTab();
-    addEmptyTab();
 
     refreshRoutingView();
     syncRoutingToAudioEngine();
@@ -1288,6 +1561,7 @@ bool MainComponent::loadPresetFromFile(const juce::File& file)
     isLoadingPreset = true;
     ignoreDirtyChangesUntilMs = juce::Time::getMillisecondCounterHiRes() + 500.0;
     unresolvedMissingPlugins.clear();
+    suppressDirtyForSinglePluginQuickOpen = false;
 
     juce::StringArray loadErrors = parseWarnings;
     juce::Array<MissingPluginEntry> missingPlugins;
@@ -1803,6 +2077,9 @@ juce::File MainComponent::tryAutoLocateReplacement(const MissingPluginEntry& ent
 
 void MainComponent::markSessionDirty()
 {
+    if (getLoadedPluginTabCount() > 1)
+        suppressDirtyForSinglePluginQuickOpen = false;
+
     sessionDocument.markDirty();
     updateWindowTitle();
     updatePresetDropdownDisplayText();
@@ -2902,6 +3179,38 @@ void MainComponent::toggleTabBypass(int tabIndex)
     }
 }
 
+void MainComponent::assignEnabledGlobalMidiDevicesToTab(int tabIndex)
+{
+    auto* midiState = getMidiRoutingStateForTab(tabIndex);
+    if (midiState == nullptr)
+        return;
+
+    if (!midiState->assignedDeviceIdentifiers.isEmpty())
+        return;
+
+    auto enabledDeviceIdentifiers = settings.getEnabledMidiDeviceIdentifiers();
+
+    for (auto& identifier : enabledDeviceIdentifiers)
+        midiState->assignedDeviceIdentifiers.addIfNotAlreadyThere(identifier);
+}
+
+void MainComponent::autoAssignGlobalMidiToTabIfAppropriate(int tabIndex)
+{
+    if (!juce::isPositiveAndBelow(tabIndex, tabs.getNumTabs()))
+        return;
+
+    if (getLoadedPluginTabCount() != 1)
+        return;
+
+    auto* tc = getTabComponent(tabIndex);
+    if (tc == nullptr || !tc->hasPlugin())
+        return;
+
+    assignEnabledGlobalMidiDevicesToTab(tabIndex);
+    refreshRoutingView();
+    syncRoutingToAudioEngine();
+}
+
 void MainComponent::syncRoutingToAudioEngine()
 {
     juce::Array<juce::AudioProcessorGraph::NodeID> activeSynthIds;
@@ -2984,6 +3293,32 @@ void MainComponent::toggleMidiAssignment(int tabIndex, const juce::String& devic
     }
 }
 
+void MainComponent::assignAllEnabledMidiDevicesToTab(int tabIndex)
+{
+    if (auto* state = getMidiRoutingStateForTab(tabIndex))
+    {
+        state->assignedDeviceIdentifiers.clear();
+
+        auto enabledDeviceIdentifiers = settings.getEnabledMidiDeviceIdentifiers();
+
+        for (auto& identifier : enabledDeviceIdentifiers)
+            state->assignedDeviceIdentifiers.addIfNotAlreadyThere(identifier);
+
+        refreshRoutingView();
+        markSessionDirty();
+    }
+}
+
+void MainComponent::clearMidiAssignmentsForTab(int tabIndex)
+{
+    if (auto* state = getMidiRoutingStateForTab(tabIndex))
+    {
+        state->assignedDeviceIdentifiers.clear();
+        refreshRoutingView();
+        markSessionDirty();
+    }
+}
+
 void MainComponent::refreshMidiDevices()
 {
     refreshRoutingView();
@@ -3007,6 +3342,21 @@ void MainComponent::showMidiAssignmentsCallout(int tabIndex, juce::Component* an
         [this, tabIndex](const juce::String& deviceIdentifier)
         {
             toggleMidiAssignment(tabIndex, deviceIdentifier);
+        },
+        [this, tabIndex]
+        {
+            assignAllEnabledMidiDevicesToTab(tabIndex);
+        },
+        [this, tabIndex]
+        {
+            clearMidiAssignmentsForTab(tabIndex);
+        },
+        [this, tabIndex]() -> juce::StringArray
+        {
+            if (auto* currentState = getMidiRoutingStateForTab(tabIndex))
+                return currentState->assignedDeviceIdentifiers;
+
+            return {};
         });
 
     juce::CallOutBox::launchAsynchronously(std::move(content),

@@ -6,7 +6,7 @@ class PolyHostApplication final : public juce::JUCEApplication
 public:
     PolyHostApplication() = default;
     const juce::String getApplicationName() override    { return "PolyHost"; }
-    const juce::String getApplicationVersion() override { return "0.1.0"; }
+    const juce::String getApplicationVersion() override { return POLYHOST_VERSION_STRING; }
     bool moreThanOneInstanceAllowed() override { return false; }
 
     void initialise(const juce::String& commandLine) override

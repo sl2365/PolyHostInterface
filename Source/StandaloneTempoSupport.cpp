@@ -263,7 +263,7 @@ void StandaloneTempoSupport::TempoStripComponent::refreshUi()
 
 void StandaloneTempoSupport::TempoStripComponent::updateTooltip()
 {
-    tempoEditor.setTooltip("Scroll to adjust.\nShift+Scroll: Fine Adjust.");
+    tempoEditor.setTooltip("Scroll to adjust.\nShift+Scroll: Fine Adjust.\nRight-click: Set as Default.");
     resetTempoButton.setTooltip("Reset tempo to " + juce::String(owner.getDefaultTempoBpm(), 1) + ".");
 }
 
@@ -307,6 +307,29 @@ void StandaloneTempoSupport::TempoStripComponent::TempoTextEditor::mouseDoubleCl
         return;
 
     owner.setTempoBpm(owner.owner.getDefaultTempoBpm());
+}
+
+void StandaloneTempoSupport::TempoStripComponent::TempoTextEditor::addPopupMenuItems(
+    juce::PopupMenu& menu,
+    const juce::MouseEvent* mouseClickEvent)
+{
+    juce::TextEditor::addPopupMenuItems(menu, mouseClickEvent);
+
+    menu.addSeparator();
+    menu.addItem(1001, "Set as Default");
+}
+
+void StandaloneTempoSupport::TempoStripComponent::TempoTextEditor::performPopupMenuAction(int menuItemID)
+{
+    if (menuItemID == 1001)
+    {
+        if (owner.owner.onSetCurrentTempoAsDefaultRequested)
+            owner.owner.onSetCurrentTempoAsDefaultRequested(owner.owner.getHostTempoBpm());
+
+        return;
+    }
+
+    juce::TextEditor::performPopupMenuAction(menuItemID);
 }
 
 bool StandaloneTempoSupport::TempoStripComponent::TempoTextEditor::keyPressed(const juce::KeyPress& key)
