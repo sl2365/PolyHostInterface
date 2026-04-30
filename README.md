@@ -30,6 +30,7 @@ PolyHost\                        ← your project root
 ├── CMakeLists.txt
 ├── README.md
 │
+│
 ├── Source\
 │   ├── Main.cpp
 │   ├── MainComponent.h / .cpp
@@ -37,6 +38,7 @@ PolyHost\                        ← your project root
 │   ├── AudioEngine.h / .cpp
 │   ├── MidiEngine.h / .cpp
 │   └── AppSettings.h / .cpp
+│
 │
 ├── tools\
 │   ├── cmake\                   ← extract cmake-3.x.x-windows-x86_64.zip HERE
@@ -50,8 +52,6 @@ PolyHost\                        ← your project root
 │	│
 │	└── clap\					 ← drop your CLAP SDK here
 │	   	└── CMakeLists.txt
-│
-│
 │
 │
 ├── dist\                        ← build output — PolyHost.exe lands here
@@ -80,18 +80,15 @@ The finished exe appears in dist\PolyHost.exe
 
 ## Opening a Plugin
 
-1. Right-click any .vst3 or .clap file in File Explorer
+1. Right-click any .vst2, .vst3 or .clap file in File Explorer
 2. Open with > Choose another app
-3. Browse to dist\PolyHost.exe
+3. Browse to PolyHost.exe
 4. Tick "Always use this app" if you want it permanent
 
 ## VST2 Support
 
-If you have a copy of vstsdk2.4, place it e.g. at C:\SDKs\vstsdk2.4
-then in CMakeLists.txt uncomment:
-    JUCE_PLUGINHOST_VST=1
-    VST2_SDK_ROOT="C:/SDKs/vstsdk2.4"
-and run build.bat again.
+If you have a copy of vstsdk2.4, place it here: {CMAKE_SOURCE_DIR}/tools/vstsdk2.4
+then run build.bat.
 
 ## CLAP Support
 
@@ -111,4 +108,4 @@ Install to tools/clap/CMakeLists.txt
                     |
               [Audio Out]
 
-Drag FX tabs left/right on the tab bar to change processing order.
+The synths always wired in parallel. FX are in series and routing can be modified by entering the Routing page. Click the Routing toolbar button and a list of all tabs appears, use Up and Down buttons to manage the processing order.
