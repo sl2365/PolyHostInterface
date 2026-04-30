@@ -11,12 +11,12 @@ I always liked tools like TobyBear's MiniHost, SaviHost and Tone2's NanoHost. Bu
 | Feature | Status |
 |---|---|
 | VST3 x64 | ✅ Working |
-| CLAP x64 | ⚠️ Planned |
+| CLAP x64 | ⚠️Planned - Requires CLAP SDK — see below |
 | VST2 x64 | ✅ Working - Requires Steinberg VST2 SDK — see below |
 | VST2/VST3 **32-bit** in 64-bit host | 🔴 Needs plugin bridge — see below - planned |
 | MIDI 1.0 | ✅ Working |
 | MIDI 2.0 (Windows MIDI Services) | ⚠️ Requires JUCE 8+ and Windows 11 - planned |
-| Tabbed interface (Synth = parallel + FX = serial) | ✅ Working |
+| Tabbed interface (Synth: parallel + FX: serial) | ✅ Working |
 | Tab-order = FX routing order | ✅ Working |
 | Portable settings (no AppData/registry) | ✅ Working |
 | Audio/MIDI recording | 🔲 Planned |
@@ -43,10 +43,16 @@ PolyHost\                        ← your project root
 │   │   └── bin\
 │   │       └── cmake.exe
 │   │
-│   └── vstsdk2.4\      ← drop your SDK here
-│       └── pluginterfaces\
-│           └── vst2.x\
-│               └── aeffect.h   ← CMake checks for this file
+│   ├── vstsdk2.4\      		 ← drop your VST2.4 SDK here
+│   │   └── pluginterfaces\
+│   │       └── vst2.x\
+│   │           └── aeffect.h    ← CMake checks for this file
+│	│
+│	└── clap\					 ← drop your CLAP SDK here
+│	   	└── CMakeLists.txt
+│
+│
+│
 │
 ├── dist\                        ← build output — PolyHost.exe lands here
 └── [PolyHost.exe]\
@@ -86,6 +92,11 @@ then in CMakeLists.txt uncomment:
     JUCE_PLUGINHOST_VST=1
     VST2_SDK_ROOT="C:/SDKs/vstsdk2.4"
 and run build.bat again.
+
+## CLAP Support
+
+Download clap-main here: https://github.com/free-audio/clap
+Install to tools/clap/CMakeLists.txt
 
 ## Audio Routing
 
