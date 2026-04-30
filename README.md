@@ -11,7 +11,7 @@ I always liked tools like TobyBear's MiniHost, SaviHost and Tone2's NanoHost. Bu
 | Feature | Status |
 |---|---|
 | VST3 x64 | ✅ Working |
-| CLAP x64 | ✅ Working (via clap-juce-extensions) |
+| CLAP x64 | ⚠️ Planned |
 | VST2 x64 | ✅ Working - Requires Steinberg VST2 SDK — see below |
 | VST2/VST3 **32-bit** in 64-bit host | 🔴 Needs plugin bridge — see below - planned |
 | MIDI 1.0 | ✅ Working |
