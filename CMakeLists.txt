@@ -14,7 +14,6 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(VST2_SDK_PATH "${CMAKE_SOURCE_DIR}/tools/vstsdk2.4")
 
 add_subdirectory(tools/JUCE)
-add_subdirectory(tools/clap-juce-extensions)
 
 # ── Application target ────────────────────────────────────────────────────────
 juce_add_gui_app(PolyHost
@@ -29,6 +28,7 @@ juce_generate_juce_header(PolyHost)
 target_sources(PolyHost PRIVATE
     Source/Main.cpp
     Source/MainComponent.cpp
+    Source/DebugLog.cpp
     Source/PluginTabComponent.cpp
     Source/AudioEngine.cpp
     Source/MidiEngine.cpp
@@ -37,6 +37,8 @@ target_sources(PolyHost PRIVATE
     Source/SessionManager.cpp
     Source/StandaloneTempoSupport.cpp
     Source/PolyHost.rc
+    Source/ClapPluginWrapper.cpp
+    Source/ClapPluginWrapper.h
 )
 
 # ── Detect whether the portable VST2 SDK is present ──────────────────────────
@@ -56,7 +58,6 @@ target_compile_definitions(PolyHost PRIVATE
     JUCE_MODAL_LOOPS_PERMITTED=1
 
     JUCE_PLUGINHOST_VST3=1          # VST3 x64 -- always enabled
-    JUCE_PLUGINHOST_CLAP=1          # CLAP -- via clap-juce-extensions
 
     # VST2 -- enabled automatically if tools\vstsdk2.4 is present
     $<$<BOOL:${VST2_ENABLED}>:JUCE_PLUGINHOST_VST=1>
@@ -66,6 +67,10 @@ target_compile_definitions(PolyHost PRIVATE
 if(VST2_ENABLED)
 	target_include_directories(PolyHost PRIVATE "${VST2_SDK_PATH}")
 endif()
+
+target_include_directories(PolyHost PRIVATE
+    tools/clap/include
+)
 
 target_link_libraries(PolyHost
     PRIVATE
@@ -80,7 +85,6 @@ target_link_libraries(PolyHost
         juce::juce_graphics
         juce::juce_gui_basics
         juce::juce_gui_extra
-        clap_juce_extensions
     PUBLIC
         juce::juce_recommended_config_flags
         juce::juce_recommended_warning_flags

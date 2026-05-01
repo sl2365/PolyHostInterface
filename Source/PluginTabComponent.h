@@ -2,6 +2,7 @@
 #include <JuceHeader.h>
 #include "SessionTypes.h"
 #include "SessionData.h"
+#include "ClapPluginWrapper.h"
 
 class AudioEngine;
 
@@ -73,6 +74,7 @@ private:
     bool findMatchingPluginDescription(const juce::OwnedArray<juce::PluginDescription>& results,
                                        const SessionPluginData& sessionPluginData,
                                        juce::PluginDescription& matchedDesc) const;
+    bool loadClapPlugin(const juce::File& pluginFile);
     void showPluginEditor();
     void attachToCurrentProcessor();
     void detachFromCurrentProcessor();

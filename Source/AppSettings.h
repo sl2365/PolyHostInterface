@@ -4,8 +4,11 @@
 class AppSettings
 {
 public:
-    static constexpr int defaultWindowWidth  = 900;
-    static constexpr int defaultWindowHeight = 520;
+    static constexpr int defaultWindowWidth  = 850;
+    static constexpr int defaultWindowHeight = 400;
+
+    bool getDebugLoggingEnabled() const;
+    void setDebugLoggingEnabled(bool shouldEnable);
 
     AppSettings();
     void load();
@@ -14,6 +17,11 @@ public:
     int getWindowX() const;
     int getWindowY() const;
     void setWindowPosition(int x, int y);
+
+    int getRoutingWindowWidth() const;
+    int getRoutingWindowHeight() const;
+    void setRoutingWindowSize(int width, int height);
+    void clearRoutingWindowSize();
 
     juce::String getLastPresetPath() const;
     void setLastPresetPath(const juce::String& path);
@@ -40,6 +48,9 @@ public:
 
     bool getAutoSaveAfterPluginRepair() const;
     void setAutoSaveAfterPluginRepair(bool shouldAutoSave);
+
+    juce::String getMidiAutoAssignMode() const;
+    void setMidiAutoAssignMode(const juce::String& mode);
 
     juce::StringArray getPluginScanFolders() const;
     void setPluginScanFolders(const juce::StringArray& folders);

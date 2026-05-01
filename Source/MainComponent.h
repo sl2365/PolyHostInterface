@@ -412,9 +412,13 @@ private:
     void showTabContextMenu(int tabIndex);
     bool confirmCloseTab(int tabIndex) const;
     bool confirmClearTab(int tabIndex) const;
+
     void setRoutingViewVisible(bool shouldShow);
     void toggleRoutingView();
     void refreshRoutingView();
+    void resizeWindowForRoutingView();
+    void resetRoutingWindowSizeToDefault();
+
     void syncRoutingToAudioEngine();
     void autoAssignGlobalMidiToTabIfAppropriate(int tabIndex);
     void assignEnabledGlobalMidiDevicesToTab(int tabIndex);
@@ -452,6 +456,8 @@ private:
     const MidiTabRoutingState* getMidiRoutingStateForTab(int tabIndex) const;
     void ensureMidiRoutingStateForCurrentTabs();
     void refreshMidiRoutingView();
+    bool shouldAutoAssignMidiToNewTabs() const;
+    bool shouldAutoAssignMidiOnlyToFirstTab() const;
     void toggleMidiRoutingExpanded(int tabIndex);
     void toggleMidiAssignment(int tabIndex, const juce::String& deviceIdentifier);
     void assignAllEnabledMidiDevicesToTab(int tabIndex);
@@ -459,6 +465,7 @@ private:
     juce::Array<MidiTabRoutingState> midiRoutingStates;
     void showMidiAssignmentsCallout(int tabIndex, juce::Component* anchorComponent);
     void refreshMidiDevices();
+    void applyMidiAutoAssignModeToExistingTabs();
 
     // Preset/session helpers
     void newPreset();

@@ -21,6 +21,7 @@ public:
     void openDevice(const juce::String& deviceIdentifier);
     void closeDevice(const juce::String& deviceIdentifier);
     void closeAllDevices();
+    void refreshDevices(const juce::StringArray& deviceIdentifiersToKeepOpen);
 
     bool isDeviceOpen(const juce::String& deviceIdentifier) const;
     juce::StringArray getOpenDeviceIdentifiers() const;

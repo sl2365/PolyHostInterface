@@ -75,6 +75,61 @@ void MidiEngine::closeAllDevices()
         sendChangeMessage();
 }
 
+void MidiEngine::refreshDevices(const juce::StringArray& deviceIdentifiersToKeepOpen)
+{
+    auto availableDevices = juce::MidiInput::getAvailableDevices();
+    juce::StringArray availableIdentifiers;
+
+    for (auto& info : availableDevices)
+        availableIdentifiers.add(info.identifier);
+
+    bool changed = false;
+
+    // Close devices that no longer exist
+    for (int i = openMidiInputs.size(); --i >= 0;)
+    {
+        auto* input = openMidiInputs[i];
+        auto info = input->getDeviceInfo();
+
+        if (!availableIdentifiers.contains(info.identifier))
+        {
+            input->stop();
+            deviceManager.setMidiInputDeviceEnabled(info.identifier, false);
+            openMidiInputs.remove(i);
+            changed = true;
+        }
+    }
+
+    // Re-open any desired devices that now exist
+    for (auto& identifier : deviceIdentifiersToKeepOpen)
+    {
+        if (!availableIdentifiers.contains(identifier))
+            continue;
+
+        if (isDeviceOpen(identifier))
+            continue;
+
+        for (auto& info : availableDevices)
+        {
+            if (info.identifier == identifier)
+            {
+                auto input = juce::MidiInput::openDevice(info.identifier, this);
+                if (input)
+                {
+                    input->start();
+                    deviceManager.setMidiInputDeviceEnabled(info.identifier, true);
+                    openMidiInputs.add(input.release());
+                    changed = true;
+                }
+                break;
+            }
+        }
+    }
+
+    if (changed)
+        sendChangeMessage();
+}
+
 bool MidiEngine::isDeviceOpen(const juce::String& deviceIdentifier) const
 {
     for (auto* input : openMidiInputs)

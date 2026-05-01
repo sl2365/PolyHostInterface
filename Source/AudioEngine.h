@@ -214,5 +214,12 @@ private:
     juce::AudioProcessorGraph::Node::Ptr inputMeterNode;
     juce::AudioProcessorGraph::Node::Ptr outputMeterNode;
 
+    static int getMainInputChannels(juce::AudioProcessor* processor);
+    static int getMainOutputChannels(juce::AudioProcessor* processor);
+    bool connectAudioChannels(juce::AudioProcessorGraph::NodeID srcNode,
+                              juce::AudioProcessor* srcProcessor,
+                              juce::AudioProcessorGraph::NodeID dstNode,
+                              juce::AudioProcessor* dstProcessor);
+
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(AudioEngine)
 };

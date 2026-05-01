@@ -1,5 +1,6 @@
 #include "PluginTabComponent.h"
 #include "AudioEngine.h"
+#include "DebugLog.h"
 
 PluginTabComponent::PluginTabComponent(AudioEngine& engine, int index)
     : audioEngine(engine), slotIndex(index)
@@ -188,6 +189,12 @@ bool PluginTabComponent::loadPluginFromSessionData(const juce::File& pluginFile,
     if (!pluginFile.existsAsFile())
         return false;
 
+    if (pluginFile.getFileExtension().equalsIgnoreCase(".clap")
+        || sessionPluginData.pluginFormatName.equalsIgnoreCase("CLAP"))
+    {
+        return loadClapPlugin(pluginFile);
+    }
+
     juce::OwnedArray<juce::PluginDescription> results;
 
     if (!scanPluginDescriptions(pluginFile, results) || results.isEmpty())
@@ -211,10 +218,75 @@ bool PluginTabComponent::loadPluginFromSessionData(const juce::File& pluginFile,
     return loadPlugin(pluginFile, chosenDesc);
 }
 
+bool PluginTabComponent::loadClapPlugin(const juce::File& pluginFile)
+{
+    DebugLog::write("PluginTabComponent::loadClapPlugin - start: " + pluginFile.getFullPathName());
+
+    std::unique_ptr<juce::AudioPluginInstance> clapWrapper = std::make_unique<ClapPluginWrapper>(pluginFile);
+    DebugLog::write("PluginTabComponent::loadClapPlugin - wrapper object created");
+
+    auto* clap = dynamic_cast<ClapPluginWrapper*>(clapWrapper.get());
+
+    if (clap == nullptr || !clap->isLoaded())
+    {
+        juce::String error = "Unknown CLAP load failure";
+        if (clap != nullptr)
+            error = clap->getLastError();
+
+        DebugLog::write("PluginTabComponent::loadClapPlugin - wrapper failed: " + error);
+        statusLabel.setText("Load failed: " + error, juce::dontSendNotification);
+        return false;
+    }
+
+    DebugLog::write("PluginTabComponent::loadClapPlugin - wrapper loaded OK");
+
+    const bool isSynthLike = clap->isSynthLikePlugin();
+    const juce::String clapName = clap->getPluginName();
+
+    DebugLog::write("PluginTabComponent::loadClapPlugin - plugin name: " + clapName);
+    DebugLog::write("PluginTabComponent::loadClapPlugin - clearing current plugin");
+    clearPlugin();
+
+    loadedPluginFile = pluginFile;
+
+    loadedPluginDescription = {};
+    loadedPluginDescription.name = clapName;
+    loadedPluginDescription.descriptiveName = clapName;
+    loadedPluginDescription.pluginFormatName = "CLAP";
+    loadedPluginDescription.fileOrIdentifier = pluginFile.getFullPathName();
+    loadedPluginDescription.isInstrument = isSynthLike;
+
+    slotType = isSynthLike ? SlotType::Synth : SlotType::FX;
+
+    DebugLog::write("PluginTabComponent::loadClapPlugin - calling audioEngine.addPlugin");
+    nodeId = audioEngine.addPlugin(std::move(clapWrapper), isSynthLike);
+
+    if (nodeId == juce::AudioProcessorGraph::NodeID())
+    {
+        DebugLog::write("PluginTabComponent::loadClapPlugin - addPlugin returned invalid node");
+        statusLabel.setText("Load failed: audio engine rejected plugin", juce::dontSendNotification);
+        return false;
+    }
+
+    DebugLog::write("PluginTabComponent::loadClapPlugin - addPlugin OK");
+    DebugLog::write("PluginTabComponent::loadClapPlugin - attaching to processor");
+    attachToCurrentProcessor();
+
+    DebugLog::write("PluginTabComponent::loadClapPlugin - showing plugin editor");
+    showPluginEditor();
+
+    DebugLog::write("PluginTabComponent::loadClapPlugin - done");
+    sendChangeMessage();
+    return true;
+}
+
 bool PluginTabComponent::loadPlugin(const juce::File& pluginFile)
 {
     if (!pluginFile.existsAsFile())
         return false;
+
+    if (pluginFile.getFileExtension().equalsIgnoreCase(".clap"))
+        return loadClapPlugin(pluginFile);
 
     juce::OwnedArray<juce::PluginDescription> results;
 
@@ -300,7 +372,15 @@ void PluginTabComponent::showPluginEditor()
     auto* proc = node->getProcessor();
     if (proc == nullptr || !proc->hasEditor())
     {
-        statusLabel.setText("Plugin has no GUI", juce::dontSendNotification);
+        juce::String message = "Plugin has no GUI";
+
+        if (auto* clap = dynamic_cast<ClapPluginWrapper*>(proc))
+        {
+            if (clap->supportsGui() && !clap->supportsEmbeddedGui())
+                message = "CLAP GUI exists but embedded Win32 GUI is not available";
+        }
+
+        statusLabel.setText(message, juce::dontSendNotification);
         statusLabel.setVisible(true);
         return;
     }
@@ -309,23 +389,18 @@ void PluginTabComponent::showPluginEditor()
 
     if (pluginEditor != nullptr)
     {
-        auto w = pluginEditor->getWidth();
-        auto h = pluginEditor->getHeight();
+        int w = pluginEditor->getWidth();
+        int h = pluginEditor->getHeight();
 
-        if (w <= 0 || h <= 0)
+        if (auto* clap = dynamic_cast<ClapPluginWrapper*>(proc))
         {
-            auto b = pluginEditor->getBounds();
-            w = b.getWidth();
-            h = b.getHeight();
+            clap->refreshEmbeddedGuiSize();
+            auto guiSize = clap->getEmbeddedGuiSize();
+            w = guiSize.getWidth();
+            h = guiSize.getHeight();
         }
 
-        auto actualBounds = pluginEditor->getBounds();
-        w = juce::jmax(w, actualBounds.getWidth());
-        h = juce::jmax(h, actualBounds.getHeight());
-
-        preferredEditorBounds = { 0, 0,
-                                  juce::jmax(360, w),
-                                  juce::jmax(220, h) };
+        preferredEditorBounds = { 0, 0, w, h };
     }
 
     addAndMakeVisible(pluginEditor.get());
@@ -527,7 +602,18 @@ bool PluginTabComponent::restorePluginState(const juce::MemoryBlock& state)
 {
     if (auto* node = audioEngine.getGraph().getNodeForId(nodeId))
     {
-        node->getProcessor()->setStateInformation(state.getData(), (int) state.getSize());
+        auto* processor = node->getProcessor();
+        if (processor == nullptr)
+            return false;
+
+        if (auto* clap = dynamic_cast<ClapPluginWrapper*>(processor))
+        {
+            clap->clearLastStateLoadResult();
+            processor->setStateInformation(state.getData(), (int) state.getSize());
+            return clap->didLastStateLoadSucceed();
+        }
+
+        processor->setStateInformation(state.getData(), (int) state.getSize());
         return true;
     }
 

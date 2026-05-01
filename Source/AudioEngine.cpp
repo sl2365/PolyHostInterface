@@ -1,4 +1,5 @@
 #include "AudioEngine.h"
+#include "DebugLog.h"
 #include <cmath>
 
 AudioEngine::QueuedMidiInputProcessor::QueuedMidiInputProcessor()
@@ -106,25 +107,52 @@ void AudioEngine::shutdown()
 
 juce::AudioProcessorGraph::NodeID AudioEngine::addPlugin(std::unique_ptr<juce::AudioPluginInstance> instance, bool isSynth)
 {
-    if (instance == nullptr)
-        return {};
+    DebugLog::write("AudioEngine::addPlugin - start");
 
+    if (instance == nullptr)
+    {
+        DebugLog::write("AudioEngine::addPlugin - instance was null");
+        return {};
+    }
+
+    DebugLog::write("AudioEngine::addPlugin - setting playhead");
     instance->setPlayHead(playHead);
+
+    DebugLog::write("AudioEngine::addPlugin - enabling buses");
     instance->enableAllBuses();
 
+    DebugLog::write("AudioEngine::addPlugin - calling graph.addNode");
     auto node = graph.addNode(std::move(instance));
 
     if (node == nullptr)
+    {
+        DebugLog::write("AudioEngine::addPlugin - graph.addNode returned null");
         return {};
+    }
+
+    DebugLog::write("AudioEngine::addPlugin - graph.addNode OK");
 
     if (isSynth)
+    {
+        DebugLog::write("AudioEngine::addPlugin - adding node to synthNodes");
         synthNodes.add(node);
+    }
     else
+    {
+        DebugLog::write("AudioEngine::addPlugin - adding node to fxNodes");
         fxNodes.add(node);
+    }
 
+    DebugLog::write("AudioEngine::addPlugin - updating playheads");
     updateNodePlayHeads();
+
+    DebugLog::write("AudioEngine::addPlugin - rebuilding MIDI routing nodes");
     rebuildMidiRoutingNodes();
+
+    DebugLog::write("AudioEngine::addPlugin - rebuilding audio connections");
     rebuildConnections();
+
+    DebugLog::write("AudioEngine::addPlugin - done");
     return node->nodeID;
 }
 
@@ -276,6 +304,50 @@ void AudioEngine::rebuildMidiRoutingNodes()
     }
 }
 
+int AudioEngine::getMainInputChannels(juce::AudioProcessor* processor)
+{
+    if (processor == nullptr)
+        return 0;
+
+    return processor->getMainBusNumInputChannels();
+}
+
+int AudioEngine::getMainOutputChannels(juce::AudioProcessor* processor)
+{
+    if (processor == nullptr)
+        return 0;
+
+    return processor->getMainBusNumOutputChannels();
+}
+
+bool AudioEngine::connectAudioChannels(juce::AudioProcessorGraph::NodeID srcNode,
+                                       juce::AudioProcessor* srcProcessor,
+                                       juce::AudioProcessorGraph::NodeID dstNode,
+                                       juce::AudioProcessor* dstProcessor)
+{
+    if (srcProcessor == nullptr || dstProcessor == nullptr)
+        return false;
+
+    const int srcChannels = getMainOutputChannels(srcProcessor);
+    const int dstChannels = getMainInputChannels(dstProcessor);
+    const int channelsToConnect = juce::jmin(srcChannels, dstChannels);
+
+    bool madeAnyConnection = false;
+
+    for (int ch = 0; ch < channelsToConnect; ++ch)
+    {
+        madeAnyConnection |= graph.addConnection({ { srcNode, ch }, { dstNode, ch } });
+    }
+
+    // mono -> stereo convenience copy
+    if (srcChannels == 1 && dstChannels >= 2)
+    {
+        madeAnyConnection |= graph.addConnection({ { srcNode, 0 }, { dstNode, 1 } });
+    }
+
+    return madeAnyConnection;
+}
+
 void AudioEngine::rebuildConnections()
 {
     graph.disconnectNode(audioOutNode->nodeID);
@@ -304,15 +376,19 @@ void AudioEngine::rebuildConnections()
             graph.addConnection({ { midiRoute.midiNode->nodeID, midiCh }, { midiRoute.pluginNodeId, midiCh } });
     }
 
+    auto* inputMeterProc = inputMeterNode != nullptr ? inputMeterNode->getProcessor() : nullptr;
+    auto* outputMeterProc = outputMeterNode != nullptr ? outputMeterNode->getProcessor() : nullptr;
+    auto* audioOutProc = audioOutNode != nullptr ? audioOutNode->getProcessor() : nullptr;
+
     if (synthNodes.isEmpty())
     {
         if (inputMeterNode != nullptr && outputMeterNode != nullptr)
         {
-            graph.addConnection({ { inputMeterNode->nodeID, 0 }, { outputMeterNode->nodeID, 0 } });
-            graph.addConnection({ { inputMeterNode->nodeID, 1 }, { outputMeterNode->nodeID, 1 } });
+            connectAudioChannels(inputMeterNode->nodeID, inputMeterProc,
+                                 outputMeterNode->nodeID, outputMeterProc);
 
-            graph.addConnection({ { outputMeterNode->nodeID, 0 }, { audioOutNode->nodeID, 0 } });
-            graph.addConnection({ { outputMeterNode->nodeID, 1 }, { audioOutNode->nodeID, 1 } });
+            connectAudioChannels(outputMeterNode->nodeID, outputMeterProc,
+                                 audioOutNode->nodeID, audioOutProc);
         }
 
         return;
@@ -324,43 +400,44 @@ void AudioEngine::rebuildConnections()
 
         for (auto& synthNode : synthNodes)
         {
-            graph.addConnection({ { synthNode->nodeID, 0 }, { inputMeterNode->nodeID, 0 } });
-            graph.addConnection({ { synthNode->nodeID, 1 }, { inputMeterNode->nodeID, 1 } });
+            connectAudioChannels(synthNode->nodeID, synthNode->getProcessor(),
+                                 inputMeterNode->nodeID, inputMeterProc);
         }
 
-        graph.addConnection({ { inputMeterNode->nodeID, 0 }, { firstFxNode->nodeID, 0 } });
-        graph.addConnection({ { inputMeterNode->nodeID, 1 }, { firstFxNode->nodeID, 1 } });
+        connectAudioChannels(inputMeterNode->nodeID, inputMeterProc,
+                             firstFxNode->nodeID, firstFxNode->getProcessor());
 
         for (int i = 0; i < fxNodes.size() - 1; ++i)
         {
             auto src = fxNodes[i];
             auto dst = fxNodes[i + 1];
 
-            graph.addConnection({ { src->nodeID, 0 }, { dst->nodeID, 0 } });
-            graph.addConnection({ { src->nodeID, 1 }, { dst->nodeID, 1 } });
+            connectAudioChannels(src->nodeID, src->getProcessor(),
+                                 dst->nodeID, dst->getProcessor());
         }
 
         auto lastFxNode = fxNodes.getLast();
-        graph.addConnection({ { lastFxNode->nodeID, 0 }, { outputMeterNode->nodeID, 0 } });
-        graph.addConnection({ { lastFxNode->nodeID, 1 }, { outputMeterNode->nodeID, 1 } });
 
-        graph.addConnection({ { outputMeterNode->nodeID, 0 }, { audioOutNode->nodeID, 0 } });
-        graph.addConnection({ { outputMeterNode->nodeID, 1 }, { audioOutNode->nodeID, 1 } });
+        connectAudioChannels(lastFxNode->nodeID, lastFxNode->getProcessor(),
+                             outputMeterNode->nodeID, outputMeterProc);
+
+        connectAudioChannels(outputMeterNode->nodeID, outputMeterProc,
+                             audioOutNode->nodeID, audioOutProc);
 
         return;
     }
 
     for (auto& synthNode : synthNodes)
     {
-        graph.addConnection({ { synthNode->nodeID, 0 }, { inputMeterNode->nodeID, 0 } });
-        graph.addConnection({ { synthNode->nodeID, 1 }, { inputMeterNode->nodeID, 1 } });
+        connectAudioChannels(synthNode->nodeID, synthNode->getProcessor(),
+                             inputMeterNode->nodeID, inputMeterProc);
     }
 
-    graph.addConnection({ { inputMeterNode->nodeID, 0 }, { outputMeterNode->nodeID, 0 } });
-    graph.addConnection({ { inputMeterNode->nodeID, 1 }, { outputMeterNode->nodeID, 1 } });
+    connectAudioChannels(inputMeterNode->nodeID, inputMeterProc,
+                         outputMeterNode->nodeID, outputMeterProc);
 
-    graph.addConnection({ { outputMeterNode->nodeID, 0 }, { audioOutNode->nodeID, 0 } });
-    graph.addConnection({ { outputMeterNode->nodeID, 1 }, { audioOutNode->nodeID, 1 } });
+    connectAudioChannels(outputMeterNode->nodeID, outputMeterProc,
+                         audioOutNode->nodeID, audioOutProc);
 }
 
 float AudioEngine::getInputMeterLevelL() const

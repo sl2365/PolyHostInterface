@@ -7,6 +7,7 @@ static constexpr const char* kAudioDevice       = "audioDevice";
 static constexpr const char* kDefaultTempoBpm   = "defaultTempoBpm";
 static constexpr const char* kAudioDeviceState  = "audioDeviceState";
 static constexpr const char* kAutoSaveAfterPluginRepair = "autoSaveAfterPluginRepair";
+static constexpr const char* kMidiAutoAssignMode        = "midiAutoAssignMode";
 static constexpr const char* kPluginScanFolders         = "PluginScanFolders";
 static constexpr const char* kFolderTag                 = "Folder";
 static constexpr const char* kPathAttribute             = "path";
@@ -14,10 +15,24 @@ static constexpr const char* kEnabledMidiDevices        = "EnabledMidiDevices";
 static constexpr const char* kDeviceTag                 = "Device";
 static constexpr const char* kIdentifierAttribute       = "identifier";
 static constexpr const char* kNameAttribute             = "name";
+static constexpr const char* kDebugLoggingEnabled       = "debugLoggingEnabled";
 static constexpr auto kLastPresetPath   = "lastPresetPath";
 static constexpr auto kRecentPresets    = "recentPresets";
-static constexpr auto kWindowX = "windowX";
-static constexpr auto kWindowY = "windowY";
+static constexpr auto kWindowX              = "windowX";
+static constexpr auto kWindowY              = "windowY";
+static constexpr auto kRoutingWindowWidth   = "routingWindowWidth";
+static constexpr auto kRoutingWindowHeight  = "routingWindowHeight";
+
+bool AppSettings::getDebugLoggingEnabled() const
+{
+    return xml->getBoolAttribute(kDebugLoggingEnabled, true);
+}
+
+void AppSettings::setDebugLoggingEnabled(bool shouldEnable)
+{
+    xml->setAttribute(kDebugLoggingEnabled, shouldEnable);
+    save();
+}
 
 juce::String AppSettings::getLastPresetPath() const
 {
@@ -177,6 +192,17 @@ bool AppSettings::getAutoSaveAfterPluginRepair() const
 void AppSettings::setAutoSaveAfterPluginRepair(bool shouldAutoSave)
 {
     xml->setAttribute(kAutoSaveAfterPluginRepair, shouldAutoSave);
+    save();
+}
+
+juce::String AppSettings::getMidiAutoAssignMode() const
+{
+    return xml->getStringAttribute(kMidiAutoAssignMode, "firstTabOnly");
+}
+
+void AppSettings::setMidiAutoAssignMode(const juce::String& mode)
+{
+    xml->setAttribute(kMidiAutoAssignMode, mode);
     save();
 }
 
@@ -381,3 +407,26 @@ void AppSettings::setWindowPosition(int x, int y)
     save();
 }
 
+int AppSettings::getRoutingWindowWidth() const
+{
+    return xml->getIntAttribute(kRoutingWindowWidth, 850);
+}
+
+int AppSettings::getRoutingWindowHeight() const
+{
+    return xml->getIntAttribute(kRoutingWindowHeight, 600);
+}
+
+void AppSettings::setRoutingWindowSize(int width, int height)
+{
+    xml->setAttribute(kRoutingWindowWidth, width);
+    xml->setAttribute(kRoutingWindowHeight, height);
+    save();
+}
+
+void AppSettings::clearRoutingWindowSize()
+{
+    xml->removeAttribute(kRoutingWindowWidth);
+    xml->removeAttribute(kRoutingWindowHeight);
+    save();
+}

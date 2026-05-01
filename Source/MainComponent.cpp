@@ -1,5 +1,6 @@
 #include "MainComponent.h"
 #include <cmath>
+#include "DebugLog.h"
 
 namespace
 {
@@ -250,6 +251,9 @@ void MainComponent::AddTabButton::paintButton(juce::Graphics& g, bool isMouseOve
 
 MainComponent::MainComponent()
 {
+    DebugLog::setEnabled(settings.getDebugLoggingEnabled());
+    DebugLog::write("MainComponent startup");
+
     setSize(AppSettings::defaultWindowWidth, AppSettings::defaultWindowHeight);
     tooltipWindow.setOpaque(false);
     audioEngine.initialise(settings.getAudioDeviceState());
@@ -604,9 +608,21 @@ void MainComponent::applySessionData(const SessionData& session,
                 else
                 {
                     juce::MemoryBlock state;
+                    bool restoredState = true;
 
-                    if (state.fromBase64Encoding(tabData.plugin.pluginStateBase64))
-                        tc->restorePluginState(state);
+                    if (tabData.plugin.pluginStateBase64.isNotEmpty())
+                    {
+                        if (state.fromBase64Encoding(tabData.plugin.pluginStateBase64))
+                            restoredState = tc->restorePluginState(state);
+                        else
+                            restoredState = false;
+                    }
+
+                    if (!restoredState)
+                    {
+                        loadErrors.add("Failed to restore plugin state: " + tabData.plugin.pluginName
+                                       + "\n  Path: " + pluginFile.getFullPathName());
+                    }
 
                     tc->setBypassed(tabData.bypassed);
                 }
@@ -653,6 +669,9 @@ void MainComponent::changeListenerCallback(juce::ChangeBroadcaster* source)
         {
             if (source == tc)
             {
+                if (tc->hasPlugin())
+                    autoAssignGlobalMidiToTabIfAppropriate(i);
+
                 refreshTabAppearance(i);
                 syncRoutingToAudioEngine();
                 refreshRoutingView();
@@ -978,7 +997,9 @@ void MainComponent::handleCurrentTabChanged()
         refreshTabAppearance(i);
 
     refreshRoutingView();
-    resizeWindowToFitCurrentTab();
+
+    if (!showingRoutingView)
+        resizeWindowToFitCurrentTab();
 }
 
 void MainComponent::resizeWindowToFitCurrentTab()
@@ -1129,13 +1150,30 @@ juce::PopupMenu MainComponent::getMenuForIndex(int index, const juce::String&)
             menu.addItem(201, "Audio Device Settings");
             menu.addSeparator();
             menu.addItem(202, "Routing");
+            menu.addItem(203, "Reset Routing Window Size");
             break;
         case 2:
+        {
             menu.addItem(301, "Select MIDI Input Device");
             menu.addItem(302, "MIDI Monitor");
+            menu.addItem(304, "Refresh MIDI Devices");
             menu.addSeparator();
+
+            juce::PopupMenu autoAssignMenu;
+            auto mode = settings.getMidiAutoAssignMode().trim();
+            if (mode.isEmpty())
+                mode = "firstTabOnly";
+
+            autoAssignMenu.addItem(305, "First tab only", true, mode == "firstTabOnly");
+            autoAssignMenu.addItem(306, "All new tabs", true, mode == "allNewTabs");
+            autoAssignMenu.addItem(307, "None", true, mode == "none");
+
+            menu.addSubMenu("Auto-Assign MIDI to New Tabs", autoAssignMenu);
+            menu.addSeparator();
+
             menu.addItem(303, "Panic");
             break;
+        }
         case 3: menu.addItem(401, "Record Audio...  [TODO]"); menu.addItem(402, "Record MIDI...  [TODO]"); break;
         case 4:
             menu.addItem(501,
@@ -1149,6 +1187,11 @@ juce::PopupMenu MainComponent::getMenuForIndex(int index, const juce::String&)
                          settings.getPluginScanFolders().size() > 0);
             menu.addSeparator();
             menu.addItem(500, "Preferences...  [TODO]");
+            menu.addItem(505,
+                         "Enable Debug Logging",
+                         true,
+                         settings.getDebugLoggingEnabled());
+            menu.addItem(506, "Clear Debug Log");
             break;
         case 5: menu.addItem(601, "About PolyHost"); break;
         default: break;
@@ -1218,9 +1261,14 @@ void MainComponent::menuItemSelected(int itemId, int)
         case 202:
             toggleRoutingView();
             break;
+        case 203:
+            resetRoutingWindowSizeToDefault();
+            break;
 
         case 301:
         {
+            refreshMidiDevices();
+
             juce::PopupMenu midiMenu;
             auto devices = midiEngine.getAvailableDevices();
 
@@ -1274,6 +1322,8 @@ void MainComponent::menuItemSelected(int itemId, int)
                             settings.setMidiDeviceName(openNames[0]); // legacy compatibility
                             settings.setEnabledMidiDeviceIdentifiers(midiEngine.getOpenDeviceIdentifiers());
                         }
+
+                        refreshRoutingView();
                     }
                 });
 
@@ -1288,6 +1338,39 @@ void MainComponent::menuItemSelected(int itemId, int)
             midiMonitorWindow->toFront(true);
             break;
         }
+        case 304:
+            refreshMidiDevices();
+            break;
+        case 305:
+        case 306:
+        case 307:
+        {
+            juce::String newMode = "firstTabOnly";
+
+            if (itemId == 306)
+                newMode = "allNewTabs";
+            else if (itemId == 307)
+                newMode = "none";
+
+            settings.setMidiAutoAssignMode(newMode);
+            refreshRoutingView();
+            updateStatusBarText();
+
+            if (newMode != "none")
+            {
+                const bool applyNow = juce::AlertWindow::showOkCancelBox(
+                    juce::AlertWindow::QuestionIcon,
+                    "Apply MIDI Auto-Assign Mode",
+                    "Apply this MIDI auto-assign mode to existing loaded tabs that currently have no MIDI devices assigned?",
+                    "Apply Now",
+                    "Later");
+
+                if (applyNow)
+                    applyMidiAutoAssignModeToExistingTabs();
+            }
+
+            break;
+        }
         case 303:
             sendMidiPanic();
             break;
@@ -1298,6 +1381,18 @@ void MainComponent::menuItemSelected(int itemId, int)
         case 502: addPluginScanFolder(); break;
         case 503: showPluginScanFolders(); break;
         case 504: clearPluginScanFolders(); break;
+        case 505:
+        {
+            auto enabled = !settings.getDebugLoggingEnabled();
+            settings.setDebugLoggingEnabled(enabled);
+            DebugLog::setEnabled(enabled);
+            DebugLog::write("Debug logging " + juce::String(enabled ? "enabled" : "disabled"));
+            break;
+        }
+        case 506:
+            DebugLog::clear();
+            DebugLog::write("Debug log cleared");
+            break;
 
         case 601:
             showAboutDialog();
@@ -3076,10 +3171,15 @@ juce::ToolbarItemComponent* MainComponent::createItem(int itemId)
 
 void MainComponent::setRoutingViewVisible(bool shouldShow)
 {
+    auto* top = findParentComponentOfClass<juce::DocumentWindow>();
+
+    if (showingRoutingView && !shouldShow && top != nullptr)
+        settings.setRoutingWindowSize(top->getWidth(), top->getHeight());
+
     showingRoutingView = shouldShow;
 
     if (showingRoutingView)
-        refreshRoutingView();
+        refreshMidiDevices();
 
     tabs.setVisible(!showingRoutingView);
     routingView.setVisible(showingRoutingView);
@@ -3094,13 +3194,35 @@ void MainComponent::setRoutingViewVisible(bool shouldShow)
     repaint();
     resized();
 
-    if (!showingRoutingView)
+    if (showingRoutingView)
+        resizeWindowForRoutingView();
+    else
         resizeWindowToFitCurrentTab();
 }
 
 void MainComponent::toggleRoutingView()
 {
     setRoutingViewVisible(!showingRoutingView);
+}
+
+void MainComponent::resizeWindowForRoutingView()
+{
+    auto* top = findParentComponentOfClass<juce::DocumentWindow>();
+    if (top == nullptr)
+        return;
+    // Set default Routing page window size
+    const int routingWidth = juce::jmax(850, settings.getRoutingWindowWidth());
+    const int routingHeight = juce::jmax(600, settings.getRoutingWindowHeight());
+
+    top->setSize(routingWidth, routingHeight);
+}
+
+void MainComponent::resetRoutingWindowSizeToDefault()
+{
+    settings.clearRoutingWindowSize();
+
+    if (showingRoutingView)
+        resizeWindowForRoutingView();
 }
 
 void MainComponent::refreshRoutingView()
@@ -3162,6 +3284,26 @@ void MainComponent::refreshRoutingView()
     routingView.setModules(modules);
 }
 
+bool MainComponent::shouldAutoAssignMidiToNewTabs() const
+{
+    auto mode = settings.getMidiAutoAssignMode().trim();
+
+    if (mode.isEmpty())
+        mode = "firstTabOnly";
+
+    return mode == "firstTabOnly" || mode == "allNewTabs";
+}
+
+bool MainComponent::shouldAutoAssignMidiOnlyToFirstTab() const
+{
+    auto mode = settings.getMidiAutoAssignMode().trim();
+
+    if (mode.isEmpty())
+        mode = "firstTabOnly";
+
+    return mode == "firstTabOnly";
+}
+
 void MainComponent::toggleTabBypass(int tabIndex)
 {
     if (!juce::isPositiveAndBelow(tabIndex, tabs.getNumTabs()))
@@ -3181,6 +3323,8 @@ void MainComponent::toggleTabBypass(int tabIndex)
 
 void MainComponent::assignEnabledGlobalMidiDevicesToTab(int tabIndex)
 {
+    ensureMidiRoutingStateForCurrentTabs();
+
     auto* midiState = getMidiRoutingStateForTab(tabIndex);
     if (midiState == nullptr)
         return;
@@ -3189,6 +3333,9 @@ void MainComponent::assignEnabledGlobalMidiDevicesToTab(int tabIndex)
         return;
 
     auto enabledDeviceIdentifiers = settings.getEnabledMidiDeviceIdentifiers();
+
+    if (enabledDeviceIdentifiers.isEmpty())
+        enabledDeviceIdentifiers = midiEngine.getOpenDeviceIdentifiers();
 
     for (auto& identifier : enabledDeviceIdentifiers)
         midiState->assignedDeviceIdentifiers.addIfNotAlreadyThere(identifier);
@@ -3199,7 +3346,12 @@ void MainComponent::autoAssignGlobalMidiToTabIfAppropriate(int tabIndex)
     if (!juce::isPositiveAndBelow(tabIndex, tabs.getNumTabs()))
         return;
 
-    if (getLoadedPluginTabCount() != 1)
+    ensureMidiRoutingStateForCurrentTabs();
+
+    if (!shouldAutoAssignMidiToNewTabs())
+        return;
+
+    if (shouldAutoAssignMidiOnlyToFirstTab() && getLoadedPluginTabCount() != 1)
         return;
 
     auto* tc = getTabComponent(tabIndex);
@@ -3209,6 +3361,7 @@ void MainComponent::autoAssignGlobalMidiToTabIfAppropriate(int tabIndex)
     assignEnabledGlobalMidiDevicesToTab(tabIndex);
     refreshRoutingView();
     syncRoutingToAudioEngine();
+    markSessionDirty();
 }
 
 void MainComponent::syncRoutingToAudioEngine()
@@ -3321,8 +3474,66 @@ void MainComponent::clearMidiAssignmentsForTab(int tabIndex)
 
 void MainComponent::refreshMidiDevices()
 {
+    auto enabledDeviceIdentifiers = settings.getEnabledMidiDeviceIdentifiers();
+
+    if (enabledDeviceIdentifiers.isEmpty())
+    {
+        auto currentlyOpen = midiEngine.getOpenDeviceIdentifiers();
+
+        for (auto& identifier : currentlyOpen)
+            enabledDeviceIdentifiers.addIfNotAlreadyThere(identifier);
+    }
+
+    midiEngine.refreshDevices(enabledDeviceIdentifiers);
+
     refreshRoutingView();
     updateStatusBarText();
+
+    auto availableDevices = midiEngine.getAvailableDevices();
+    auto openNames = midiEngine.getOpenDeviceNames();
+
+    juce::String message = "PolyHost  |  MIDI refreshed";
+
+    if (!openNames.isEmpty())
+        message += "  |  Active: " + openNames.joinIntoString(", ");
+
+    message += "  |  Available devices: " + juce::String(availableDevices.size());
+
+    statusBar.setText(message, juce::dontSendNotification);
+
+    juce::Timer::callAfterDelay(1500, [safe = juce::Component::SafePointer<MainComponent>(this)]
+    {
+        if (safe != nullptr)
+            safe->updateStatusBarText();
+    });
+}
+
+void MainComponent::applyMidiAutoAssignModeToExistingTabs()
+{
+    ensureMidiRoutingStateForCurrentTabs();
+
+    if (!shouldAutoAssignMidiToNewTabs())
+        return;
+
+    int loadedPluginCountSeen = 0;
+
+    for (int i = 0; i < tabs.getNumTabs(); ++i)
+    {
+        auto* tc = getTabComponent(i);
+        if (tc == nullptr || !tc->hasPlugin())
+            continue;
+
+        ++loadedPluginCountSeen;
+
+        if (shouldAutoAssignMidiOnlyToFirstTab() && loadedPluginCountSeen != 1)
+            continue;
+
+        assignEnabledGlobalMidiDevicesToTab(i);
+    }
+
+    refreshRoutingView();
+    syncRoutingToAudioEngine();
+    markSessionDirty();
 }
 
 void MainComponent::showMidiAssignmentsCallout(int tabIndex, juce::Component* anchorComponent)

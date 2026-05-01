@@ -33,7 +33,8 @@ public:
             mainComponent = new MainComponent();
             setContentOwned(mainComponent, true);
             setResizable(true, true);
-            setResizeLimits(900, 550, 3840, 2160);
+            // Min / max window sizes
+            setResizeLimits(850, 300, 3840, 2160);
 
             auto& s = mainComponent->getSettings();
             const int x = s.getWindowX();
