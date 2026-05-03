@@ -17,6 +17,7 @@
 #include "FileMenuHelper.h"
 #include "UnsavedChangesHelper.h"
 #include "PresetNamePromptHelper.h"
+#include "ButtonStyling.h"
 
 namespace
 {
@@ -180,121 +181,6 @@ private:
         MainComponent& owner;
     };
 
-    class StyledToolbarButton final : public juce::ToolbarButton
-    {
-    public:
-        enum class ContentType
-        {
-            IconGlyph,
-            TextLabel
-        };
-
-        bool isVisuallyActive() const
-        {
-            return isActiveProvider ? isActiveProvider() : false;
-        }
-
-        StyledToolbarButton(int itemId,
-                            const juce::String& tooltipText,
-                            const juce::String& contentText,
-                            ContentType contentTypeIn,
-                            int preferredWidthIn,
-                            std::function<bool()> isActiveProviderIn = {},
-                            juce::Colour baseColourIn = juce::Colour(0xFF3C3C3C))
-            : juce::ToolbarButton(itemId, "", nullptr, nullptr),
-              tooltip(tooltipText),
-              content(contentText),
-              contentType(contentTypeIn),
-              preferredWidth(preferredWidthIn),
-              isActiveProvider(std::move(isActiveProviderIn)),
-              baseColour(baseColourIn)
-        {
-            setTooltip(tooltip);
-            setWantsKeyboardFocus(false);
-        }
-
-        bool getToolbarItemSizes(int toolbarDepth, bool isVertical,
-                                 int& preferredSizeOut, int& minSize, int& maxSize) override
-        {
-            juce::ignoreUnused(toolbarDepth, isVertical);
-            preferredSizeOut = preferredWidth;
-            minSize = preferredWidth;
-            maxSize = preferredWidth;
-            return true;
-        }
-
-        void paintButtonArea(juce::Graphics& g,
-                             int width, int height,
-                             bool isMouseOver, bool isMouseDown) override
-        {
-            auto area = juce::Rectangle<float>(0.0f, 0.0f, (float) width, (float) height).reduced(2.0f, 4.0f);
-            // Toolbar buttons common background colour
-            auto base = baseColour;
-
-            if (isVisuallyActive())
-                base = juce::Colour(0xFF3A7BD5);
-            else if (isMouseDown)
-                base = base.darker(0.15f);
-            else if (isMouseOver)
-                base = base.brighter(0.12f);
-
-            g.setColour(base);
-            g.fillRoundedRectangle(area, 4.0f);
-
-            g.setColour(juce::Colours::white.withAlpha(0.14f));
-            g.drawRoundedRectangle(area, 4.0f, 1.0f);
-        }
-
-        void contentAreaChanged(const juce::Rectangle<int>& newArea) override
-        {
-            contentArea = newArea;
-        }
-
-        void paint(juce::Graphics& g) override
-        {
-            auto bounds = getLocalBounds();
-            auto isOver = isMouseOver(true);
-            auto isDown = isMouseButtonDown();
-
-            paintButtonArea(g, bounds.getWidth(), bounds.getHeight(), isOver, isDown);
-
-            auto drawArea = contentArea.isEmpty() ? bounds : contentArea;
-
-            if (getItemId() == MainComponent::toolbarMidiPanic)
-                drawArea = drawArea.translated(0, 1);
-            g.setColour(isVisuallyActive() ? juce::Colours::white
-                                           : juce::Colours::lightgrey);
-
-            if (contentType == ContentType::IconGlyph)
-            {
-               #if JUCE_WINDOWS
-                juce::Font font(juce::FontOptions("Segoe Fluent Icons", 18.0f, juce::Font::plain));
-               #else
-                juce::Font font(juce::FontOptions(18.0f));
-               #endif
-                g.setFont(font);
-            }
-            else
-            {
-                g.setFont(juce::Font(juce::FontOptions(14.0f, juce::Font::bold)));
-            }
-
-            g.drawFittedText(content,
-                             drawArea.reduced(4, 1),
-                             juce::Justification::centred,
-                             1);
-        }
-
-    private:
-        juce::String tooltip;
-        juce::String content;
-        ContentType contentType;
-        int preferredWidth = 32;
-        juce::Rectangle<int> contentArea;
-        std::function<bool()> isActiveProvider;
-        juce::Colour baseColour;
-    };
-
     class TabBarLookAndFeel final : public juce::LookAndFeel_V4
     {
     public:
@@ -387,6 +273,13 @@ private:
         juce::StringArray midiAssignedDeviceIdentifiers;
     };
 
+    struct LiveTabEntry
+    {
+        PluginTabComponent* component = nullptr;
+        juce::String tabName;
+        juce::Colour tabColour;
+    };
+
     struct MidiTabRoutingState
     {
         int tabIndex = -1;
@@ -396,6 +289,7 @@ private:
 
     // Core UI / tab helpers
     void addEmptyTab();
+    void rebuildVisibleTabs();
     void refreshTabAppearance(int tabIndex);
     bool handleDroppedPluginFile(const juce::File& file, int targetTabIndex);
     void browseAndLoadPluginInCurrentTab();
@@ -404,9 +298,11 @@ private:
     bool loadDroppedPluginInNewTab(const juce::File& file);
     void configurePluginTabComponent(PluginTabComponent& tabComponent);
     int getLoadedPluginTabCount() const;
+
     int countTabsOfType(PluginTabComponent::SlotType type) const;
     bool shouldSuppressDirtyForSinglePluginQuickOpen() const;
     PluginTabComponent* getTabComponent(int tabIndex) const;
+    int getTabIndexForComponent(const PluginTabComponent* component) const;
     void changeListenerCallback(juce::ChangeBroadcaster* source) override;
     void closeCurrentTab();
     void showTabContextMenu(int tabIndex);
@@ -425,6 +321,7 @@ private:
     void sendMidiPanic();
     void moveTabEarlier(int tabIndex);
     void moveTabLater(int tabIndex);
+    void reorderLiveTabs(int fromIndex, int toIndex);
     void toggleTabBypass(int tabIndex);
     void updateStatusBarText();
     void showAboutDialog();
@@ -558,6 +455,7 @@ private:
     void handleSuccessfulPresetSave(const juce::File& file);
 
     juce::MenuBarComponent menuBar { this };
+    juce::OwnedArray<PluginTabComponent> pluginTabs;
     juce::TabbedComponent tabs { juce::TabbedButtonBar::TabsAtTop };
     AddTabButton addTabButton;
     TabBarLookAndFeel tabBarLookAndFeel;

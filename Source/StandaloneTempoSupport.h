@@ -1,121 +1,13 @@
 #pragma once
 #include <JuceHeader.h>
 #include "AudioEngine.h"
+#include "ButtonStyling.h"
 
 struct StandaloneTempoState
 {
     double hostTempoBpm = 120.0;
     double defaultTempoBpm = 120.0;
     bool metronomeEnabled = false;
-};
-
-class TempoToolbarButton final : public juce::ToolbarButton
-{
-public:
-    enum class ContentType
-    {
-        IconGlyph,
-        TextLabel
-    };
-
-    bool isVisuallyActive() const
-    {
-        return isActiveProvider ? isActiveProvider() : false;
-    }
-
-    TempoToolbarButton(int itemId,
-                       const juce::String& tooltipText,
-                       const juce::String& contentText,
-                       ContentType contentTypeIn,
-                       int preferredWidthIn,
-                       std::function<bool()> isActiveProviderIn = {})
-        : juce::ToolbarButton(itemId, "", nullptr, nullptr),
-          tooltip(tooltipText),
-          content(contentText),
-          contentType(contentTypeIn),
-          preferredWidth(preferredWidthIn),
-          isActiveProvider(std::move(isActiveProviderIn))
-    {
-        setTooltip(tooltip);
-        setWantsKeyboardFocus(false);
-    }
-
-    bool getToolbarItemSizes(int toolbarDepth, bool isVertical,
-                             int& preferredSizeOut, int& minSize, int& maxSize) override
-    {
-        juce::ignoreUnused(toolbarDepth, isVertical);
-        preferredSizeOut = preferredWidth;
-        minSize = preferredWidth;
-        maxSize = preferredWidth;
-        return true;
-    }
-
-    void paintButtonArea(juce::Graphics& g,
-                         int width, int height,
-                         bool isMouseOver, bool isMouseDown) override
-    {
-        auto area = juce::Rectangle<float>(0.0f, 0.0f, (float) width, (float) height).reduced(2.0f);
-        // Tempo reset colour
-        auto base = juce::Colour(0xFF3C3C3C);
-
-        if (isVisuallyActive())
-            base = juce::Colour(0xFF3A7BD5);
-        else if (isMouseDown)
-            base = base.darker(0.15f);
-        else if (isMouseOver)
-            base = base.brighter(0.12f);
-
-        g.setColour(base);
-        g.fillRoundedRectangle(area, 4.0f);
-
-        g.setColour(juce::Colours::white.withAlpha(0.14f));
-        g.drawRoundedRectangle(area, 4.0f, 1.0f);
-    }
-
-    void contentAreaChanged(const juce::Rectangle<int>& newArea) override
-    {
-        contentArea = newArea;
-    }
-
-    void paint(juce::Graphics& g) override
-    {
-        auto bounds = getLocalBounds();
-        auto isOver = isMouseOver(true);
-        auto isDown = isMouseButtonDown();
-
-        paintButtonArea(g, bounds.getWidth(), bounds.getHeight(), isOver, isDown);
-
-        auto drawArea = contentArea.isEmpty() ? bounds : contentArea;
-        g.setColour(isVisuallyActive() ? juce::Colours::white
-                                       : juce::Colours::lightgrey);
-
-        if (contentType == ContentType::IconGlyph)
-        {
-           #if JUCE_WINDOWS
-            juce::Font font(juce::FontOptions("Segoe Fluent Icons", 18.0f, juce::Font::plain));
-           #else
-            juce::Font font(juce::FontOptions(18.0f));
-           #endif
-            g.setFont(font);
-        }
-        else
-        {
-            g.setFont(juce::Font(juce::FontOptions(14.0f, juce::Font::bold)));
-        }
-
-        g.drawFittedText(content,
-                         drawArea.reduced(4, 1),
-                         juce::Justification::centred,
-                         1);
-    }
-
-private:
-    juce::String tooltip;
-    juce::String content;
-    ContentType contentType;
-    int preferredWidth = 32;
-    juce::Rectangle<int> contentArea;
-    std::function<bool()> isActiveProvider;
 };
 
 class StandaloneTempoSupport
@@ -224,32 +116,6 @@ public:
         void refreshUi();
 
     private:
-        class TapButtonLookAndFeel final : public juce::LookAndFeel_V4
-        {
-        public:
-            void drawButtonBackground(juce::Graphics& g,
-                                      juce::Button& button,
-                                      const juce::Colour&,
-                                      bool isMouseOverButton,
-                                      bool isButtonDown) override
-            {
-                auto area = button.getLocalBounds().toFloat().reduced(1.0f);
-
-                auto base = juce::Colour(0xFF3C3C3C);
-
-                if (isButtonDown)
-                    base = base.darker(0.15f);
-                else if (isMouseOverButton)
-                    base = base.brighter(0.12f);
-
-                g.setColour(base);
-                g.fillRoundedRectangle(area, 4.0f);
-
-                g.setColour(juce::Colours::white.withAlpha(0.14f));
-                g.drawRoundedRectangle(area, 4.0f, 1.0f);
-            }
-        };
-
         class TempoTextEditor final : public juce::TextEditor
         {
         public:
@@ -294,25 +160,25 @@ public:
         StandaloneTempoSupport& owner;
         BeatIndicatorComponent beatIndicator;
         TempoTextEditor tempoEditor;
-        TempoToolbarButton resetTempoButton
+        ButtonStyling::ToolbarIconButton resetTempoButton
         {
             0,
-            "Reset tempo",
-            juce::String::charToString((juce_wchar) 0xe777),
-            TempoToolbarButton::ContentType::IconGlyph,
+            ButtonStyling::Tooltips::resetTempo(),
+            ButtonStyling::Glyphs::reset(),
+            ButtonStyling::ToolbarIconButton::ContentType::IconGlyph,
             32
         };
-        TempoToolbarButton metronomeButton
+        ButtonStyling::ToolbarIconButton metronomeButton
         {
             0,
-            "Metronome",
-            juce::String::charToString((juce_wchar) 0xe15d),
-            TempoToolbarButton::ContentType::IconGlyph,
+            ButtonStyling::Tooltips::metronome(),
+            ButtonStyling::Glyphs::metronome(),
+            ButtonStyling::ToolbarIconButton::ContentType::IconGlyph,
             32,
             [this] { return owner.isMetronomeEnabled(); }
         };
-        juce::TextButton tapTempoButton { "Tap" };
-        TapButtonLookAndFeel tapButtonLookAndFeel;
+        juce::TextButton tapTempoButton { ButtonStyling::Tooltips::tapTempo() };
+        ButtonStyling::RoundedTextButtonLookAndFeel tapButtonLookAndFeel { ButtonStyling::defaultCornerRadius() };
     };
 
     explicit StandaloneTempoSupport(AudioEngine& audioEngineIn);

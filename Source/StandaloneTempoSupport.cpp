@@ -154,6 +154,8 @@ StandaloneTempoSupport::TempoStripComponent::TempoStripComponent(StandaloneTempo
 
     addAndMakeVisible(tapTempoButton);
     tapTempoButton.setLookAndFeel(&tapButtonLookAndFeel);
+    tapTempoButton.setColour(juce::TextButton::buttonColourId, ButtonStyling::defaultBackground());
+    tapTempoButton.setColour(juce::TextButton::buttonOnColourId, ButtonStyling::defaultBackground());
     tapTempoButton.onClick = [this]
     {
         registerTapTempo();
@@ -171,21 +173,22 @@ StandaloneTempoSupport::TempoStripComponent::~TempoStripComponent()
 void StandaloneTempoSupport::TempoStripComponent::resized()
 {
     auto area = getLocalBounds();
+    const int buttonHeight = ButtonStyling::defaultButtonHeight();
 
     auto tapBounds = area.removeFromRight(40).reduced(0);
-    tapBounds = tapBounds.withSizeKeepingCentre(tapBounds.getWidth(), area.getHeight() - 6);
+    tapBounds = tapBounds.withSizeKeepingCentre(tapBounds.getWidth(), buttonHeight);
     tapTempoButton.setBounds(tapBounds);
 
     area.removeFromRight(2);
 
     auto metronomeBounds = area.removeFromRight(30).reduced(0);
-    metronomeBounds = metronomeBounds.withSizeKeepingCentre(metronomeBounds.getWidth(), area.getHeight() - 4);
+    metronomeBounds = metronomeBounds.withSizeKeepingCentre(metronomeBounds.getWidth(), buttonHeight);
     metronomeButton.setBounds(metronomeBounds);
 
     area.removeFromRight(1);
 
     auto resetBounds = area.removeFromRight(30).reduced(0);
-    resetBounds = resetBounds.withSizeKeepingCentre(resetBounds.getWidth(), area.getHeight() - 4);
+    resetBounds = resetBounds.withSizeKeepingCentre(resetBounds.getWidth(), buttonHeight);
     resetTempoButton.setBounds(resetBounds);
 
     area.removeFromRight(2);

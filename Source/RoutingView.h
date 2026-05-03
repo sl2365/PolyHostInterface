@@ -1,6 +1,7 @@
 #pragma once
 #include <JuceHeader.h>
 #include "PluginTabComponent.h"
+#include "ButtonStyling.h"
 
 class RoutingView final : public juce::Component
 {
@@ -24,6 +25,7 @@ public:
     std::function<void(int tabIndex)> onMoveDown;
     std::function<void(int tabIndex)> onToggleBypass;
     std::function<void(int tabIndex)> onSelectTab;
+    std::function<void(int tabIndex)> onCloseTab;
     std::function<void(int tabIndex, juce::Component* anchorComponent)> onShowMidiAssignments;
     std::function<void()> onRefreshMidiDevices;
 
@@ -34,37 +36,8 @@ private:
     class ModuleRow final : public juce::Component
     {
     public:
-        class TypeBadgeButton final : public juce::TextButton
-        {
-        public:
-            void paintButton(juce::Graphics& g,
-                             bool isMouseOverButton,
-                             bool isButtonDown) override
-            {
-                auto area = getLocalBounds().toFloat().reduced(0.5f);
-
-                auto baseColour = findColour(juce::TextButton::buttonColourId);
-
-                if (isButtonDown)
-                    baseColour = baseColour.darker(0.15f);
-                else if (isMouseOverButton)
-                    baseColour = baseColour.brighter(0.15f);
-
-                g.setColour(baseColour);
-                g.fillRoundedRectangle(area, 8.0f);
-
-                g.setColour(juce::Colours::white.withAlpha(0.20f));
-                g.drawRoundedRectangle(area, 8.0f, 1.0f);
-
-                g.setColour(findColour(juce::TextButton::textColourOffId));
-                g.setFont(juce::Font(juce::FontOptions(14.0f, juce::Font::bold)));
-                g.drawFittedText(getButtonText(),
-                                 getLocalBounds().reduced(6, 2),
-                                 juce::Justification::centred,
-                                 1);
-            }
-        };
         ModuleRow();
+        ~ModuleRow() override;
 
         void setModule(const ModuleEntry& newEntry);
 
@@ -72,6 +45,7 @@ private:
         std::function<void(int tabIndex)> onMoveDown;
         std::function<void(int tabIndex)> onToggleBypass;
         std::function<void(int tabIndex)> onSelectTab;
+        std::function<void(int tabIndex)> onCloseTab;
         std::function<void(int tabIndex, juce::Component* anchorComponent)> onShowMidiAssignments;
 
         void paint(juce::Graphics& g) override;
@@ -79,12 +53,14 @@ private:
 
     private:
         ModuleEntry entry;
+        ButtonStyling::RoundedTextButtonLookAndFeel roundedButtonLookAndFeel { ButtonStyling::defaultCornerRadius() };
         juce::Label nameLabel;
-        TypeBadgeButton typeButton;
-        juce::TextButton midiButton { "MIDI" };
-        juce::TextButton bypassButton { "Bypass" };
-        juce::TextButton upButton { "Up" };
-        juce::TextButton downButton { "Down" };
+        ButtonStyling::TypeBadgeButton typeButton;
+        ButtonStyling::SmallIconButton closeButton { ButtonStyling::Glyphs::close() };
+        juce::TextButton midiButton { ButtonStyling::Labels::midi() };
+        juce::TextButton bypassButton { ButtonStyling::Labels::bypass() };
+        juce::TextButton upButton { ButtonStyling::Labels::up() };
+        juce::TextButton downButton { ButtonStyling::Labels::down() };
     };
 
     void rebuildModuleRows();

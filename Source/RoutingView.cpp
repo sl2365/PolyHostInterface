@@ -1,4 +1,5 @@
 #include "RoutingView.h"
+#include "ButtonStyling.h"
 
 RoutingView::ModuleRow::ModuleRow()
 {
@@ -15,10 +16,31 @@ RoutingView::ModuleRow::ModuleRow()
     };
     addAndMakeVisible(typeButton);
 
+    addAndMakeVisible(closeButton);
     addAndMakeVisible(midiButton);
     addAndMakeVisible(bypassButton);
     addAndMakeVisible(upButton);
     addAndMakeVisible(downButton);
+
+    midiButton.setLookAndFeel(&roundedButtonLookAndFeel);
+    bypassButton.setLookAndFeel(&roundedButtonLookAndFeel);
+    upButton.setLookAndFeel(&roundedButtonLookAndFeel);
+    downButton.setLookAndFeel(&roundedButtonLookAndFeel);
+
+    midiButton.setColour(juce::TextButton::buttonColourId, ButtonStyling::defaultBackground());
+    midiButton.setColour(juce::TextButton::buttonOnColourId, ButtonStyling::defaultBackground());
+
+    upButton.setColour(juce::TextButton::buttonColourId, ButtonStyling::defaultBackground());
+    upButton.setColour(juce::TextButton::buttonOnColourId, ButtonStyling::defaultBackground());
+
+    downButton.setColour(juce::TextButton::buttonColourId, ButtonStyling::defaultBackground());
+    downButton.setColour(juce::TextButton::buttonOnColourId, ButtonStyling::defaultBackground());
+
+    closeButton.setTooltip(ButtonStyling::Tooltips::closeTab());
+    midiButton.setTooltip(ButtonStyling::Tooltips::midiAssignments());
+    bypassButton.setTooltip(ButtonStyling::Tooltips::toggleBypass());
+    upButton.setTooltip(ButtonStyling::Tooltips::moveUp());
+    downButton.setTooltip(ButtonStyling::Tooltips::moveDown());
 
     midiButton.onClick = [this]
     {
@@ -43,6 +65,19 @@ RoutingView::ModuleRow::ModuleRow()
         if (onMoveDown)
             onMoveDown(entry.tabIndex);
     };
+    closeButton.onClick = [this]
+    {
+        if (onCloseTab)
+            onCloseTab(entry.tabIndex);
+    };
+}
+
+RoutingView::ModuleRow::~ModuleRow()
+{
+    midiButton.setLookAndFeel(nullptr);
+    bypassButton.setLookAndFeel(nullptr);
+    upButton.setLookAndFeel(nullptr);
+    downButton.setLookAndFeel(nullptr);
 }
 
 void RoutingView::ModuleRow::setModule(const ModuleEntry& newEntry)
@@ -53,26 +88,27 @@ void RoutingView::ModuleRow::setModule(const ModuleEntry& newEntry)
 
     if (entry.type == PluginTabComponent::SlotType::Synth)
     {
-        typeButton.setButtonText("Synth");
+        typeButton.setButtonText(ButtonStyling::Labels::synth());
         typeButton.setColour(juce::TextButton::buttonColourId, juce::Colour(0xFF3A7BD5));
     }
     else if (entry.type == PluginTabComponent::SlotType::FX)
     {
-        typeButton.setButtonText("FX");
+        typeButton.setButtonText(ButtonStyling::Labels::fx());
         typeButton.setColour(juce::TextButton::buttonColourId, juce::Colour(0xFFE67E22));
     }
     else
     {
-        typeButton.setButtonText("Empty");
+        typeButton.setButtonText(ButtonStyling::Labels::empty());
         typeButton.setColour(juce::TextButton::buttonColourId, juce::Colour(0xFF555555));
     }
 
     if (entry.midiAssignmentCount > 0)
-        midiButton.setButtonText("MIDI (" + juce::String(entry.midiAssignmentCount) + ")");
+        midiButton.setButtonText(ButtonStyling::Labels::midi() + " (" + juce::String(entry.midiAssignmentCount) + ")");
     else
-        midiButton.setButtonText("MIDI");
+        midiButton.setButtonText(ButtonStyling::Labels::midi());
 
-    bypassButton.setButtonText(entry.isBypassed ? "Bypassed" : "Active");
+    bypassButton.setButtonText(entry.isBypassed ? ButtonStyling::Labels::bypassed()
+                                                : ButtonStyling::Labels::active());
     bypassButton.setColour(juce::TextButton::buttonColourId,
                            entry.isBypassed ? juce::Colour(0xFF7F8C8D)
                                             : juce::Colour(0xFF27AE60));
@@ -97,14 +133,24 @@ void RoutingView::ModuleRow::paint(juce::Graphics& g)
 void RoutingView::ModuleRow::resized()
 {
     auto area = getLocalBounds().reduced(10);
+    const int buttonHeight = ButtonStyling::defaultButtonHeight();
 
     typeButton.setBounds(area.removeFromLeft(80).reduced(0, 8));
     area.removeFromLeft(10);
 
-    downButton.setBounds(area.removeFromRight(70).reduced(0, 8));
+    auto closeArea = area.removeFromRight(30);
+    closeArea = closeArea.withSizeKeepingCentre(closeArea.getWidth(), buttonHeight);
+    closeButton.setBounds(closeArea);
     area.removeFromRight(8);
 
-    upButton.setBounds(area.removeFromRight(70).reduced(0, 8));
+    auto downBounds = area.removeFromRight(70);
+    downBounds = downBounds.withSizeKeepingCentre(downBounds.getWidth(), buttonHeight);
+    downButton.setBounds(downBounds);
+    area.removeFromRight(8);
+
+    auto upBounds = area.removeFromRight(70);
+    upBounds = upBounds.withSizeKeepingCentre(upBounds.getWidth(), buttonHeight);
+    upButton.setBounds(upBounds);
     area.removeFromRight(8);
 
     bypassButton.setBounds(area.removeFromRight(90).reduced(0, 8));
@@ -199,6 +245,12 @@ void RoutingView::rebuildModuleRows()
         {
             if (onMoveDown)
                 onMoveDown(tabIndex);
+        };
+
+        row->onCloseTab = [this](int tabIndex)
+        {
+            if (onCloseTab)
+                onCloseTab(tabIndex);
         };
 
         contentComponent.addAndMakeVisible(row);

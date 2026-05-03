@@ -39,6 +39,8 @@ target_sources(PolyHost PRIVATE
     Source/PolyHost.rc
     Source/ClapPluginWrapper.cpp
     Source/ClapPluginWrapper.h
+    Source/ButtonStyling.cpp
+	Source/ButtonStyling.h
 )
 
 # ── Detect whether the portable VST2 SDK is present ──────────────────────────

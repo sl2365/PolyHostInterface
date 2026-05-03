@@ -1,5 +1,6 @@
 #include "MainComponent.h"
 #include <cmath>
+#include "ButtonStyling.h"
 #include "DebugLog.h"
 
 namespace
@@ -241,12 +242,12 @@ void MainComponent::AddTabButton::paintButton(juce::Graphics& g, bool isMouseOve
     g.setColour(colour);
     g.fillPath(tabShape);
 
-    g.setColour(juce::Colours::lightgrey);
-    g.setFont(juce::Font(juce::FontOptions(14.0f, juce::Font::bold)));
-    g.drawFittedText("+",
-                     getLocalBounds().reduced(2, 0),
-                     juce::Justification::centred,
-                     1);
+    ButtonStyling::drawLabel(g,
+                             ButtonStyling::Glyphs::add(),
+                             getLocalBounds().reduced(2, 0),
+                             false,
+                             14.0f,
+                             true);
 }
 
 MainComponent::MainComponent()
@@ -326,7 +327,7 @@ MainComponent::MainComponent()
     addAndMakeVisible(tabs);
 
     addAndMakeVisible(addTabButton);
-    addTabButton.setTooltip("New Tab");
+    addTabButton.setTooltip(ButtonStyling::Tooltips::addTab());
     addTabButton.onClick = [this]
     {
         addEmptyTab();
@@ -349,6 +350,55 @@ MainComponent::MainComponent()
     routingView.onToggleBypass = [this](int tabIndex)
     {
         toggleTabBypass(tabIndex);
+    };
+
+    routingView.onCloseTab = [this](int tabIndex)
+    {
+        if (!juce::isPositiveAndBelow(tabIndex, tabs.getNumTabs()))
+            return;
+
+        if (!confirmCloseTab(tabIndex))
+            return;
+
+        if (tabIndex == tabs.getCurrentTabIndex())
+        {
+            closeCurrentTab();
+            return;
+        }
+
+        if (tabs.getNumTabs() == 1)
+        {
+            if (auto* tc = getTabComponent(tabIndex))
+            {
+                tc->clearSavedWindowBounds();
+                tc->clearPlugin();
+                refreshTabAppearance(tabIndex);
+                refreshRoutingView();
+                unresolvedMissingPlugins.clear();
+                markSessionDirty();
+            }
+            return;
+        }
+
+        if (auto* tc = getTabComponent(tabIndex))
+            tc->removeChangeListener(this);
+
+        auto currentIndex = tabs.getCurrentTabIndex();
+
+        tabs.removeTab(tabIndex);
+
+        if (tabIndex < currentIndex)
+            --currentIndex;
+
+        currentIndex = juce::jlimit(0, tabs.getNumTabs() - 1, currentIndex);
+        tabs.setCurrentTabIndex(currentIndex);
+
+        for (int i = 0; i < tabs.getNumTabs(); ++i)
+            refreshTabAppearance(i);
+
+        handleCurrentTabChanged();
+        unresolvedMissingPlugins.clear();
+        markSessionDirty();
     };
 
     routingView.onSelectTab = [this](int tabIndex)
@@ -518,11 +568,14 @@ void MainComponent::applySessionData(const SessionData& session,
                                      juce::StringArray& loadErrors,
                                      juce::Array<MissingPluginEntry>& missingPlugins)
 {
-    for (int i = 0; i < tabs.getNumTabs(); ++i)
-        if (auto* tc = getTabComponent(i))
+    for (int i = 0; i < pluginTabs.size(); ++i)
+        if (auto* tc = pluginTabs[i])
             tc->removeChangeListener(this);
 
-    tabs.clearTabs();
+    while (tabs.getNumTabs() > 0)
+        tabs.removeTab(tabs.getNumTabs() - 1);
+
+    pluginTabs.clear();
     midiRoutingStates.clear();
 
     standaloneTempoSupport.setDefaultTempoBpm(session.hostTempoBpm);
@@ -531,17 +584,15 @@ void MainComponent::applySessionData(const SessionData& session,
 
     for (int i = 0; i < session.tabs.size(); ++i)
     {
-        auto* tc = new PluginTabComponent(audioEngine, tabs.getNumTabs());
+        auto* tc = pluginTabs.add(new PluginTabComponent(audioEngine, pluginTabs.size()));
         configurePluginTabComponent(*tc);
         tc->addChangeListener(this);
-        tabs.addTab("Empty",
-                    PluginTabComponent::colourForType(PluginTabComponent::SlotType::Empty),
-                    tc,
-                    true);
     }
 
-    if (tabs.getNumTabs() == 0)
+    if (pluginTabs.isEmpty())
         addEmptyTab();
+    else
+        rebuildVisibleTabs();
 
     ensureMidiRoutingStateForCurrentTabs();
 
@@ -929,12 +980,54 @@ void MainComponent::configurePluginTabComponent(PluginTabComponent& tabComponent
 
 void MainComponent::addEmptyTab()
 {
-    auto* tc = new PluginTabComponent(audioEngine, tabs.getNumTabs());
+    auto* tc = pluginTabs.add(new PluginTabComponent(audioEngine, pluginTabs.size()));
     configurePluginTabComponent(*tc);
     tc->addChangeListener(this);
-    tabs.addTab("Empty", PluginTabComponent::colourForType(PluginTabComponent::SlotType::Empty), tc, true);
+
+    rebuildVisibleTabs();
+
     if (!shouldSuppressDirtyForSinglePluginQuickOpen())
         markSessionDirty();
+}
+
+void MainComponent::rebuildVisibleTabs()
+{
+    const auto* previouslySelected = getTabComponent(tabs.getCurrentTabIndex());
+
+    while (tabs.getNumTabs() > 0)
+        tabs.removeTab(tabs.getNumTabs() - 1);
+
+    for (int i = 0; i < pluginTabs.size(); ++i)
+    {
+        auto* tc = pluginTabs[i];
+        if (tc == nullptr)
+            continue;
+
+        tc->setSlotIndex(i);
+
+        juce::String name = "Empty";
+        if (tc->hasPlugin())
+            name = tc->getPluginName();
+
+        auto colour = PluginTabComponent::colourForType(tc->getType());
+
+        tabs.addTab(name, colour, tc, false);
+    }
+
+    int selectedIndex = 0;
+
+    if (previouslySelected != nullptr)
+    {
+        const int found = getTabIndexForComponent(previouslySelected);
+        if (found >= 0)
+            selectedIndex = found;
+    }
+
+    if (tabs.getNumTabs() > 0)
+        tabs.setCurrentTabIndex(juce::jlimit(0, tabs.getNumTabs() - 1, selectedIndex));
+
+    for (int i = 0; i < tabs.getNumTabs(); ++i)
+        refreshTabAppearance(i);
 }
 
 void MainComponent::refreshTabAppearance(int index)
@@ -988,7 +1081,10 @@ bool MainComponent::shouldSuppressDirtyForSinglePluginQuickOpen() const
 
 PluginTabComponent* MainComponent::getTabComponent(int index) const
 {
-    return dynamic_cast<PluginTabComponent*>(tabs.getTabContentComponent(index));
+    if (!juce::isPositiveAndBelow(index, pluginTabs.size()))
+        return nullptr;
+
+    return pluginTabs[index];
 }
 
 void MainComponent::handleCurrentTabChanged()
@@ -1000,6 +1096,17 @@ void MainComponent::handleCurrentTabChanged()
 
     if (!showingRoutingView)
         resizeWindowToFitCurrentTab();
+}
+
+int MainComponent::getTabIndexForComponent(const PluginTabComponent* component) const
+{
+    for (int i = 0; i < pluginTabs.size(); ++i)
+    {
+        if (pluginTabs[i] == component)
+            return i;
+    }
+
+    return -1;
 }
 
 void MainComponent::resizeWindowToFitCurrentTab()
@@ -1403,11 +1510,14 @@ void MainComponent::menuItemSelected(int itemId, int)
 
 void MainComponent::clearAllPlugins()
 {
-    for (int i = 0; i < tabs.getNumTabs(); ++i)
-        if (auto* tc = getTabComponent(i))
+    for (int i = 0; i < pluginTabs.size(); ++i)
+        if (auto* tc = pluginTabs[i])
             tc->removeChangeListener(this);
 
-    tabs.clearTabs();
+    while (tabs.getNumTabs() > 0)
+        tabs.removeTab(tabs.getNumTabs() - 1);
+
+    pluginTabs.clear();
     midiRoutingStates.clear();
     refreshRoutingView();
     syncRoutingToAudioEngine();
@@ -1455,15 +1565,18 @@ void MainComponent::newPreset()
     if (!maybeSaveChanges())
         return;
 
-    for (int i = 0; i < tabs.getNumTabs(); ++i)
-        if (auto* tc = getTabComponent(i))
+    for (int i = 0; i < pluginTabs.size(); ++i)
+        if (auto* tc = pluginTabs[i])
             tc->removeChangeListener(this);
 
-    tabs.clearTabs();
+    while (tabs.getNumTabs() > 0)
+        tabs.removeTab(tabs.getNumTabs() - 1);
+
+    pluginTabs.clear();
     midiRoutingStates.clear();
 
     addEmptyTab();
-
+    
     const auto savedDefaultTempo = settings.getDefaultTempoBpm();
     standaloneTempoSupport.setDefaultTempoBpm(savedDefaultTempo);
     standaloneTempoSupport.setHostTempoBpm(savedDefaultTempo);
@@ -1571,11 +1684,14 @@ void MainComponent::deletePreset()
         return;
     }
 
-    for (int i = 0; i < tabs.getNumTabs(); ++i)
-        if (auto* tc = getTabComponent(i))
+    for (int i = 0; i < pluginTabs.size(); ++i)
+        if (auto* tc = pluginTabs[i])
             tc->removeChangeListener(this);
 
-    tabs.clearTabs();
+    while (tabs.getNumTabs() > 0)
+        tabs.removeTab(tabs.getNumTabs() - 1);
+
+    pluginTabs.clear();
     midiRoutingStates.clear();
 
     addEmptyTab();
@@ -2706,6 +2822,7 @@ void MainComponent::moveTabEarlier(int tabIndex)
         return;
 
     int targetIndex = -1;
+
     for (int i = tabIndex - 1; i >= 0; --i)
     {
         if (auto* tc = getTabComponent(i))
@@ -2721,96 +2838,7 @@ void MainComponent::moveTabEarlier(int tabIndex)
     if (targetIndex < 0)
         return;
 
-    juce::Array<TabSnapshot> snapshots;
-    snapshots.ensureStorageAllocated(tabs.getNumTabs());
-
-    for (int i = 0; i < tabs.getNumTabs(); ++i)
-    {
-        TabSnapshot snap;
-
-        if (auto* tc = getTabComponent(i))
-        {
-            snap.hasPlugin = tc->hasPlugin();
-            snap.bypassed = tc->isBypassed();
-            snap.type = tc->getType();
-            snap.tabName = tabs.getTabNames()[i];
-            snap.hasSavedWindowBounds = tc->hasSavedWindowBounds();
-
-            if (snap.hasSavedWindowBounds)
-            {
-                auto savedBounds = tc->getSavedWindowBounds();
-                snap.savedWindowWidth = savedBounds.getWidth();
-                snap.savedWindowHeight = savedBounds.getHeight();
-            }
-
-            if (auto* midiState = getMidiRoutingStateForTab(i))
-                snap.midiAssignedDeviceIdentifiers = midiState->assignedDeviceIdentifiers;
-
-            if (snap.hasPlugin)
-            {
-                snap.pluginFile = tc->getPluginFile();
-                snap.pluginState = tc->getPluginState();
-                snap.pluginDescription = tc->getLoadedPluginDescription();
-            }
-        }
-
-        snapshots.add(snap);
-    }
-
-    snapshots.swap(tabIndex, targetIndex);
-
-    auto selectedIndex = tabs.getCurrentTabIndex();
-
-    for (int i = 0; i < tabs.getNumTabs(); ++i)
-        if (auto* tc = getTabComponent(i))
-            tc->removeChangeListener(this);
-
-    tabs.clearTabs();
-
-    for (int i = 0; i < snapshots.size(); ++i)
-    {
-        auto* tc = new PluginTabComponent(audioEngine, i);
-        configurePluginTabComponent(*tc);
-        tc->addChangeListener(this);
-        tc->setAllowEditorWindowResize(false);
-
-        tabs.addTab("Empty",
-                    PluginTabComponent::colourForType(PluginTabComponent::SlotType::Empty),
-                    tc,
-                    true);
-
-        const auto& snap = snapshots.getReference(i);
-
-        if (snap.hasSavedWindowBounds)
-            tc->setSavedWindowBounds(snap.savedWindowWidth, snap.savedWindowHeight);
-
-        if (snap.hasPlugin)
-        {
-            if (tc->loadPlugin(snap.pluginFile, snap.pluginDescription))
-            {
-                tc->restorePluginState(snap.pluginState);
-                tc->setBypassed(snap.bypassed);
-            }
-        }
-
-        if (auto* midiState = getMidiRoutingStateForTab(i))
-            midiState->assignedDeviceIdentifiers = snap.midiAssignedDeviceIdentifiers;
-
-        refreshTabAppearance(i);
-        tc->setAllowEditorWindowResize(true);
-    }
-
-    if (selectedIndex == tabIndex)
-        selectedIndex = targetIndex;
-    else if (selectedIndex == targetIndex)
-        selectedIndex = tabIndex;
-
-    selectedIndex = juce::jlimit(0, tabs.getNumTabs() - 1, selectedIndex);
-    tabs.setCurrentTabIndex(selectedIndex);
-
-    syncRoutingToAudioEngine();
-    handleCurrentTabChanged();
-    markSessionDirty();
+    reorderLiveTabs(tabIndex, targetIndex);
 }
 
 void MainComponent::moveTabLater(int tabIndex)
@@ -2819,6 +2847,7 @@ void MainComponent::moveTabLater(int tabIndex)
         return;
 
     int targetIndex = -1;
+
     for (int i = tabIndex + 1; i < tabs.getNumTabs(); ++i)
     {
         if (auto* tc = getTabComponent(i))
@@ -2834,96 +2863,7 @@ void MainComponent::moveTabLater(int tabIndex)
     if (targetIndex < 0)
         return;
 
-    juce::Array<TabSnapshot> snapshots;
-    snapshots.ensureStorageAllocated(tabs.getNumTabs());
-
-    for (int i = 0; i < tabs.getNumTabs(); ++i)
-    {
-        TabSnapshot snap;
-
-        if (auto* tc = getTabComponent(i))
-        {
-            snap.hasPlugin = tc->hasPlugin();
-            snap.bypassed = tc->isBypassed();
-            snap.type = tc->getType();
-            snap.tabName = tabs.getTabNames()[i];
-            snap.hasSavedWindowBounds = tc->hasSavedWindowBounds();
-
-            if (snap.hasSavedWindowBounds)
-            {
-                auto savedBounds = tc->getSavedWindowBounds();
-                snap.savedWindowWidth = savedBounds.getWidth();
-                snap.savedWindowHeight = savedBounds.getHeight();
-            }
-
-            if (auto* midiState = getMidiRoutingStateForTab(i))
-                snap.midiAssignedDeviceIdentifiers = midiState->assignedDeviceIdentifiers;
-
-            if (snap.hasPlugin)
-            {
-                snap.pluginFile = tc->getPluginFile();
-                snap.pluginState = tc->getPluginState();
-                snap.pluginDescription = tc->getLoadedPluginDescription();
-            }
-        }
-
-        snapshots.add(snap);
-    }
-
-    snapshots.swap(tabIndex, targetIndex);
-
-    auto selectedIndex = tabs.getCurrentTabIndex();
-
-    for (int i = 0; i < tabs.getNumTabs(); ++i)
-        if (auto* tc = getTabComponent(i))
-            tc->removeChangeListener(this);
-
-    tabs.clearTabs();
-
-    for (int i = 0; i < snapshots.size(); ++i)
-    {
-        auto* tc = new PluginTabComponent(audioEngine, i);
-        configurePluginTabComponent(*tc);
-        tc->addChangeListener(this);
-        tc->setAllowEditorWindowResize(false);
-
-        tabs.addTab("Empty",
-                    PluginTabComponent::colourForType(PluginTabComponent::SlotType::Empty),
-                    tc,
-                    true);
-
-        const auto& snap = snapshots.getReference(i);
-
-        if (snap.hasSavedWindowBounds)
-            tc->setSavedWindowBounds(snap.savedWindowWidth, snap.savedWindowHeight);
-
-        if (snap.hasPlugin)
-        {
-            if (tc->loadPlugin(snap.pluginFile, snap.pluginDescription))
-            {
-                tc->restorePluginState(snap.pluginState);
-                tc->setBypassed(snap.bypassed);
-            }
-        }
-
-        if (auto* midiState = getMidiRoutingStateForTab(i))
-            midiState->assignedDeviceIdentifiers = snap.midiAssignedDeviceIdentifiers;
-
-        refreshTabAppearance(i);
-        tc->setAllowEditorWindowResize(true);
-    }
-
-    if (selectedIndex == tabIndex)
-        selectedIndex = targetIndex;
-    else if (selectedIndex == targetIndex)
-        selectedIndex = tabIndex;
-
-    selectedIndex = juce::jlimit(0, tabs.getNumTabs() - 1, selectedIndex);
-    tabs.setCurrentTabIndex(selectedIndex);
-
-    syncRoutingToAudioEngine();
-    handleCurrentTabChanged();
-    markSessionDirty();
+    reorderLiveTabs(tabIndex, targetIndex);
 }
 
 // ===================================
@@ -2971,32 +2911,15 @@ juce::String MainComponent::getToolbarIconGlyph(int itemId)
 {
     switch (itemId)
     {
-        case toolbarRoutingToggle:
-            return juce::String::charToString((juce_wchar) 0xf003);
-
-        case toolbarRefitWindow:
-            return juce::String::charToString((juce_wchar) 0xe9a6);
-
-        case toolbarSavePreset:
-            return juce::String::charToString((juce_wchar) 0xe74e);
-
-        case toolbarSavePresetAs:
-            return juce::String::charToString((juce_wchar) 0xe792);
-
-        case toolbarRevertPreset:
-            return juce::String::charToString((juce_wchar) 0xe72c);
-
-        case toolbarMidiPanic:
-            return juce::String::charToString((juce_wchar) 0xe783);
-
-        case toolbarSaveTabWindowSize:
-            return juce::String::charToString((juce_wchar) 0xe78c);
-
-        case toolbarClearTabWindowSize:
-            return juce::String::charToString((juce_wchar) 0xea39);
-
-        default:
-            break;
+        case toolbarRoutingToggle:      return ButtonStyling::Glyphs::routing();
+        case toolbarRefitWindow:        return ButtonStyling::Glyphs::fitWindow();
+        case toolbarSavePreset:         return ButtonStyling::Glyphs::save();
+        case toolbarSavePresetAs:       return ButtonStyling::Glyphs::saveAs();
+        case toolbarRevertPreset:       return ButtonStyling::Glyphs::revert();
+        case toolbarMidiPanic:          return ButtonStyling::Glyphs::panic();
+        case toolbarSaveTabWindowSize:  return ButtonStyling::Glyphs::saveWindowSize();
+        case toolbarClearTabWindowSize: return ButtonStyling::Glyphs::clearWindowSize();
+        default:                        break;
     }
 
     return "?";
@@ -3007,10 +2930,10 @@ juce::ToolbarItemComponent* MainComponent::createItem(int itemId)
     if (itemId == toolbarRoutingToggle)
     {
     // Toolbar button sizing
-        auto* button = new StyledToolbarButton(itemId,
-                                               "Toggle Routing View",
+        auto* button = new ButtonStyling::ToolbarIconButton(itemId,
+                                               ButtonStyling::Tooltips::routing(),
                                                getToolbarIconGlyph(itemId),
-                                               StyledToolbarButton::ContentType::IconGlyph,
+                                               ButtonStyling::ToolbarIconButton::ContentType::IconGlyph,
                                                30,
                                                [this] { return showingRoutingView; });
 
@@ -3027,10 +2950,10 @@ juce::ToolbarItemComponent* MainComponent::createItem(int itemId)
 
     if (itemId == toolbarRefitWindow)
     {
-        auto* button = new StyledToolbarButton(itemId,
-                                               "Fit window to current plugin",
+        auto* button = new ButtonStyling::ToolbarIconButton(itemId,
+                                               ButtonStyling::Tooltips::fitWindow(),
                                                getToolbarIconGlyph(itemId),
-                                               StyledToolbarButton::ContentType::IconGlyph,
+                                               ButtonStyling::ToolbarIconButton::ContentType::IconGlyph,
                                                30);
 
         button->onClick = [this]
@@ -3043,10 +2966,10 @@ juce::ToolbarItemComponent* MainComponent::createItem(int itemId)
 
     if (itemId == toolbarSaveTabWindowSize)
     {
-        auto* button = new StyledToolbarButton(itemId,
-                                               "Save current window size for this tab",
+        auto* button = new ButtonStyling::ToolbarIconButton(itemId,
+                                               ButtonStyling::Tooltips::saveWindowSize(),
                                                getToolbarIconGlyph(itemId),
-                                               StyledToolbarButton::ContentType::IconGlyph,
+                                               ButtonStyling::ToolbarIconButton::ContentType::IconGlyph,
                                                30,
                                                [this]
                                                {
@@ -3068,10 +2991,10 @@ juce::ToolbarItemComponent* MainComponent::createItem(int itemId)
 
     if (itemId == toolbarClearTabWindowSize)
     {
-        auto* button = new StyledToolbarButton(itemId,
-                                               "Clear saved window size for this tab",
+        auto* button = new ButtonStyling::ToolbarIconButton(itemId,
+                                               ButtonStyling::Tooltips::clearWindowSize(),
                                                getToolbarIconGlyph(itemId),
-                                               StyledToolbarButton::ContentType::IconGlyph,
+                                               ButtonStyling::ToolbarIconButton::ContentType::IconGlyph,
                                                30,
                                                [this]
                                                {
@@ -3093,10 +3016,10 @@ juce::ToolbarItemComponent* MainComponent::createItem(int itemId)
 
     if (itemId == toolbarSavePreset)
     {
-        auto* button = new StyledToolbarButton(itemId,
-                                               "Save Preset",
+        auto* button = new ButtonStyling::ToolbarIconButton(itemId,
+                                               ButtonStyling::Tooltips::savePreset(),
                                                getToolbarIconGlyph(itemId),
-                                               StyledToolbarButton::ContentType::IconGlyph,
+                                               ButtonStyling::ToolbarIconButton::ContentType::IconGlyph,
                                                30,
                                                [this] { return sessionDocument.isDirty(); });
 
@@ -3112,10 +3035,10 @@ juce::ToolbarItemComponent* MainComponent::createItem(int itemId)
 
     if (itemId == toolbarSavePresetAs)
     {
-        auto* button = new StyledToolbarButton(itemId,
-                                               "Save Preset As",
+        auto* button = new ButtonStyling::ToolbarIconButton(itemId,
+                                               ButtonStyling::Tooltips::savePresetAs(),
                                                getToolbarIconGlyph(itemId),
-                                               StyledToolbarButton::ContentType::IconGlyph,
+                                               ButtonStyling::ToolbarIconButton::ContentType::IconGlyph,
                                                30,
                                                [this] { return sessionDocument.isDirty(); });
 
@@ -3134,10 +3057,10 @@ juce::ToolbarItemComponent* MainComponent::createItem(int itemId)
 
     if (itemId == toolbarRevertPreset)
     {
-        auto* button = new StyledToolbarButton(itemId,
-                                               "Revert preset",
+        auto* button = new ButtonStyling::ToolbarIconButton(itemId,
+                                               ButtonStyling::Tooltips::revertPreset(),
                                                getToolbarIconGlyph(itemId),
-                                               StyledToolbarButton::ContentType::IconGlyph,
+                                               ButtonStyling::ToolbarIconButton::ContentType::IconGlyph,
                                                30);
 
         button->onClick = [this]
@@ -3150,13 +3073,14 @@ juce::ToolbarItemComponent* MainComponent::createItem(int itemId)
 
     if (itemId == toolbarMidiPanic)
     {
-        auto* button = new StyledToolbarButton(itemId,
-                                               "MIDI Panic",
+        auto* button = new ButtonStyling::ToolbarIconButton(itemId,
+                                               ButtonStyling::Tooltips::midiPanic(),
                                                getToolbarIconGlyph(itemId),
-                                               StyledToolbarButton::ContentType::IconGlyph,
+                                               ButtonStyling::ToolbarIconButton::ContentType::IconGlyph,
                                                30,
                                                {},
-                                               juce::Colour(0xFF8B2E2E));
+                                               ButtonStyling::destructiveBackground(),
+                                               1);
 
         button->onClick = [this]
         {
@@ -3302,6 +3226,50 @@ bool MainComponent::shouldAutoAssignMidiOnlyToFirstTab() const
         mode = "firstTabOnly";
 
     return mode == "firstTabOnly";
+}
+
+void MainComponent::reorderLiveTabs(int fromIndex, int toIndex)
+{
+    if (!juce::isPositiveAndBelow(fromIndex, pluginTabs.size()))
+        return;
+
+    if (!juce::isPositiveAndBelow(toIndex, pluginTabs.size()))
+        return;
+
+    if (fromIndex == toIndex)
+        return;
+
+    auto* movedComponent = pluginTabs[fromIndex];
+
+    MidiTabRoutingState movedMidiState;
+    bool foundMovedMidiState = false;
+
+    if (auto* state = getMidiRoutingStateForTab(fromIndex))
+    {
+        movedMidiState = *state;
+        foundMovedMidiState = true;
+    }
+
+    pluginTabs.remove(fromIndex, false);
+    pluginTabs.insert(toIndex, movedComponent);
+
+    if (juce::isPositiveAndBelow(fromIndex, midiRoutingStates.size()))
+        midiRoutingStates.remove(fromIndex);
+
+    if (foundMovedMidiState)
+    {
+        movedMidiState.tabIndex = toIndex;
+        midiRoutingStates.insert(toIndex, movedMidiState);
+    }
+
+    for (int i = 0; i < midiRoutingStates.size(); ++i)
+        midiRoutingStates.getReference(i).tabIndex = i;
+
+    rebuildVisibleTabs();
+    refreshRoutingView();
+    syncRoutingToAudioEngine();
+    handleCurrentTabChanged();
+    markSessionDirty();
 }
 
 void MainComponent::toggleTabBypass(int tabIndex)
