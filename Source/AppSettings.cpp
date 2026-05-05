@@ -62,7 +62,7 @@ juce::File AppSettings::getSettingsFile()
     auto settingsDir = juce::File::getSpecialLocation(juce::File::currentExecutableFile)
                        .getParentDirectory().getChildFile("Settings");
     settingsDir.createDirectory();
-    return settingsDir.getChildFile("polyhost.xml");
+    return settingsDir.getChildFile("settings.xml");
 }
 
 juce::File AppSettings::getPresetsDirectory()
