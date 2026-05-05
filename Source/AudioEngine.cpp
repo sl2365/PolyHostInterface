@@ -376,17 +376,33 @@ void AudioEngine::rebuildConnections()
             graph.addConnection({ { midiRoute.midiNode->nodeID, midiCh }, { midiRoute.pluginNodeId, midiCh } });
     }
 
-    auto* inputMeterProc = inputMeterNode != nullptr ? inputMeterNode->getProcessor() : nullptr;
+    auto* inputMeterProc  = inputMeterNode  != nullptr ? inputMeterNode->getProcessor()  : nullptr;
     auto* outputMeterProc = outputMeterNode != nullptr ? outputMeterNode->getProcessor() : nullptr;
-    auto* audioOutProc = audioOutNode != nullptr ? audioOutNode->getProcessor() : nullptr;
+    auto* audioOutProc    = audioOutNode    != nullptr ? audioOutNode->getProcessor()    : nullptr;
+
+    // Pre-FX input metering: sum all synth outputs into the input meter for display only.
+    for (int i = 0; i < orderedRoutingEntries.size(); ++i)
+    {
+        const auto& entry = orderedRoutingEntries.getReference(i);
+
+        if (!entry.isSynth)
+            continue;
+
+        auto* synthNode = graph.getNodeForId(entry.nodeId);
+        if (synthNode == nullptr || synthNode->getProcessor() == nullptr)
+            continue;
+
+        if (inputMeterNode != nullptr && inputMeterProc != nullptr)
+        {
+            connectAudioChannels(synthNode->nodeID, synthNode->getProcessor(),
+                                 inputMeterNode->nodeID, inputMeterProc);
+        }
+    }
 
     if (orderedRoutingEntries.isEmpty())
     {
-        if (inputMeterNode != nullptr && outputMeterNode != nullptr)
+        if (outputMeterNode != nullptr && audioOutNode != nullptr)
         {
-            connectAudioChannels(inputMeterNode->nodeID, inputMeterProc,
-                                 outputMeterNode->nodeID, outputMeterProc);
-
             connectAudioChannels(outputMeterNode->nodeID, outputMeterProc,
                                  audioOutNode->nodeID, audioOutProc);
         }
@@ -478,8 +494,7 @@ void AudioEngine::rebuildConnections()
 
     if (!madeAnySynthConnection)
     {
-        connectAudioChannels(inputMeterNode->nodeID, inputMeterProc,
-                             outputMeterNode->nodeID, outputMeterProc);
+        // No synths loaded: leave output silent.
     }
 
     connectAudioChannels(outputMeterNode->nodeID, outputMeterProc,
