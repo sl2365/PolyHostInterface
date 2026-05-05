@@ -21,9 +21,14 @@ namespace ButtonStyling
         juce::String saveWindowSize();
         juce::String clearWindowSize();
         juce::String close();
-        juce::String metronome();
         juce::String reset();
+        juce::String metronome();
+        juce::String tapTempo();
         juce::String add();
+        juce::String arrowUp();
+        juce::String arrowDown();
+        juce::String activeTick();
+        juce::String bypassCross();
     }
 
     namespace Tooltips
@@ -37,10 +42,12 @@ namespace ButtonStyling
         juce::String saveWindowSize();
         juce::String clearWindowSize();
         juce::String closeTab();
-        juce::String metronome();
         juce::String resetTempo();
+        juce::String metronome();
         juce::String tapTempo();
         juce::String addTab();
+        juce::String refreshMidi();
+        juce::String viewTab();
         juce::String midiAssignments();
         juce::String toggleBypass();
         juce::String moveUp();
@@ -49,13 +56,7 @@ namespace ButtonStyling
 
     namespace Labels
     {
-        juce::String tap();
         juce::String midi();
-        juce::String bypass();
-        juce::String active();
-        juce::String bypassed();
-        juce::String up();
-        juce::String down();
         juce::String synth();
         juce::String fx();
         juce::String empty();
@@ -64,12 +65,16 @@ namespace ButtonStyling
     juce::Colour defaultBackground();
     juce::Colour activeBackground();
     juce::Colour destructiveBackground();
+    juce::Colour bypassActiveBackground();
+    juce::Colour bypassInactiveBackground();
     juce::Colour outlineColour();
     juce::Colour textColour(bool isActive);
 
     float defaultCornerRadius();
     float badgeCornerRadius();
     int defaultButtonHeight();
+    int defaultButtonWidth();
+    float defaultIconSize();
 
     juce::Colour backgroundForVariant(Variant variant);
     juce::Colour resolveBackgroundColour(juce::Colour baseColour,
@@ -77,7 +82,7 @@ namespace ButtonStyling
                                          bool isMouseDown,
                                          bool isActive);
 
-    juce::Font iconFont(float height);
+    juce::Font iconFont(float height = defaultIconSize());
     juce::Font textFont(float height, bool bold = false);
 
     void drawButtonBackground(juce::Graphics& g,
@@ -126,7 +131,8 @@ namespace ButtonStyling
                           int preferredWidthIn,
                           std::function<bool()> isActiveProviderIn = {},
                           juce::Colour baseColourIn = defaultBackground(),
-                          int iconYOffsetIn = 0);
+                          int iconYOffsetIn = 0,
+                          float iconFontHeightIn = defaultIconSize());
 
         bool isVisuallyActive() const;
 
@@ -146,6 +152,7 @@ namespace ButtonStyling
         ContentType contentType;
         int preferredWidth = 32;
         int iconYOffset = 0;
+        float iconFontHeight = defaultIconSize();
         juce::Rectangle<int> contentArea;
         std::function<bool()> isActiveProvider;
         juce::Colour baseColour;
@@ -157,7 +164,7 @@ namespace ButtonStyling
         explicit SmallIconButton(const juce::String& glyphText,
                                  juce::Colour baseColourIn = defaultBackground(),
                                  float cornerRadiusIn = defaultCornerRadius(),
-                                 float iconFontHeightIn = 13.0f,
+                                 float iconFontHeightIn = defaultIconSize(),
                                  int iconYOffsetIn = 1);
 
         void paintButton(juce::Graphics& g,
@@ -168,7 +175,7 @@ namespace ButtonStyling
         juce::String glyph;
         juce::Colour baseColour;
         float cornerRadius = defaultCornerRadius();
-        float iconFontHeight = 13.0f;
+        float iconFontHeight = defaultIconSize();
         int iconYOffset = 1;
     };
 
@@ -190,6 +197,33 @@ namespace ButtonStyling
 
     private:
         float cornerRadius = defaultCornerRadius();
+    };
+
+    class StatusIconButton final : public juce::Button
+    {
+    public:
+        explicit StatusIconButton(const juce::String& activeGlyphText,
+                                  const juce::String& inactiveGlyphText,
+                                  juce::Colour activeColourIn,
+                                  juce::Colour inactiveColourIn,
+                                  float cornerRadiusIn = defaultCornerRadius(),
+                                  float iconFontHeightIn = defaultIconSize(),
+                                  int iconYOffsetIn = 0);
+
+        void setVisualState(bool shouldShowActiveState);
+        void paintButton(juce::Graphics& g,
+                         bool isMouseOverButton,
+                         bool isButtonDown) override;
+
+    private:
+        juce::String activeGlyph;
+        juce::String inactiveGlyph;
+        juce::Colour activeColour;
+        juce::Colour inactiveColour;
+        float cornerRadius = defaultCornerRadius();
+        float iconFontHeight = defaultIconSize();
+        int iconYOffset = 0;
+        bool visualStateActive = true;
     };
 
     class TypeBadgeButton final : public juce::TextButton

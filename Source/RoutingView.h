@@ -58,9 +58,15 @@ private:
         ButtonStyling::TypeBadgeButton typeButton;
         ButtonStyling::SmallIconButton closeButton { ButtonStyling::Glyphs::close() };
         juce::TextButton midiButton { ButtonStyling::Labels::midi() };
-        juce::TextButton bypassButton { ButtonStyling::Labels::bypass() };
-        juce::TextButton upButton { ButtonStyling::Labels::up() };
-        juce::TextButton downButton { ButtonStyling::Labels::down() };
+        ButtonStyling::StatusIconButton bypassButton
+        {
+            ButtonStyling::Glyphs::activeTick(),
+            ButtonStyling::Glyphs::bypassCross(),
+            ButtonStyling::bypassActiveBackground(),
+            ButtonStyling::bypassInactiveBackground()
+        };
+        ButtonStyling::SmallIconButton upButton { ButtonStyling::Glyphs::arrowUp() };
+        ButtonStyling::SmallIconButton downButton { ButtonStyling::Glyphs::arrowDown() };
     };
 
     void rebuildModuleRows();

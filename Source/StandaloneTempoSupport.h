@@ -166,7 +166,7 @@ public:
             ButtonStyling::Tooltips::resetTempo(),
             ButtonStyling::Glyphs::reset(),
             ButtonStyling::ToolbarIconButton::ContentType::IconGlyph,
-            32
+            ButtonStyling::defaultButtonWidth()
         };
         ButtonStyling::ToolbarIconButton metronomeButton
         {
@@ -174,11 +174,21 @@ public:
             ButtonStyling::Tooltips::metronome(),
             ButtonStyling::Glyphs::metronome(),
             ButtonStyling::ToolbarIconButton::ContentType::IconGlyph,
-            32,
+            ButtonStyling::defaultButtonWidth(),
             [this] { return owner.isMetronomeEnabled(); }
         };
-        juce::TextButton tapTempoButton { ButtonStyling::Tooltips::tapTempo() };
-        ButtonStyling::RoundedTextButtonLookAndFeel tapButtonLookAndFeel { ButtonStyling::defaultCornerRadius() };
+        ButtonStyling::ToolbarIconButton tapTempoButton
+        {
+            0,
+            ButtonStyling::Tooltips::tapTempo(),
+            ButtonStyling::Glyphs::tapTempo(),
+            ButtonStyling::ToolbarIconButton::ContentType::IconGlyph,
+            ButtonStyling::defaultButtonWidth(),
+            {},
+            ButtonStyling::defaultBackground(),
+            0,
+            ButtonStyling::defaultIconSize() + 2.0f
+        };
     };
 
     explicit StandaloneTempoSupport(AudioEngine& audioEngineIn);

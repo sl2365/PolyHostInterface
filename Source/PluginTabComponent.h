@@ -1,7 +1,6 @@
 #pragma once
 #include <JuceHeader.h>
-#include "SessionTypes.h"
-#include "SessionData.h"
+#include "SessionManager.h"
 #include "ClapPluginWrapper.h"
 
 class AudioEngine;

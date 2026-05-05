@@ -7,7 +7,6 @@
 #include "AppSettings.h"
 #include "MidiMonitorWindow.h"
 #include "RoutingView.h"
-#include "SessionData.h"
 #include "SessionDocument.h"
 #include "SessionManager.h"
 #include "StandaloneTempoSupport.h"
@@ -352,10 +351,8 @@ private:
     MidiTabRoutingState* getMidiRoutingStateForTab(int tabIndex);
     const MidiTabRoutingState* getMidiRoutingStateForTab(int tabIndex) const;
     void ensureMidiRoutingStateForCurrentTabs();
-    void refreshMidiRoutingView();
     bool shouldAutoAssignMidiToNewTabs() const;
     bool shouldAutoAssignMidiOnlyToFirstTab() const;
-    void toggleMidiRoutingExpanded(int tabIndex);
     void toggleMidiAssignment(int tabIndex, const juce::String& deviceIdentifier);
     void assignAllEnabledMidiDevicesToTab(int tabIndex);
     void clearMidiAssignmentsForTab(int tabIndex);
@@ -469,6 +466,7 @@ private:
     juce::File lastPluginRepairDirectory;
     bool isLoadingPreset = false;
     double ignoreDirtyChangesUntilMs = 0.0;
+    bool suppressDirtyMarking = false;
     bool isSessionDirty = false;
     bool suppressDirtyForSinglePluginQuickOpen = false;
     juce::Array<MissingPluginEntry> unresolvedMissingPlugins;

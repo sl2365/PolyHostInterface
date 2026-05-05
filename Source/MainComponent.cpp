@@ -293,7 +293,9 @@ MainComponent::MainComponent()
     standaloneTempoSupport.onTempoChanged = [this]
     {
         const auto nowMs = juce::Time::getMillisecondCounterHiRes();
-        if (!isLoadingPreset && nowMs >= ignoreDirtyChangesUntilMs)
+        if (!suppressDirtyMarking
+            && !isLoadingPreset
+            && nowMs >= ignoreDirtyChangesUntilMs)
         {
             if (!shouldSuppressDirtyForSinglePluginQuickOpen())
                 markSessionDirty();
@@ -728,7 +730,9 @@ void MainComponent::changeListenerCallback(juce::ChangeBroadcaster* source)
                 refreshRoutingView();
 
                 const auto nowMs = juce::Time::getMillisecondCounterHiRes();
-                if (!isLoadingPreset && nowMs >= ignoreDirtyChangesUntilMs)
+                if (!suppressDirtyMarking
+                    && !isLoadingPreset
+                    && nowMs >= ignoreDirtyChangesUntilMs)
                 {
                     if (!shouldSuppressDirtyForSinglePluginQuickOpen())
                         markSessionDirty();
@@ -820,6 +824,8 @@ void MainComponent::browseAndLoadPluginInCurrentTab()
             tabs.setCurrentTabIndex(currentIndex);
             autoAssignGlobalMidiToTabIfAppropriate(currentIndex);
             refreshTabAppearance(currentIndex);
+            syncRoutingToAudioEngine();
+            refreshRoutingView();
             handleCurrentTabChanged();
             markSessionDirty();
         }
@@ -878,7 +884,10 @@ bool MainComponent::loadDroppedPluginInNewTab(const juce::File& file)
         if (newTab->loadPlugin(file))
         {
             tabs.setCurrentTabIndex(newTabIndex);
+            autoAssignGlobalMidiToTabIfAppropriate(newTabIndex);
             refreshTabAppearance(newTabIndex);
+            syncRoutingToAudioEngine();
+            refreshRoutingView();
             handleCurrentTabChanged();
             markSessionDirty();
             return true;
@@ -907,6 +916,8 @@ bool MainComponent::handleDroppedPluginFile(const juce::File& file, int targetTa
             tabs.setCurrentTabIndex(targetTabIndex);
             autoAssignGlobalMidiToTabIfAppropriate(targetTabIndex);
             refreshTabAppearance(targetTabIndex);
+            syncRoutingToAudioEngine();
+            refreshRoutingView();
             handleCurrentTabChanged();
             markSessionDirty();
             return true;
@@ -927,6 +938,8 @@ bool MainComponent::handleDroppedPluginFile(const juce::File& file, int targetTa
             tabs.setCurrentTabIndex(targetTabIndex);
             autoAssignGlobalMidiToTabIfAppropriate(targetTabIndex);
             refreshTabAppearance(targetTabIndex);
+            syncRoutingToAudioEngine();
+            refreshRoutingView();
             handleCurrentTabChanged();
             markSessionDirty();
             return true;
@@ -1261,7 +1274,28 @@ juce::PopupMenu MainComponent::getMenuForIndex(int index, const juce::String&)
             break;
         case 2:
         {
-            menu.addItem(301, "Select MIDI Input Device");
+            refreshMidiDevices();
+
+            juce::PopupMenu midiInputDeviceMenu;
+            auto devices = midiEngine.getAvailableDevices();
+
+            if (devices.isEmpty())
+            {
+                midiInputDeviceMenu.addItem(1300, "(No MIDI input devices found)", false, false);
+            }
+            else
+            {
+                for (int i = 0; i < devices.size(); ++i)
+                {
+                    const auto& device = devices.getReference(i);
+                    midiInputDeviceMenu.addItem(1000 + i,
+                                                device.name,
+                                                true,
+                                                midiEngine.isDeviceOpen(device.identifier));
+                }
+            }
+
+            menu.addSubMenu("Select MIDI Input Device", midiInputDeviceMenu);
             menu.addItem(302, "MIDI Monitor");
             menu.addItem(304, "Refresh MIDI Devices");
             menu.addSeparator();
@@ -1322,6 +1356,46 @@ void MainComponent::menuItemSelected(int itemId, int)
 
         return;
     }
+
+    if (itemId >= 1000 && itemId < 1300)
+    {
+        auto devices = midiEngine.getAvailableDevices();
+        const int deviceIndex = itemId - 1000;
+
+        if (juce::isPositiveAndBelow(deviceIndex, devices.size()))
+        {
+            const auto& device = devices.getReference(deviceIndex);
+
+            if (midiEngine.isDeviceOpen(device.identifier))
+                midiEngine.closeDevice(device.identifier);
+            else
+                midiEngine.openDevice(device.identifier);
+
+            auto openNames = midiEngine.getOpenDeviceNames();
+
+            if (openNames.isEmpty())
+            {
+                statusBar.setText(
+                    "PolyHost 0.1  |  No MIDI device selected  |  Ready",
+                    juce::dontSendNotification);
+                settings.setMidiDeviceName({});
+                settings.setEnabledMidiDeviceIdentifiers({});
+            }
+            else
+            {
+                statusBar.setText(
+                    "PolyHost 0.1  |  MIDI: " + openNames.joinIntoString(", ") + "  |  Ready",
+                    juce::dontSendNotification);
+
+                settings.setMidiDeviceName(openNames[0]); // legacy compatibility
+                settings.setEnabledMidiDeviceIdentifiers(midiEngine.getOpenDeviceIdentifiers());
+            }
+
+            refreshRoutingView();
+            return;
+        }
+    }
+
     switch (itemId)
     {
         case FileMenuHelper::newPreset: newPreset(); break;
@@ -1372,70 +1446,6 @@ void MainComponent::menuItemSelected(int itemId, int)
             resetRoutingWindowSizeToDefault();
             break;
 
-        case 301:
-        {
-            refreshMidiDevices();
-
-            juce::PopupMenu midiMenu;
-            auto devices = midiEngine.getAvailableDevices();
-
-            if (devices.isEmpty())
-            {
-                juce::AlertWindow::showMessageBoxAsync(
-                    juce::AlertWindow::WarningIcon,
-                    "MIDI Input",
-                    "No MIDI input devices found.");
-                break;
-            }
-
-            for (int i = 0; i < devices.size(); ++i)
-            {
-                const auto& device = devices.getReference(i);
-                midiMenu.addItem(1000 + i,
-                                 device.name,
-                                 true,
-                                 midiEngine.isDeviceOpen(device.identifier));
-            }
-
-            midiMenu.showMenuAsync(
-                juce::PopupMenu::Options(),
-                [this, devices](int result)
-                {
-                    if (result >= 1000 && result < 1000 + devices.size())
-                    {
-                        const auto& device = devices.getReference(result - 1000);
-
-                        if (midiEngine.isDeviceOpen(device.identifier))
-                            midiEngine.closeDevice(device.identifier);
-                        else
-                            midiEngine.openDevice(device.identifier);
-
-                        auto openNames = midiEngine.getOpenDeviceNames();
-
-                        if (openNames.isEmpty())
-                        {
-                            statusBar.setText(
-                                "PolyHost 0.1  |  No MIDI device selected  |  Ready",
-                                juce::dontSendNotification);
-                            settings.setMidiDeviceName({});
-                            settings.setEnabledMidiDeviceIdentifiers({});
-                        }
-                        else
-                        {
-                            statusBar.setText(
-                                "PolyHost 0.1  |  MIDI: " + openNames.joinIntoString(", ") + "  |  Ready",
-                                juce::dontSendNotification);
-
-                            settings.setMidiDeviceName(openNames[0]); // legacy compatibility
-                            settings.setEnabledMidiDeviceIdentifiers(midiEngine.getOpenDeviceIdentifiers());
-                        }
-
-                        refreshRoutingView();
-                    }
-                });
-
-            break;
-        }
         case 302:
         {
             if (midiMonitorWindow == nullptr)
@@ -1770,7 +1780,8 @@ bool MainComponent::loadPresetFromFile(const juce::File& file)
         return false;
 
     isLoadingPreset = true;
-    ignoreDirtyChangesUntilMs = juce::Time::getMillisecondCounterHiRes() + 500.0;
+    suppressDirtyMarking = true;
+    ignoreDirtyChangesUntilMs = juce::Time::getMillisecondCounterHiRes() + 3000.0;
     unresolvedMissingPlugins.clear();
     suppressDirtyForSinglePluginQuickOpen = false;
 
@@ -1786,11 +1797,17 @@ bool MainComponent::loadPresetFromFile(const juce::File& file)
 
     promptToLocateMissingPlugins(unresolvedMissingPlugins);
 
-    juce::Timer::callAfterDelay(500, [this]
+    markSessionClean();
+
+    juce::Timer::callAfterDelay(3000, [safe = juce::Component::SafePointer<MainComponent>(this)]
     {
-        isLoadingPreset = false;
-        ignoreDirtyChangesUntilMs = 0.0;
-        markSessionClean();
+        if (safe != nullptr)
+        {
+            safe->isLoadingPreset = false;
+            safe->ignoreDirtyChangesUntilMs = 0.0;
+            safe->markSessionClean();
+            safe->suppressDirtyMarking = false;
+        }
     });
 
     return true;
@@ -2288,6 +2305,9 @@ juce::File MainComponent::tryAutoLocateReplacement(const MissingPluginEntry& ent
 
 void MainComponent::markSessionDirty()
 {
+    if (suppressDirtyMarking)
+        return;
+
     if (getLoadedPluginTabCount() > 1)
         suppressDirtyForSinglePluginQuickOpen = false;
 
@@ -2934,7 +2954,7 @@ juce::ToolbarItemComponent* MainComponent::createItem(int itemId)
                                                ButtonStyling::Tooltips::routing(),
                                                getToolbarIconGlyph(itemId),
                                                ButtonStyling::ToolbarIconButton::ContentType::IconGlyph,
-                                               30,
+                                               ButtonStyling::defaultButtonWidth(),
                                                [this] { return showingRoutingView; });
 
         button->onClick = [this, button]
@@ -2954,7 +2974,7 @@ juce::ToolbarItemComponent* MainComponent::createItem(int itemId)
                                                ButtonStyling::Tooltips::fitWindow(),
                                                getToolbarIconGlyph(itemId),
                                                ButtonStyling::ToolbarIconButton::ContentType::IconGlyph,
-                                               30);
+                                               ButtonStyling::defaultButtonWidth());
 
         button->onClick = [this]
         {
@@ -2970,7 +2990,7 @@ juce::ToolbarItemComponent* MainComponent::createItem(int itemId)
                                                ButtonStyling::Tooltips::saveWindowSize(),
                                                getToolbarIconGlyph(itemId),
                                                ButtonStyling::ToolbarIconButton::ContentType::IconGlyph,
-                                               30,
+                                               ButtonStyling::defaultButtonWidth(),
                                                [this]
                                                {
                                                    if (auto* tc = getTabComponent(tabs.getCurrentTabIndex()))
@@ -2995,7 +3015,7 @@ juce::ToolbarItemComponent* MainComponent::createItem(int itemId)
                                                ButtonStyling::Tooltips::clearWindowSize(),
                                                getToolbarIconGlyph(itemId),
                                                ButtonStyling::ToolbarIconButton::ContentType::IconGlyph,
-                                               30,
+                                               ButtonStyling::defaultButtonWidth(),
                                                [this]
                                                {
                                                    if (auto* tc = getTabComponent(tabs.getCurrentTabIndex()))
@@ -3020,7 +3040,7 @@ juce::ToolbarItemComponent* MainComponent::createItem(int itemId)
                                                ButtonStyling::Tooltips::savePreset(),
                                                getToolbarIconGlyph(itemId),
                                                ButtonStyling::ToolbarIconButton::ContentType::IconGlyph,
-                                               30,
+                                               ButtonStyling::defaultButtonWidth(),
                                                [this] { return sessionDocument.isDirty(); });
 
         button->onClick = [this, button]
@@ -3039,7 +3059,7 @@ juce::ToolbarItemComponent* MainComponent::createItem(int itemId)
                                                ButtonStyling::Tooltips::savePresetAs(),
                                                getToolbarIconGlyph(itemId),
                                                ButtonStyling::ToolbarIconButton::ContentType::IconGlyph,
-                                               30,
+                                               ButtonStyling::defaultButtonWidth(),
                                                [this] { return sessionDocument.isDirty(); });
 
         button->onClick = [this, button]
@@ -3061,7 +3081,7 @@ juce::ToolbarItemComponent* MainComponent::createItem(int itemId)
                                                ButtonStyling::Tooltips::revertPreset(),
                                                getToolbarIconGlyph(itemId),
                                                ButtonStyling::ToolbarIconButton::ContentType::IconGlyph,
-                                               30);
+                                               ButtonStyling::defaultButtonWidth());
 
         button->onClick = [this]
         {
@@ -3077,7 +3097,7 @@ juce::ToolbarItemComponent* MainComponent::createItem(int itemId)
                                                ButtonStyling::Tooltips::midiPanic(),
                                                getToolbarIconGlyph(itemId),
                                                ButtonStyling::ToolbarIconButton::ContentType::IconGlyph,
-                                               30,
+                                               ButtonStyling::defaultButtonWidth(),
                                                {},
                                                ButtonStyling::destructiveBackground(),
                                                1);

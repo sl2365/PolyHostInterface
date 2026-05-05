@@ -97,7 +97,6 @@ private:
         }
     };
 
-    static const clap_input_events_t* getInputEventsAdaptor() noexcept;
     void buildInputEventsFromMidi(const juce::MidiBuffer& midiMessages);
 
     InputEventList currentInputEvents;

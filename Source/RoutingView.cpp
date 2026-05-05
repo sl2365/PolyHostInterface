@@ -9,6 +9,7 @@ RoutingView::ModuleRow::ModuleRow()
 
     typeButton.setColour(juce::TextButton::textColourOffId, juce::Colours::white);
     typeButton.setColour(juce::TextButton::buttonColourId, juce::Colour(0xFF555555));
+    typeButton.setTooltip(ButtonStyling::Tooltips::viewTab());
     typeButton.onClick = [this]
     {
         if (onSelectTab)
@@ -23,18 +24,9 @@ RoutingView::ModuleRow::ModuleRow()
     addAndMakeVisible(downButton);
 
     midiButton.setLookAndFeel(&roundedButtonLookAndFeel);
-    bypassButton.setLookAndFeel(&roundedButtonLookAndFeel);
-    upButton.setLookAndFeel(&roundedButtonLookAndFeel);
-    downButton.setLookAndFeel(&roundedButtonLookAndFeel);
 
     midiButton.setColour(juce::TextButton::buttonColourId, ButtonStyling::defaultBackground());
     midiButton.setColour(juce::TextButton::buttonOnColourId, ButtonStyling::defaultBackground());
-
-    upButton.setColour(juce::TextButton::buttonColourId, ButtonStyling::defaultBackground());
-    upButton.setColour(juce::TextButton::buttonOnColourId, ButtonStyling::defaultBackground());
-
-    downButton.setColour(juce::TextButton::buttonColourId, ButtonStyling::defaultBackground());
-    downButton.setColour(juce::TextButton::buttonOnColourId, ButtonStyling::defaultBackground());
 
     closeButton.setTooltip(ButtonStyling::Tooltips::closeTab());
     midiButton.setTooltip(ButtonStyling::Tooltips::midiAssignments());
@@ -75,9 +67,6 @@ RoutingView::ModuleRow::ModuleRow()
 RoutingView::ModuleRow::~ModuleRow()
 {
     midiButton.setLookAndFeel(nullptr);
-    bypassButton.setLookAndFeel(nullptr);
-    upButton.setLookAndFeel(nullptr);
-    downButton.setLookAndFeel(nullptr);
 }
 
 void RoutingView::ModuleRow::setModule(const ModuleEntry& newEntry)
@@ -107,12 +96,7 @@ void RoutingView::ModuleRow::setModule(const ModuleEntry& newEntry)
     else
         midiButton.setButtonText(ButtonStyling::Labels::midi());
 
-    bypassButton.setButtonText(entry.isBypassed ? ButtonStyling::Labels::bypassed()
-                                                : ButtonStyling::Labels::active());
-    bypassButton.setColour(juce::TextButton::buttonColourId,
-                           entry.isBypassed ? juce::Colour(0xFF7F8C8D)
-                                            : juce::Colour(0xFF27AE60));
-
+    bypassButton.setVisualState(! entry.isBypassed);
     upButton.setEnabled(entry.canMoveUp);
     downButton.setEnabled(entry.canMoveDown);
 
@@ -138,22 +122,24 @@ void RoutingView::ModuleRow::resized()
     typeButton.setBounds(area.removeFromLeft(80).reduced(0, 8));
     area.removeFromLeft(10);
 
-    auto closeArea = area.removeFromRight(30);
+    auto closeArea = area.removeFromRight(ButtonStyling::defaultButtonWidth());
     closeArea = closeArea.withSizeKeepingCentre(closeArea.getWidth(), buttonHeight);
     closeButton.setBounds(closeArea);
     area.removeFromRight(8);
 
-    auto downBounds = area.removeFromRight(70);
+    auto downBounds = area.removeFromRight(ButtonStyling::defaultButtonWidth());
     downBounds = downBounds.withSizeKeepingCentre(downBounds.getWidth(), buttonHeight);
     downButton.setBounds(downBounds);
     area.removeFromRight(8);
 
-    auto upBounds = area.removeFromRight(70);
+    auto upBounds = area.removeFromRight(ButtonStyling::defaultButtonWidth());
     upBounds = upBounds.withSizeKeepingCentre(upBounds.getWidth(), buttonHeight);
     upButton.setBounds(upBounds);
     area.removeFromRight(8);
 
-    bypassButton.setBounds(area.removeFromRight(90).reduced(0, 8));
+    auto bypassBounds = area.removeFromRight(ButtonStyling::defaultButtonWidth());
+    bypassBounds = bypassBounds.withSizeKeepingCentre(bypassBounds.getWidth(), ButtonStyling::defaultButtonHeight());
+    bypassButton.setBounds(bypassBounds);
     area.removeFromRight(8);
 
     midiButton.setBounds(area.removeFromRight(90).reduced(0, 8));
@@ -183,6 +169,7 @@ RoutingView::RoutingView()
             onRefreshMidiDevices();
     };
     addAndMakeVisible(refreshMidiButton);
+    refreshMidiButton.setTooltip(ButtonStyling::Tooltips::refreshMidi());
 
     emptyLabel.setText("No loaded plugins.\nLoad a synth or FX in the tab view to see it here.",
                        juce::dontSendNotification);

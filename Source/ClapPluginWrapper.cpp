@@ -330,11 +330,6 @@ void ClapPluginWrapper::clearLastStateLoadResult() noexcept
     lastStateLoadSucceeded = true;
 }
 
-const clap_input_events_t* ClapPluginWrapper::getInputEventsAdaptor() noexcept
-{
-    return nullptr;
-}
-
 void ClapPluginWrapper::buildInputEventsFromMidi(const juce::MidiBuffer& midiMessages)
 {
     currentInputEvents.clear();

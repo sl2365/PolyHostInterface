@@ -225,11 +225,6 @@ void AudioEngine::sendMidiPanicToNodes(const juce::Array<juce::AudioProcessorGra
     }
 }
 
-void AudioEngine::setTempoBpm(double newTempoBpm)
-{
-    juce::ignoreUnused(newTempoBpm);
-}
-
 AudioEngine::QueuedMidiInputProcessor* AudioEngine::getMidiRouterForPluginNode(juce::AudioProcessorGraph::NodeID pluginNodeId) const
 {
     for (auto& entry : midiRoutingNodes)

@@ -13,9 +13,14 @@ namespace ButtonStyling
         juce::String saveWindowSize()  { return juce::String::charToString((juce_wchar) 0xe78c); }
         juce::String clearWindowSize() { return juce::String::charToString((juce_wchar) 0xea39); }
         juce::String close()           { return juce::String::charToString((juce_wchar) 0xea39); }
-        juce::String metronome()       { return juce::String::charToString((juce_wchar) 0xe15d); }
         juce::String reset()           { return juce::String::charToString((juce_wchar) 0xe777); }
+        juce::String metronome()       { return juce::String::charToString((juce_wchar) 0xe15d); }
+        juce::String tapTempo()        { return juce::String::charToString((juce_wchar) 0xf271); }
         juce::String add()             { return "+"; }
+        juce::String arrowUp()         { return juce::String::charToString((juce_wchar) 0xe70e); }
+        juce::String arrowDown()       { return juce::String::charToString((juce_wchar) 0xe70d); }
+        juce::String activeTick()      { return juce::String::charToString((juce_wchar) 0xe930); }
+        juce::String bypassCross()     { return juce::String::charToString((juce_wchar) 0xf140); }
     }
 
     namespace Tooltips
@@ -31,8 +36,10 @@ namespace ButtonStyling
         juce::String closeTab()         { return "Close Tab"; }
         juce::String metronome()        { return "Metronome"; }
         juce::String resetTempo()       { return "Reset tempo"; }
-        juce::String tapTempo()         { return "Tap"; }
+        juce::String tapTempo()         { return "Tap Tempo"; }
         juce::String addTab()           { return "New Tab"; }
+        juce::String refreshMidi()      { return "Refresh MIDI Devices"; }
+        juce::String viewTab()          { return "View Tab"; }
         juce::String midiAssignments()  { return "MIDI Assignments"; }
         juce::String toggleBypass()     { return "Toggle Bypass"; }
         juce::String moveUp()           { return "Move Up"; }
@@ -41,13 +48,7 @@ namespace ButtonStyling
 
     namespace Labels
     {
-        juce::String tap()       { return "Tap"; }
         juce::String midi()      { return "MIDI"; }
-        juce::String bypass()    { return "Bypass"; }
-        juce::String active()    { return "Active"; }
-        juce::String bypassed()  { return "Bypassed"; }
-        juce::String up()        { return "Up"; }
-        juce::String down()      { return "Down"; }
         juce::String synth()     { return "Synth"; }
         juce::String fx()        { return "FX"; }
         juce::String empty()     { return "Empty"; }
@@ -64,6 +65,16 @@ namespace ButtonStyling
     }
 
     juce::Colour destructiveBackground()
+    {
+        return juce::Colour(0xFF8B2E2E);
+    }
+
+    juce::Colour bypassActiveBackground()
+    {
+        return juce::Colour(0xFF1E854A);
+    }
+
+    juce::Colour bypassInactiveBackground()
     {
         return juce::Colour(0xFF8B2E2E);
     }
@@ -91,7 +102,17 @@ namespace ButtonStyling
 
     int defaultButtonHeight()
     {
-        return 22;
+        return 29;
+    }
+
+    int defaultButtonWidth()
+    {
+        return 30;
+    }
+
+    float defaultIconSize()
+    {
+        return 16.0f;
     }
 
     juce::Colour backgroundForVariant(Variant variant)
@@ -210,13 +231,15 @@ namespace ButtonStyling
                                          int preferredWidthIn,
                                          std::function<bool()> isActiveProviderIn,
                                          juce::Colour baseColourIn,
-                                         int iconYOffsetIn)
+                                         int iconYOffsetIn,
+                                         float iconFontHeightIn)
         : juce::ToolbarButton(itemId, "", nullptr, nullptr),
           tooltip(tooltipText),
           content(contentText),
           contentType(contentTypeIn),
           preferredWidth(preferredWidthIn),
           iconYOffset(iconYOffsetIn),
+          iconFontHeight(iconFontHeightIn),
           isActiveProvider(std::move(isActiveProviderIn)),
           baseColour(baseColourIn)
     {
@@ -243,9 +266,12 @@ namespace ButtonStyling
                                             int width, int height,
                                             bool isMouseOver, bool isMouseDown)
     {
+        constexpr float verticalGap = 2.0f;
+
         auto area = juce::Rectangle<float>(0.0f, 0.0f, (float) width, (float) height).reduced(2.0f, 0.0f);
         area = area.withHeight((float) defaultButtonHeight())
-                   .withCentre(area.getCentre());
+                   .withCentre(area.getCentre())
+                   .reduced(0.0f, verticalGap);
 
         drawButtonBackground(g,
                              area,
@@ -255,7 +281,7 @@ namespace ButtonStyling
                              isVisuallyActive(),
                              defaultCornerRadius());
     }
-
+    
     void ToolbarIconButton::contentAreaChanged(const juce::Rectangle<int>& newArea)
     {
         contentArea = newArea;
@@ -278,7 +304,7 @@ namespace ButtonStyling
                      content,
                      contentBounds,
                      isVisuallyActive(),
-                     18.0f,
+                     iconFontHeight,
                      iconYOffset);
         }
         else
@@ -312,20 +338,31 @@ namespace ButtonStyling
     {
         auto area = getLocalBounds().toFloat().reduced(0.5f);
 
+        auto drawColour = baseColour;
+        const bool enabled = isEnabled();
+
+        if (! enabled)
+            drawColour = drawColour.withAlpha(0.5f);
+
         drawButtonBackground(g,
                              area,
-                             baseColour,
-                             isMouseOverButton,
-                             isButtonDown,
+                             drawColour,
+                             enabled ? isMouseOverButton : false,
+                             enabled ? isButtonDown : false,
                              false,
                              cornerRadius);
 
-        drawIcon(g,
-                 glyph,
-                 getLocalBounds(),
-                 false,
-                 iconFontHeight,
-                 iconYOffset);
+        auto iconColour = textColour(false);
+
+        if (! enabled)
+            iconColour = iconColour.withAlpha(0.5f);
+
+        g.setColour(iconColour);
+        g.setFont(iconFont(iconFontHeight));
+        g.drawFittedText(glyph,
+                         getLocalBounds().translated(0, iconYOffset),
+                         juce::Justification::centred,
+                         1);
     }
 
     RoundedTextButtonLookAndFeel::RoundedTextButtonLookAndFeel(float cornerRadiusIn)
@@ -378,6 +415,67 @@ namespace ButtonStyling
 
         g.drawFittedText(button.getButtonText(),
                          button.getLocalBounds().reduced(6, 2),
+                         juce::Justification::centred,
+                         1);
+    }
+
+    StatusIconButton::StatusIconButton(const juce::String& activeGlyphText,
+                                       const juce::String& inactiveGlyphText,
+                                       juce::Colour activeColourIn,
+                                       juce::Colour inactiveColourIn,
+                                       float cornerRadiusIn,
+                                       float iconFontHeightIn,
+                                       int iconYOffsetIn)
+        : juce::Button("StatusIconButton"),
+          activeGlyph(activeGlyphText),
+          inactiveGlyph(inactiveGlyphText),
+          activeColour(activeColourIn),
+          inactiveColour(inactiveColourIn),
+          cornerRadius(cornerRadiusIn),
+          iconFontHeight(iconFontHeightIn),
+          iconYOffset(iconYOffsetIn)
+    {
+    }
+
+    void StatusIconButton::setVisualState(bool shouldShowActiveState)
+    {
+        if (visualStateActive == shouldShowActiveState)
+            return;
+
+        visualStateActive = shouldShowActiveState;
+        repaint();
+    }
+
+    void StatusIconButton::paintButton(juce::Graphics& g,
+                                       bool isMouseOverButton,
+                                       bool isButtonDown)
+    {
+        auto area = getLocalBounds().toFloat().reduced(0.5f);
+
+        auto baseColour = visualStateActive ? activeColour
+                                            : inactiveColour;
+
+        if (! isEnabled())
+            baseColour = baseColour.withAlpha(0.5f);
+
+        drawButtonBackground(g,
+                             area,
+                             baseColour,
+                             isEnabled() ? isMouseOverButton : false,
+                             isEnabled() ? isButtonDown : false,
+                             false,
+                             cornerRadius);
+
+        auto iconColour = textColour(false);
+
+        if (! isEnabled())
+            iconColour = iconColour.withAlpha(0.5f);
+
+        g.setColour(iconColour);
+        g.setFont(iconFont(iconFontHeight));
+
+        g.drawFittedText(visualStateActive ? activeGlyph : inactiveGlyph,
+                         getLocalBounds().translated(0, iconYOffset),
                          juce::Justification::centred,
                          1);
     }
