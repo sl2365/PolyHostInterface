@@ -15,8 +15,13 @@ public:
     juce::AudioProcessorGraph::NodeID addPlugin(std::unique_ptr<juce::AudioPluginInstance> instance, bool isSynth);
     void removePlugin(juce::AudioProcessorGraph::NodeID nodeId);
 
-    void setRoutingState(const juce::Array<juce::AudioProcessorGraph::NodeID>& synthIds,
-                         const juce::Array<juce::AudioProcessorGraph::NodeID>& fxIds);
+    struct RoutingEntry
+    {
+        juce::AudioProcessorGraph::NodeID nodeId;
+        bool isSynth = false;
+    };
+
+    void setRoutingState(const juce::Array<RoutingEntry>& orderedEntries);
 
     void queueMidiToNodes(const juce::MidiMessage& message,
                           const juce::Array<juce::AudioProcessorGraph::NodeID>& targetNodeIds);
@@ -204,6 +209,7 @@ private:
     juce::AudioProcessorGraph::Node::Ptr audioOutNode;
     juce::Array<juce::AudioProcessorGraph::Node::Ptr> synthNodes;
     juce::Array<juce::AudioProcessorGraph::Node::Ptr> fxNodes;
+    juce::Array<RoutingEntry> orderedRoutingEntries;
     juce::Array<MidiRoutingNode> midiRoutingNodes;
 
     std::atomic<float> inputMeterLevelL { 0.0f };

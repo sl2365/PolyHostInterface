@@ -181,22 +181,27 @@ void AudioEngine::removePlugin(juce::AudioProcessorGraph::NodeID nodeId)
     rebuildConnections();
 }
 
-void AudioEngine::setRoutingState(const juce::Array<juce::AudioProcessorGraph::NodeID>& synthIds,
-                                  const juce::Array<juce::AudioProcessorGraph::NodeID>& fxIds)
+void AudioEngine::setRoutingState(const juce::Array<RoutingEntry>& orderedEntries)
 {
     juce::Array<juce::AudioProcessorGraph::Node::Ptr> reorderedSynths;
     juce::Array<juce::AudioProcessorGraph::Node::Ptr> reorderedFx;
 
-    for (auto id : synthIds)
-        if (auto* n = graph.getNodeForId(id))
-            reorderedSynths.add(n);
-
-    for (auto id : fxIds)
-        if (auto* n = graph.getNodeForId(id))
-            reorderedFx.add(n);
+    for (auto& entry : orderedEntries)
+    {
+        if (auto* n = graph.getNodeForId(entry.nodeId))
+        {
+            if (entry.isSynth)
+                reorderedSynths.add(n);
+            else
+                reorderedFx.add(n);
+        }
+    }
 
     synthNodes = reorderedSynths;
     fxNodes = reorderedFx;
+
+    orderedRoutingEntries = orderedEntries;
+
     updateNodePlayHeads();
     rebuildConnections();
 }
@@ -375,7 +380,7 @@ void AudioEngine::rebuildConnections()
     auto* outputMeterProc = outputMeterNode != nullptr ? outputMeterNode->getProcessor() : nullptr;
     auto* audioOutProc = audioOutNode != nullptr ? audioOutNode->getProcessor() : nullptr;
 
-    if (synthNodes.isEmpty())
+    if (orderedRoutingEntries.isEmpty())
     {
         if (inputMeterNode != nullptr && outputMeterNode != nullptr)
         {
@@ -389,47 +394,93 @@ void AudioEngine::rebuildConnections()
         return;
     }
 
-    if (!fxNodes.isEmpty())
-    {
-        auto firstFxNode = fxNodes.getFirst();
+    bool madeAnySynthConnection = false;
 
-        for (auto& synthNode : synthNodes)
+    for (int i = 0; i < orderedRoutingEntries.size(); ++i)
+    {
+        const auto& entry = orderedRoutingEntries.getReference(i);
+
+        if (!entry.isSynth)
+            continue;
+
+        auto* synthNode = graph.getNodeForId(entry.nodeId);
+        if (synthNode == nullptr || synthNode->getProcessor() == nullptr)
+            continue;
+
+        juce::AudioProcessorGraph::Node::Ptr downstreamTarget = nullptr;
+
+        for (int j = i + 1; j < orderedRoutingEntries.size(); ++j)
+        {
+            const auto& downstreamEntry = orderedRoutingEntries.getReference(j);
+
+            if (downstreamEntry.isSynth)
+                continue;
+
+            downstreamTarget = graph.getNodeForId(downstreamEntry.nodeId);
+            if (downstreamTarget != nullptr && downstreamTarget->getProcessor() != nullptr)
+                break;
+
+            downstreamTarget = nullptr;
+        }
+
+        if (downstreamTarget != nullptr)
         {
             connectAudioChannels(synthNode->nodeID, synthNode->getProcessor(),
-                                 inputMeterNode->nodeID, inputMeterProc);
+                                 downstreamTarget->nodeID, downstreamTarget->getProcessor());
         }
-
-        connectAudioChannels(inputMeterNode->nodeID, inputMeterProc,
-                             firstFxNode->nodeID, firstFxNode->getProcessor());
-
-        for (int i = 0; i < fxNodes.size() - 1; ++i)
+        else
         {
-            auto src = fxNodes[i];
-            auto dst = fxNodes[i + 1];
-
-            connectAudioChannels(src->nodeID, src->getProcessor(),
-                                 dst->nodeID, dst->getProcessor());
+            connectAudioChannels(synthNode->nodeID, synthNode->getProcessor(),
+                                 outputMeterNode->nodeID, outputMeterProc);
         }
 
-        auto lastFxNode = fxNodes.getLast();
-
-        connectAudioChannels(lastFxNode->nodeID, lastFxNode->getProcessor(),
-                             outputMeterNode->nodeID, outputMeterProc);
-
-        connectAudioChannels(outputMeterNode->nodeID, outputMeterProc,
-                             audioOutNode->nodeID, audioOutProc);
-
-        return;
+        madeAnySynthConnection = true;
     }
 
-    for (auto& synthNode : synthNodes)
+    for (int i = 0; i < orderedRoutingEntries.size(); ++i)
     {
-        connectAudioChannels(synthNode->nodeID, synthNode->getProcessor(),
-                             inputMeterNode->nodeID, inputMeterProc);
+        const auto& entry = orderedRoutingEntries.getReference(i);
+
+        if (entry.isSynth)
+            continue;
+
+        auto* fxNode = graph.getNodeForId(entry.nodeId);
+        if (fxNode == nullptr || fxNode->getProcessor() == nullptr)
+            continue;
+
+        juce::AudioProcessorGraph::Node::Ptr nextFxNode = nullptr;
+
+        for (int j = i + 1; j < orderedRoutingEntries.size(); ++j)
+        {
+            const auto& downstreamEntry = orderedRoutingEntries.getReference(j);
+
+            if (downstreamEntry.isSynth)
+                continue;
+
+            nextFxNode = graph.getNodeForId(downstreamEntry.nodeId);
+            if (nextFxNode != nullptr && nextFxNode->getProcessor() != nullptr)
+                break;
+
+            nextFxNode = nullptr;
+        }
+
+        if (nextFxNode != nullptr)
+        {
+            connectAudioChannels(fxNode->nodeID, fxNode->getProcessor(),
+                                 nextFxNode->nodeID, nextFxNode->getProcessor());
+        }
+        else
+        {
+            connectAudioChannels(fxNode->nodeID, fxNode->getProcessor(),
+                                 outputMeterNode->nodeID, outputMeterProc);
+        }
     }
 
-    connectAudioChannels(inputMeterNode->nodeID, inputMeterProc,
-                         outputMeterNode->nodeID, outputMeterProc);
+    if (!madeAnySynthConnection)
+    {
+        connectAudioChannels(inputMeterNode->nodeID, inputMeterProc,
+                             outputMeterNode->nodeID, outputMeterProc);
+    }
 
     connectAudioChannels(outputMeterNode->nodeID, outputMeterProc,
                          audioOutNode->nodeID, audioOutProc);

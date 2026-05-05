@@ -60,6 +60,7 @@ public:
     juce::Rectangle<int> getSavedWindowBounds() const;
 
     std::function<void(const juce::File&)> onOpenDroppedPluginInNewTab;
+    std::function<void()> onPluginLoadedDirectly;
 
     void resized() override;
     void paint(juce::Graphics& g) override;

@@ -17,6 +17,7 @@ static constexpr const char* kIdentifierAttribute           = "identifier";
 static constexpr const char* kNameAttribute                 = "name";
 static constexpr const char* kDebugLoggingEnabled           = "debugLoggingEnabled";
 static constexpr const char* kAdvancedDebugLoggingEnabled   = "advancedDebugLoggingEnabled";
+static constexpr const char* kClearDebugLogOnStartup        = "clearDebugLogOnStartup";
 static constexpr auto kLastPresetPath   = "lastPresetPath";
 static constexpr auto kRecentPresets    = "recentPresets";
 static constexpr auto kWindowX              = "windowX";
@@ -26,7 +27,7 @@ static constexpr auto kRoutingWindowHeight  = "routingWindowHeight";
 
 bool AppSettings::getDebugLoggingEnabled() const
 {
-    return xml->getBoolAttribute(kDebugLoggingEnabled, true);
+    return xml->getBoolAttribute(kDebugLoggingEnabled, false);
 }
 
 void AppSettings::setDebugLoggingEnabled(bool shouldEnable)
@@ -40,9 +41,20 @@ bool AppSettings::getAdvancedDebugLoggingEnabled() const
     return xml->getBoolAttribute(kAdvancedDebugLoggingEnabled, false);
 }
 
+bool AppSettings::getClearDebugLogOnStartup() const
+{
+    return xml->getBoolAttribute(kClearDebugLogOnStartup, true);
+}
+
 void AppSettings::setAdvancedDebugLoggingEnabled(bool shouldEnable)
 {
     xml->setAttribute(kAdvancedDebugLoggingEnabled, shouldEnable);
+    save();
+}
+
+void AppSettings::setClearDebugLogOnStartup(bool shouldClear)
+{
+    xml->setAttribute(kClearDebugLogOnStartup, shouldClear);
     save();
 }
 

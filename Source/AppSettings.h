@@ -13,6 +13,9 @@ public:
     bool getAdvancedDebugLoggingEnabled() const;
     void setAdvancedDebugLoggingEnabled(bool shouldEnable);
 
+    bool getClearDebugLogOnStartup() const;
+    void setClearDebugLogOnStartup(bool shouldClear);
+
     AppSettings();
     void load();
     void save();

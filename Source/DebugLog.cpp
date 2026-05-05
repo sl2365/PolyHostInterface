@@ -11,7 +11,7 @@ juce::File DebugLog::getLogFile()
         .getChildFile("Settings");
 
     settingsDir.createDirectory();
-    return settingsDir.getChildFile("polyhost.log");
+    return settingsDir.getChildFile("debug.log");
 }
 
 void DebugLog::setEnabled(bool shouldEnable)

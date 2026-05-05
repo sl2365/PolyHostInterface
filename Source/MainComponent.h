@@ -283,6 +283,7 @@ private:
     void addEmptyTab();
     void rebuildVisibleTabs();
     void refreshTabAppearance(int tabIndex);
+    void handleSuccessfulPluginLoadIntoTab(int tabIndex, bool markDirtyAfterLoad);
     bool handleDroppedPluginFile(const juce::File& file, int targetTabIndex);
     void browseAndLoadPluginInCurrentTab();
     void browseAndLoadPluginInNewTab();
@@ -297,6 +298,9 @@ private:
     int getTabIndexForComponent(const PluginTabComponent* component) const;
     void changeListenerCallback(juce::ChangeBroadcaster* source) override;
     void closeCurrentTab();
+    bool closeTabAt(int tabIndex);
+    bool clearTabAt(int tabIndex);
+    void removeTabAt(int tabIndex);
     void showTabContextMenu(int tabIndex);
     bool confirmCloseTab(int tabIndex) const;
     bool confirmClearTab(int tabIndex) const;
@@ -363,6 +367,7 @@ private:
     bool confirmRevertCurrentPreset() const;
     void revertCurrentPreset();
     void clearAllPlugins();
+    void resetAllTabsAndRouting();
     bool writePresetToFile(const juce::File& file);
     void updateWindowTitle();
     void rebuildTabsFromPresetXml(const juce::XmlElement& presetXml);

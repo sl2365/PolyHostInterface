@@ -13,7 +13,7 @@ I always liked tools like TobyBear's MiniHost, SaviHost and Tone2's NanoHost. Bu
 | VST3 x64 | ✅ Working |
 | CLAP x64 | ✅ Working - May be buggy - Requires CLAP SDK — see below |
 | VST2 x64 | ✅ Working - Requires Steinberg VST2 SDK — see below |
-| VST2/VST3 **32-bit** in 64-bit host | 🔴 Needs plugin bridge — see below - planned |
+| VST2 **32-bit** in 64-bit host | 🔴 Needs plugin bridge — see below - planned |
 | MIDI 1.0 | ✅ Working |
 | MIDI 2.0 (Windows MIDI Services) | ⚠️ Requires JUCE 8+ and Windows 11 - planned |
 | Tabbed interface (Synth: parallel + FX: serial) | ✅ Working |
@@ -54,10 +54,10 @@ PolyHost\                        ← your project root
 │	   	└── CMakeLists.txt
 │
 │
-├── dist\                        ← build output — PolyHost.exe lands here
-└── [PolyHost.exe]\
+├── dist\                        ← build output — PolyHostInterface.exe lands here
+└── [PolyHostInterface.exe]\
     └── Settings\                ← created at runtime, settings stored here
-        └── polyhost.xml
+        └── settings.xml
 ```
 
 ## Build Setup (one-time)
@@ -76,13 +76,13 @@ Extract so the result is: tools\cmake\bin\cmake.exe
 Double-click build.bat from the project root.
 First run downloads JUCE automatically (needs internet).
 After that, builds are fully offline.
-The finished exe appears in dist\PolyHost.exe
+The finished exe appears in dist\PolyHostInterface.exe
 
 ## Opening a Plugin
 
 1. Right-click any .vst2, .vst3 or .clap file in File Explorer
 2. Open with > Choose another app
-3. Browse to PolyHost.exe
+3. Browse to PolyHostInterface.exe
 4. Tick "Always use this app" if you want it permanent
 
 ## VST2 Support
@@ -96,16 +96,20 @@ Download clap-main here: https://github.com/free-audio/clap
 Install to tools/clap/CMakeLists.txt
 
 ## Audio Routing
-
-    MIDI Device
-         |
-    [Synth Tab 1] --+
-    [Synth Tab 2] --+  (summed)
+```
+MIDI Device
+|
+├── [Synth Tab 1] --+
+├── [Synth Tab 2] --+  (summed)
+|                   |
+|              [FX Tab 1]
+|                   |
+|              [FX Tab 2]
+|                   |
+└── [Synth Tab 3] --+  (only passes through FX below, bypasses any above)
                     |
-              [FX Tab 1]
+              [FX Tab 3]
                     |
-              [FX Tab 2]  ...
-                    |
-              [Audio Out]
-
+              [Audio Out]  ->  Output meter
+```
 The synths always wired in parallel. FX are in series and routing can be modified by entering the Routing page. Click the Routing toolbar button and a list of all tabs appears, use Up and Down buttons to manage the processing order.

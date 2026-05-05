@@ -68,7 +68,7 @@ public:
 
     juce::String buildWindowTitle() const
     {
-        juce::String title = "PolyHost - " + getDisplayName();
+        juce::String title = "PolyHostInterface - " + getDisplayName();
 
         if (dirty)
             title += " *";

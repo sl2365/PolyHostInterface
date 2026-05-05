@@ -16,7 +16,13 @@ PluginTabComponent::PluginTabComponent(AudioEngine& engine, int index)
     {
         juce::FileChooser chooser("Open Plugin", juce::File(), "*.vst3;*.dll;*.clap");
         if (chooser.browseForFileToOpen())
-            loadPlugin(chooser.getResult());
+        {
+            if (loadPlugin(chooser.getResult()))
+            {
+                if (onPluginLoadedDirectly)
+                    onPluginLoadedDirectly();
+            }
+        }
     };
 
     addAndMakeVisible(statusLabel);
@@ -397,8 +403,12 @@ void PluginTabComponent::showPluginEditor()
         {
             clap->refreshEmbeddedGuiSize();
             auto guiSize = clap->getEmbeddedGuiSize();
-            w = guiSize.getWidth();
-            h = guiSize.getHeight();
+
+            if (guiSize.getWidth() > 0)
+                w = guiSize.getWidth();
+
+            if (guiSize.getHeight() > 0)
+                h = guiSize.getHeight();
         }
 
         preferredEditorBounds = { 0, 0, w, h };
@@ -504,7 +514,12 @@ void PluginTabComponent::filesDropped(const juce::StringArray& files, int, int)
 
         if (!hasPlugin())
         {
-            loadPlugin(file);
+            if (loadPlugin(file))
+            {
+                if (onPluginLoadedDirectly)
+                    onPluginLoadedDirectly();
+            }
+
             break;
         }
 
@@ -536,7 +551,11 @@ void PluginTabComponent::filesDropped(const juce::StringArray& files, int, int)
         }
         else if (result == 2)
         {
-            loadPlugin(file);
+            if (loadPlugin(file))
+            {
+                if (onPluginLoadedDirectly)
+                    onPluginLoadedDirectly();
+            }
         }
 
         break;

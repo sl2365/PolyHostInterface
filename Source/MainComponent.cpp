@@ -136,7 +136,7 @@ namespace
     public:
         AboutDialogContent()
         {
-            titleLabel.setText("PolyHost", juce::dontSendNotification);
+            titleLabel.setText("PolyHostInterface", juce::dontSendNotification);
             titleLabel.setJustificationType(juce::Justification::centred);
             titleLabel.setFont(juce::Font(juce::FontOptions(24.0f, juce::Font::bold)));
             titleLabel.setColour(juce::Label::textColourId, juce::Colours::white);
@@ -147,7 +147,7 @@ namespace
             versionLabel.setColour(juce::Label::textColourId, juce::Colours::lightgrey);
             addAndMakeVisible(versionLabel);
 
-            infoLabel.setText("A lightweight tabbed plugin host for VST3 and CLAP.\nBuilt with JUCE.\n\nVST2 and 32-bit bridging planned.",
+            infoLabel.setText("A lightweight tabbed plugin host for:\nVST2, VST3 and CLAP.\nBuilt with JUCE.\n\nVST2 32-bit bridging planned.",
                               juce::dontSendNotification);
             infoLabel.setJustificationType(juce::Justification::centred);
             infoLabel.setColour(juce::Label::textColourId, juce::Colours::lightgrey);
@@ -254,6 +254,10 @@ MainComponent::MainComponent()
 {
     DebugLog::setEnabled(settings.getDebugLoggingEnabled());
     DebugLog::setAdvancedEnabled(settings.getAdvancedDebugLoggingEnabled());
+
+    if (settings.getClearDebugLogOnStartup())
+        DebugLog::clear();
+
     DebugLog::write("MainComponent startup");
 
     setSize(AppSettings::defaultWindowWidth, AppSettings::defaultWindowHeight);
@@ -319,7 +323,7 @@ MainComponent::MainComponent()
         standaloneTempoSupport.setDefaultTempoBpm(bpm);
         standaloneTempoSupport.refreshTempoStrip();
 
-        statusBar.setText("PolyHost 0.1  |  Default BPM set to " + juce::String(bpm, 1),
+        statusBar.setText("PolyHostInterface  |  Default BPM set to " + juce::String(bpm, 1),
                           juce::dontSendNotification);
 
         auto safe = juce::Component::SafePointer<MainComponent>(this);
@@ -367,51 +371,7 @@ MainComponent::MainComponent()
 
     routingView.onCloseTab = [this](int tabIndex)
     {
-        if (!juce::isPositiveAndBelow(tabIndex, tabs.getNumTabs()))
-            return;
-
-        if (!confirmCloseTab(tabIndex))
-            return;
-
-        if (tabIndex == tabs.getCurrentTabIndex())
-        {
-            closeCurrentTab();
-            return;
-        }
-
-        if (tabs.getNumTabs() == 1)
-        {
-            if (auto* tc = getTabComponent(tabIndex))
-            {
-                tc->clearSavedWindowBounds();
-                tc->clearPlugin();
-                refreshTabAppearance(tabIndex);
-                refreshRoutingView();
-                unresolvedMissingPlugins.clear();
-                markSessionDirty();
-            }
-            return;
-        }
-
-        if (auto* tc = getTabComponent(tabIndex))
-            tc->removeChangeListener(this);
-
-        auto currentIndex = tabs.getCurrentTabIndex();
-
-        tabs.removeTab(tabIndex);
-
-        if (tabIndex < currentIndex)
-            --currentIndex;
-
-        currentIndex = juce::jlimit(0, tabs.getNumTabs() - 1, currentIndex);
-        tabs.setCurrentTabIndex(currentIndex);
-
-        for (int i = 0; i < tabs.getNumTabs(); ++i)
-            refreshTabAppearance(i);
-
-        handleCurrentTabChanged();
-        unresolvedMissingPlugins.clear();
-        markSessionDirty();
+        closeTabAt(tabIndex);
     };
 
     routingView.onSelectTab = [this](int tabIndex)
@@ -447,7 +407,7 @@ MainComponent::MainComponent()
 
     if (!openNames.isEmpty())
     {
-        statusBar.setText("PolyHost 0.1  |  MIDI: " + openNames.joinIntoString(", ") + "  |  Ready",
+        statusBar.setText("PolyHostInterface  |  MIDI: " + openNames.joinIntoString(", ") + "  |  Ready",
                           juce::dontSendNotification);
     }
     else
@@ -457,12 +417,12 @@ MainComponent::MainComponent()
         if (legacySavedMidiDevice.isNotEmpty())
         {
             midiEngine.openDevice(legacySavedMidiDevice);
-            statusBar.setText("PolyHost 0.1  |  MIDI: " + midiEngine.getCurrentDeviceName() + "  |  Ready",
+            statusBar.setText("PolyHostInterface  |  MIDI: " + midiEngine.getCurrentDeviceName() + "  |  Ready",
                               juce::dontSendNotification);
         }
         else
         {
-            statusBar.setText("PolyHost 0.1  |  No MIDI device selected  |  Ready",
+            statusBar.setText("PolyHostInterface  |  No MIDI device selected  |  Ready",
                               juce::dontSendNotification);
         }
     }
@@ -471,7 +431,7 @@ MainComponent::MainComponent()
     {
         juce::Array<juce::AudioProcessorGraph::NodeID> targetNodeIds;
 
-        for (int i = 0; i < tabs.getNumTabs(); ++i)
+        for (int i = 0; i < pluginTabs.size(); ++i)
         {
             auto* tc = getTabComponent(i);
             if (tc == nullptr || !tc->hasPlugin())
@@ -527,7 +487,7 @@ SessionData MainComponent::buildSessionData() const
     session.name = sessionDocument.getDisplayName();
     session.hostTempoBpm = standaloneTempoSupport.getHostTempoBpm();
 
-    for (int i = 0; i < tabs.getNumTabs(); ++i)
+    for (int i = 0; i < pluginTabs.size(); ++i)
     {
         if (auto* tc = getTabComponent(i))
         {
@@ -581,15 +541,7 @@ void MainComponent::applySessionData(const SessionData& session,
                                      juce::StringArray& loadErrors,
                                      juce::Array<MissingPluginEntry>& missingPlugins)
 {
-    for (int i = 0; i < pluginTabs.size(); ++i)
-        if (auto* tc = pluginTabs[i])
-            tc->removeChangeListener(this);
-
-    while (tabs.getNumTabs() > 0)
-        tabs.removeTab(tabs.getNumTabs() - 1);
-
-    pluginTabs.clear();
-    midiRoutingStates.clear();
+    resetAllTabsAndRouting();
 
     standaloneTempoSupport.setDefaultTempoBpm(session.hostTempoBpm);
     standaloneTempoSupport.setHostTempoBpm(session.hostTempoBpm);
@@ -727,7 +679,7 @@ void MainComponent::changeListenerCallback(juce::ChangeBroadcaster* source)
         return;
     }
 
-    for (int i = 0; i < tabs.getNumTabs(); ++i)
+    for (int i = 0; i < pluginTabs.size(); ++i)
     {
         if (auto* tc = getTabComponent(i))
         {
@@ -762,7 +714,7 @@ void MainComponent::changeListenerCallback(juce::ChangeBroadcaster* source)
                     {
                         bool anyTabDiffers = false;
 
-                        for (int tabIndex = 0; tabIndex < tabs.getNumTabs(); ++tabIndex)
+                        for (int tabIndex = 0; tabIndex < pluginTabs.size(); ++tabIndex)
                         {
                             if (auto* otherTab = getTabComponent(tabIndex))
                             {
@@ -791,9 +743,34 @@ void MainComponent::updateWindowTitle()
         top->setName(sessionDocument.buildWindowTitle());
 }
 
+void MainComponent::handleSuccessfulPluginLoadIntoTab(int tabIndex, bool markDirtyAfterLoad)
+{
+    if (!juce::isPositiveAndBelow(tabIndex, pluginTabs.size()))
+        return;
+
+    tabs.setCurrentTabIndex(tabIndex);
+    autoAssignGlobalMidiToTabIfAppropriate(tabIndex);
+    refreshTabAppearance(tabIndex);
+    syncRoutingToAudioEngine();
+    refreshRoutingView();
+
+    if (auto* tc = getTabComponent(tabIndex))
+    {
+        tc->resized();
+        tc->repaint();
+    }
+
+    resized();
+    handleCurrentTabChanged();
+    resizeWindowToFitCurrentTab();
+
+    if (markDirtyAfterLoad)
+        markSessionDirty();
+}
+
 void MainComponent::loadPluginFromFile(const juce::File& file)
 {
-    for (int i = 0; i < tabs.getNumTabs(); ++i)
+    for (int i = 0; i < pluginTabs.size(); ++i)
     {
         if (auto* tc = getTabComponent(i))
         {
@@ -801,10 +778,7 @@ void MainComponent::loadPluginFromFile(const juce::File& file)
             {
                 if (tc->loadPlugin(file))
                 {
-                    tabs.setCurrentTabIndex(i);
-                    autoAssignGlobalMidiToTabIfAppropriate(i);
-                    refreshTabAppearance(i);
-                    handleCurrentTabChanged();
+                    handleSuccessfulPluginLoadIntoTab(i, false);
 
                     suppressDirtyForSinglePluginQuickOpen = (getLoadedPluginTabCount() <= 1);
 
@@ -824,10 +798,7 @@ void MainComponent::loadPluginFromFile(const juce::File& file)
     {
         if (tc->loadPlugin(file))
         {
-            tabs.setCurrentTabIndex(tabs.getNumTabs() - 1);
-            autoAssignGlobalMidiToTabIfAppropriate(tabs.getNumTabs() - 1);
-            refreshTabAppearance(tabs.getNumTabs() - 1);
-            handleCurrentTabChanged();
+            handleSuccessfulPluginLoadIntoTab(tabs.getNumTabs() - 1, false);
 
             suppressDirtyForSinglePluginQuickOpen = (getLoadedPluginTabCount() <= 1);
 
@@ -861,15 +832,7 @@ void MainComponent::browseAndLoadPluginInCurrentTab()
     if (auto* tc = getTabComponent(currentIndex))
     {
         if (tc->loadPlugin(file))
-        {
-            tabs.setCurrentTabIndex(currentIndex);
-            autoAssignGlobalMidiToTabIfAppropriate(currentIndex);
-            refreshTabAppearance(currentIndex);
-            syncRoutingToAudioEngine();
-            refreshRoutingView();
-            handleCurrentTabChanged();
-            markSessionDirty();
-        }
+            handleSuccessfulPluginLoadIntoTab(currentIndex, true);
     }
 }
 
@@ -924,13 +887,7 @@ bool MainComponent::loadDroppedPluginInNewTab(const juce::File& file)
     {
         if (newTab->loadPlugin(file))
         {
-            tabs.setCurrentTabIndex(newTabIndex);
-            autoAssignGlobalMidiToTabIfAppropriate(newTabIndex);
-            refreshTabAppearance(newTabIndex);
-            syncRoutingToAudioEngine();
-            refreshRoutingView();
-            handleCurrentTabChanged();
-            markSessionDirty();
+            handleSuccessfulPluginLoadIntoTab(newTabIndex, true);
             return true;
         }
     }
@@ -954,13 +911,7 @@ bool MainComponent::handleDroppedPluginFile(const juce::File& file, int targetTa
     {
         if (targetTab->loadPlugin(file))
         {
-            tabs.setCurrentTabIndex(targetTabIndex);
-            autoAssignGlobalMidiToTabIfAppropriate(targetTabIndex);
-            refreshTabAppearance(targetTabIndex);
-            syncRoutingToAudioEngine();
-            refreshRoutingView();
-            handleCurrentTabChanged();
-            markSessionDirty();
+            handleSuccessfulPluginLoadIntoTab(targetTabIndex, true);
             return true;
         }
 
@@ -976,13 +927,7 @@ bool MainComponent::handleDroppedPluginFile(const juce::File& file, int targetTa
     {
         if (targetTab->loadPlugin(file))
         {
-            tabs.setCurrentTabIndex(targetTabIndex);
-            autoAssignGlobalMidiToTabIfAppropriate(targetTabIndex);
-            refreshTabAppearance(targetTabIndex);
-            syncRoutingToAudioEngine();
-            refreshRoutingView();
-            handleCurrentTabChanged();
-            markSessionDirty();
+            handleSuccessfulPluginLoadIntoTab(targetTabIndex, true);
             return true;
         }
     }
@@ -1021,11 +966,23 @@ void MainComponent::configurePluginTabComponent(PluginTabComponent& tabComponent
 {
     tabComponent.onOpenDroppedPluginInNewTab = [this, &tabComponent](const juce::File& file)
     {
-        for (int i = 0; i < tabs.getNumTabs(); ++i)
+        for (int i = 0; i < pluginTabs.size(); ++i)
         {
             if (getTabComponent(i) == &tabComponent)
             {
                 handleDroppedPluginFile(file, i);
+                return;
+            }
+        }
+    };
+
+    tabComponent.onPluginLoadedDirectly = [this, &tabComponent]
+    {
+        for (int i = 0; i < pluginTabs.size(); ++i)
+        {
+            if (getTabComponent(i) == &tabComponent)
+            {
+                handleSuccessfulPluginLoadIntoTab(i, true);
                 return;
             }
         }
@@ -1106,7 +1063,7 @@ void MainComponent::refreshTabAppearance(int index)
 int MainComponent::countTabsOfType(PluginTabComponent::SlotType type) const
 {
     int count = 0;
-    for (int i = 0; i < tabs.getNumTabs(); ++i)
+    for (int i = 0; i < pluginTabs.size(); ++i)
         if (auto* tc = getTabComponent(i)) if (tc->getType() == type) ++count;
     return count;
 }
@@ -1115,7 +1072,7 @@ int MainComponent::getLoadedPluginTabCount() const
 {
     int count = 0;
 
-    for (int i = 0; i < tabs.getNumTabs(); ++i)
+    for (int i = 0; i < pluginTabs.size(); ++i)
     {
         if (auto* tc = getTabComponent(i))
         {
@@ -1358,6 +1315,7 @@ juce::PopupMenu MainComponent::getMenuForIndex(int index, const juce::String&)
         }
         case 3: menu.addItem(401, "Record Audio...  [TODO]"); menu.addItem(402, "Record MIDI...  [TODO]"); break;
         case 4:
+        {
             menu.addItem(501,
                          "Auto-Save Preset After Plugin Repair",
                          true,
@@ -1368,17 +1326,26 @@ juce::PopupMenu MainComponent::getMenuForIndex(int index, const juce::String&)
             menu.addItem(504, "Clear Plugin Scan Folders",
                          settings.getPluginScanFolders().size() > 0);
             menu.addSeparator();
-            menu.addItem(505,
-                         "Enable Debug Logging",
-                         true,
-                         settings.getDebugLoggingEnabled());
-            menu.addItem(507,
-                         "Enable Advanced Debug Logging",
-                         settings.getDebugLoggingEnabled(),
-                         settings.getAdvancedDebugLoggingEnabled());
-            menu.addItem(506, "Clear Debug Log");
+
+            juce::PopupMenu debugMenu;
+            debugMenu.addItem(505,
+                              "Enable Debug Logging",
+                              true,
+                              settings.getDebugLoggingEnabled());
+            debugMenu.addItem(507,
+                              "Enable Advanced Debug Logging",
+                              settings.getDebugLoggingEnabled(),
+                              settings.getAdvancedDebugLoggingEnabled());
+            debugMenu.addItem(506,
+                              "Clear Debug Log On Startup",
+                              true,
+                              settings.getClearDebugLogOnStartup());
+            debugMenu.addItem(508, "Clear Debug Log Now");
+
+            menu.addSubMenu("Debug", debugMenu);
             break;
-        case 5: menu.addItem(601, "About PolyHost"); break;
+        }
+        case 5: menu.addItem(601, "About PolyHostInterface"); break;
         default: break;
     }
     return menu;
@@ -1420,7 +1387,7 @@ void MainComponent::menuItemSelected(int itemId, int)
             if (openNames.isEmpty())
             {
                 statusBar.setText(
-                    "PolyHost 0.1  |  No MIDI device selected  |  Ready",
+                    "PolyHostInterface  |  No MIDI device selected  |  Ready",
                     juce::dontSendNotification);
                 settings.setMidiDeviceName({});
                 settings.setEnabledMidiDeviceIdentifiers({});
@@ -1428,7 +1395,7 @@ void MainComponent::menuItemSelected(int itemId, int)
             else
             {
                 statusBar.setText(
-                    "PolyHost 0.1  |  MIDI: " + openNames.joinIntoString(", ") + "  |  Ready",
+                    "PolyHostInterface  |  MIDI: " + openNames.joinIntoString(", ") + "  |  Ready",
                     juce::dontSendNotification);
 
                 settings.setMidiDeviceName(openNames[0]); // legacy compatibility
@@ -1569,6 +1536,12 @@ void MainComponent::menuItemSelected(int itemId, int)
             break;
         }
         case 506:
+        {
+            auto shouldClear = !settings.getClearDebugLogOnStartup();
+            settings.setClearDebugLogOnStartup(shouldClear);
+            break;
+        }
+        case 508:
             DebugLog::clear();
             DebugLog::write("Debug log cleared");
             break;
@@ -1580,17 +1553,24 @@ void MainComponent::menuItemSelected(int itemId, int)
     }
 }
 
-void MainComponent::clearAllPlugins()
+void MainComponent::resetAllTabsAndRouting()
 {
     for (int i = 0; i < pluginTabs.size(); ++i)
+    {
         if (auto* tc = pluginTabs[i])
             tc->removeChangeListener(this);
+    }
 
     while (tabs.getNumTabs() > 0)
         tabs.removeTab(tabs.getNumTabs() - 1);
 
     pluginTabs.clear();
     midiRoutingStates.clear();
+}
+
+void MainComponent::clearAllPlugins()
+{
+    resetAllTabsAndRouting();
     refreshRoutingView();
     syncRoutingToAudioEngine();
     markSessionDirty();
@@ -1602,7 +1582,7 @@ void MainComponent::showAboutDialog()
 
     juce::DialogWindow::LaunchOptions options;
     options.content.setOwned(content.release());
-    options.dialogTitle = "About PolyHost";
+    options.dialogTitle = "About PolyHostInterface";
     options.dialogBackgroundColour = juce::Colour(0xFF1D2230);
     options.escapeKeyTriggersCloseButton = true;
     options.useNativeTitleBar = true;
@@ -1637,16 +1617,7 @@ void MainComponent::newPreset()
     if (!maybeSaveChanges())
         return;
 
-    for (int i = 0; i < pluginTabs.size(); ++i)
-        if (auto* tc = pluginTabs[i])
-            tc->removeChangeListener(this);
-
-    while (tabs.getNumTabs() > 0)
-        tabs.removeTab(tabs.getNumTabs() - 1);
-
-    pluginTabs.clear();
-    midiRoutingStates.clear();
-
+    resetAllTabsAndRouting();
     addEmptyTab();
     
     const auto savedDefaultTempo = settings.getDefaultTempoBpm();
@@ -1767,16 +1738,7 @@ void MainComponent::deletePreset()
         return;
     }
 
-    for (int i = 0; i < pluginTabs.size(); ++i)
-        if (auto* tc = pluginTabs[i])
-            tc->removeChangeListener(this);
-
-    while (tabs.getNumTabs() > 0)
-        tabs.removeTab(tabs.getNumTabs() - 1);
-
-    pluginTabs.clear();
-    midiRoutingStates.clear();
-
+    resetAllTabsAndRouting();
     addEmptyTab();
 
     refreshRoutingView();
@@ -2271,6 +2233,20 @@ bool MainComponent::scanPluginFile(const juce::File& pluginFile, juce::PluginDes
     if (!pluginFile.existsAsFile())
         return false;
 
+    if (pluginFile.getFileExtension().equalsIgnoreCase(".clap"))
+    {
+        auto clapWrapper = std::make_unique<ClapPluginWrapper>(pluginFile);
+        if (!clapWrapper->isLoaded())
+            return false;
+
+        clapWrapper->fillInPluginDescription(desc);
+        desc.fileOrIdentifier = pluginFile.getFullPathName();
+        desc.name = clapWrapper->getPluginName();
+        desc.descriptiveName = desc.name;
+        desc.pluginFormatName = "CLAP";
+        return true;
+    }
+
     juce::AudioPluginFormatManager formatManager;
     formatManager.addFormat(std::make_unique<juce::VST3PluginFormat>());
    #if JUCE_PLUGINHOST_VST
@@ -2582,8 +2558,7 @@ juce::File MainComponent::chooseReplacementCandidate(
     if (candidates.size() == 1)
         return candidates[0].file;
 
-    juce::PopupMenu menu;
-    menu.addSectionHeader("Choose replacement for " + entry.pluginName);
+    juce::StringArray candidateLabels;
 
     for (int i = 0; i < candidates.size(); ++i)
     {
@@ -2599,15 +2574,33 @@ juce::File MainComponent::chooseReplacementCandidate(
 
         label += " {" + candidate.file.getFileName() + "}";
 
-        menu.addItem(i + 1, label);
+        candidateLabels.add(label);
     }
 
-    auto result = menu.showMenu(juce::PopupMenu::Options().withTargetComponent(this));
+    juce::AlertWindow chooser("Choose Replacement Plugin",
+                              "Select a replacement for:\n" + entry.pluginName,
+                              juce::AlertWindow::QuestionIcon);
 
-    if (result <= 0 || result > candidates.size())
+    chooser.addComboBox("replacementChoice", candidateLabels, "Replacement Plugin");
+    chooser.addButton("Use Selected", 1, juce::KeyPress(juce::KeyPress::returnKey));
+    chooser.addButton("Cancel", 0, juce::KeyPress(juce::KeyPress::escapeKey));
+
+    if (auto* combo = chooser.getComboBoxComponent("replacementChoice"))
+        combo->setSelectedItemIndex(0);
+
+    if (chooser.runModalLoop() != 1)
         return {};
 
-    return candidates[result - 1].file;
+    auto* combo = chooser.getComboBoxComponent("replacementChoice");
+    if (combo == nullptr)
+        return {};
+
+    const int selectedIndex = combo->getSelectedItemIndex();
+
+    if (!juce::isPositiveAndBelow(selectedIndex, candidates.size()))
+        return {};
+
+    return candidates[selectedIndex].file;
 }
 
 int MainComponent::promptForMissingPluginRepairAction(const MissingPluginEntry& entry,
@@ -2711,7 +2704,7 @@ juce::File MainComponent::browseForReplacementPlugin(const MissingPluginEntry& e
 bool MainComponent::applyReplacementPlugin(const MissingPluginEntry& entry,
                                            const juce::File& replacementFile)
 {
-    if (!juce::isPositiveAndBelow(entry.tabIndex, tabs.getNumTabs()))
+    if (!juce::isPositiveAndBelow(entry.tabIndex, pluginTabs.size()))
         return false;
 
     if (auto* tc = getTabComponent(entry.tabIndex))
@@ -2725,10 +2718,7 @@ bool MainComponent::applyReplacementPlugin(const MissingPluginEntry& entry,
         if (state.fromBase64Encoding(entry.pluginStateBase64))
             tc->restorePluginState(state);
 
-        refreshTabAppearance(entry.tabIndex);
-        syncRoutingToAudioEngine();
-        refreshRoutingView();
-        markSessionDirty();
+        handleSuccessfulPluginLoadIntoTab(entry.tabIndex, true);
         return true;
     }
 
@@ -2758,6 +2748,101 @@ juce::File MainComponent::findReplacementPluginFile(const MissingPluginEntry& en
 // ===================================
 // TABS
 // ===================================
+bool MainComponent::clearTabAt(int tabIndex)
+{
+    if (!juce::isPositiveAndBelow(tabIndex, tabs.getNumTabs()))
+        return false;
+
+    if (!confirmClearTab(tabIndex))
+        return false;
+
+    if (auto* tc = getTabComponent(tabIndex))
+    {
+        tc->clearSavedWindowBounds();
+        tc->clearPlugin();
+        refreshTabAppearance(tabIndex);
+        refreshRoutingView();
+        unresolvedMissingPlugins.clear();
+        markSessionDirty();
+        return true;
+    }
+
+    return false;
+}
+
+bool MainComponent::closeTabAt(int tabIndex)
+{
+    if (!juce::isPositiveAndBelow(tabIndex, tabs.getNumTabs()))
+        return false;
+
+    if (!confirmCloseTab(tabIndex))
+        return false;
+
+    if (tabs.getNumTabs() == 1)
+        return clearTabAt(tabIndex);
+
+    auto currentIndex = tabs.getCurrentTabIndex();
+    const bool wasCurrentTab = (tabIndex == currentIndex);
+
+    removeTabAt(tabIndex);
+
+    if (tabs.getNumTabs() > 0)
+    {
+        if (wasCurrentTab)
+        {
+            currentIndex = juce::jlimit(0, tabs.getNumTabs() - 1, tabIndex);
+        }
+        else
+        {
+            if (tabIndex < currentIndex)
+                --currentIndex;
+
+            currentIndex = juce::jlimit(0, tabs.getNumTabs() - 1, currentIndex);
+        }
+
+        tabs.setCurrentTabIndex(currentIndex);
+    }
+
+    handleCurrentTabChanged();
+    unresolvedMissingPlugins.clear();
+    markSessionDirty();
+    return true;
+}
+
+void MainComponent::removeTabAt(int tabIndex)
+{
+    if (!juce::isPositiveAndBelow(tabIndex, pluginTabs.size()))
+        return;
+
+    if (auto* tc = getTabComponent(tabIndex))
+        tc->removeChangeListener(this);
+
+    pluginTabs.remove(tabIndex, true);
+
+    for (int i = midiRoutingStates.size(); --i >= 0;)
+    {
+        if (midiRoutingStates.getReference(i).tabIndex == tabIndex)
+            midiRoutingStates.remove(i);
+    }
+
+    for (int i = 0; i < midiRoutingStates.size(); ++i)
+    {
+        if (midiRoutingStates.getReference(i).tabIndex > tabIndex)
+            --midiRoutingStates.getReference(i).tabIndex;
+    }
+
+    if (pluginTabs.isEmpty())
+    {
+        addEmptyTab();
+        return;
+    }
+
+    rebuildVisibleTabs();
+    ensureMidiRoutingStateForCurrentTabs();
+    refreshRoutingView();
+    syncRoutingToAudioEngine();
+}
+
 void MainComponent::closeCurrentTab()
 {
     auto currentIndex = tabs.getCurrentTabIndex();
@@ -2765,33 +2850,7 @@ void MainComponent::closeCurrentTab()
     if (!juce::isPositiveAndBelow(currentIndex, tabs.getNumTabs()))
         return;
 
-    if (tabs.getNumTabs() == 1)
-    {
-        if (auto* tc = getTabComponent(currentIndex))
-        {
-            tc->clearSavedWindowBounds();
-            tc->clearPlugin();
-            refreshTabAppearance(currentIndex);
-            unresolvedMissingPlugins.clear();
-            markSessionDirty();
-        }
-        return;
-    }
-
-    if (auto* tc = getTabComponent(currentIndex))
-        tc->removeChangeListener(this);
-
-    const int newIndex = juce::jlimit(0, tabs.getNumTabs() - 2, currentIndex);
-
-    tabs.removeTab(currentIndex);
-    tabs.setCurrentTabIndex(newIndex);
-
-    for (int i = 0; i < tabs.getNumTabs(); ++i)
-        refreshTabAppearance(i);
-
-    unresolvedMissingPlugins.clear();
-    handleCurrentTabChanged();
-    markSessionDirty();
+    closeTabAt(currentIndex);
 }
 
 bool MainComponent::confirmCloseTab(int tabIndex) const
@@ -2839,66 +2898,14 @@ void MainComponent::showTabContextMenu(int tabIndex)
 
                            if (result == 2)
                            {
-                               if (!confirmClearTab(tabIndex))
-                                   return;
-
-                               if (auto* tc = getTabComponent(tabIndex))
-                               {
-                                   tc->clearSavedWindowBounds();
-                                   tc->clearPlugin();
-                                   refreshTabAppearance(tabIndex);
-                                   refreshRoutingView();
-                                   unresolvedMissingPlugins.clear();
-                                   markSessionDirty();
-                               }
+                               clearTabAt(tabIndex);
                                return;
                            }
 
                            if (result != 3)
                                return;
 
-                           if (!confirmCloseTab(tabIndex))
-                               return;
-
-                           if (tabIndex == tabs.getCurrentTabIndex())
-                           {
-                               closeCurrentTab();
-                               return;
-                           }
-
-                           if (tabs.getNumTabs() == 1)
-                           {
-                               if (auto* tc = getTabComponent(tabIndex))
-                               {
-                                   tc->clearSavedWindowBounds();
-                                   tc->clearPlugin();
-                                   refreshTabAppearance(tabIndex);
-                                   refreshRoutingView();
-                                   unresolvedMissingPlugins.clear();
-                                   markSessionDirty();
-                               }
-                               return;
-                           }
-
-                           if (auto* tc = getTabComponent(tabIndex))
-                               tc->removeChangeListener(this);
-
-                           auto currentIndex = tabs.getCurrentTabIndex();
-
-                           tabs.removeTab(tabIndex);
-
-                           if (tabIndex < currentIndex)
-                               --currentIndex;
-
-                           currentIndex = juce::jlimit(0, tabs.getNumTabs() - 1, currentIndex);
-                           tabs.setCurrentTabIndex(currentIndex);
-
-                           for (int i = 0; i < tabs.getNumTabs(); ++i)
-                               refreshTabAppearance(i);
-
-                           handleCurrentTabChanged();
-                           unresolvedMissingPlugins.clear();
-                           markSessionDirty();
+                           closeTabAt(tabIndex);
                        });
 }
 
@@ -2956,7 +2963,7 @@ void MainComponent::moveTabLater(int tabIndex)
 
     int targetIndex = -1;
 
-    for (int i = tabIndex + 1; i < tabs.getNumTabs(); ++i)
+    for (int i = tabIndex + 1; i < pluginTabs.size(); ++i)
     {
         if (auto* tc = getTabComponent(i))
         {
@@ -3442,10 +3449,9 @@ void MainComponent::autoAssignGlobalMidiToTabIfAppropriate(int tabIndex)
 
 void MainComponent::syncRoutingToAudioEngine()
 {
-    juce::Array<juce::AudioProcessorGraph::NodeID> activeSynthIds;
-    juce::Array<juce::AudioProcessorGraph::NodeID> activeFxIds;
+    juce::Array<AudioEngine::RoutingEntry> orderedEntries;
 
-    for (int i = 0; i < tabs.getNumTabs(); ++i)
+    for (int i = 0; i < pluginTabs.size(); ++i)
     {
         if (auto* tc = getTabComponent(i))
         {
@@ -3455,14 +3461,14 @@ void MainComponent::syncRoutingToAudioEngine()
             if (tc->isBypassed())
                 continue;
 
-            if (tc->getType() == PluginTabComponent::SlotType::Synth)
-                activeSynthIds.add(tc->getNodeID());
-            else if (tc->getType() == PluginTabComponent::SlotType::FX)
-                activeFxIds.add(tc->getNodeID());
+            AudioEngine::RoutingEntry entry;
+            entry.nodeId = tc->getNodeID();
+            entry.isSynth = (tc->getType() == PluginTabComponent::SlotType::Synth);
+            orderedEntries.add(entry);
         }
     }
 
-    audioEngine.setRoutingState(activeSynthIds, activeFxIds);
+    audioEngine.setRoutingState(orderedEntries);
 }
 
 MainComponent::MidiTabRoutingState* MainComponent::getMidiRoutingStateForTab(int tabIndex)
@@ -3568,7 +3574,7 @@ void MainComponent::refreshMidiDevices()
     auto availableDevices = midiEngine.getAvailableDevices();
     auto openNames = midiEngine.getOpenDeviceNames();
 
-    juce::String message = "PolyHost  |  MIDI refreshed";
+    juce::String message = "PolyHostInterface  |  MIDI refreshed";
 
     if (!openNames.isEmpty())
         message += "  |  Active: " + openNames.joinIntoString(", ");
@@ -3593,7 +3599,7 @@ void MainComponent::applyMidiAutoAssignModeToExistingTabs()
 
     int loadedPluginCountSeen = 0;
 
-    for (int i = 0; i < tabs.getNumTabs(); ++i)
+    for (int i = 0; i < pluginTabs.size(); ++i)
     {
         auto* tc = getTabComponent(i);
         if (tc == nullptr || !tc->hasPlugin())
@@ -3655,7 +3661,7 @@ void MainComponent::sendMidiPanic()
 {
     juce::Array<juce::AudioProcessorGraph::NodeID> targetNodeIds;
 
-    for (int i = 0; i < tabs.getNumTabs(); ++i)
+    for (int i = 0; i < pluginTabs.size(); ++i)
     {
         if (auto* tc = getTabComponent(i))
         {
@@ -3674,7 +3680,7 @@ void MainComponent::sendMidiPanic()
 
     audioEngine.sendMidiPanicToNodes(targetNodeIds);
 
-    statusBar.setText("PolyHost 0.1  |  MIDI Panic sent",
+    statusBar.setText("PolyHostInterface  |  MIDI Panic sent",
                       juce::dontSendNotification);
 
     juce::Timer::callAfterDelay(1500, [safe = juce::Component::SafePointer<MainComponent>(this)]
@@ -3694,7 +3700,7 @@ void MainComponent::updateStatusBarText()
 
     juce::String tempoModeText = "Internal Tempo";
 
-    statusBar.setText("PolyHost 0.1  |  " + midiText + "  |  " + tempoModeText + "  |  Ready",
+    statusBar.setText("PolyHostInterface  |  " + midiText + "  |  " + tempoModeText + "  |  Ready",
                       juce::dontSendNotification);
 }
 

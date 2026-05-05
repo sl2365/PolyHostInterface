@@ -2,7 +2,7 @@ cmake_minimum_required(VERSION 3.22)
 
 set(POLYHOST_VERSION "1.0.0")
 
-project(PolyHost VERSION ${POLYHOST_VERSION} LANGUAGES CXX)
+project(PolyHostInterface VERSION ${POLYHOST_VERSION} LANGUAGES CXX)
 
 set(CMAKE_MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
 set(CMAKE_CXX_STANDARD 17)
@@ -17,10 +17,10 @@ add_subdirectory(tools/JUCE)
 
 # ── Application target ────────────────────────────────────────────────────────
 juce_add_gui_app(PolyHost
-    PRODUCT_NAME        "PolyHost"
+    PRODUCT_NAME        "PolyHostInterface"
     VERSION             "${POLYHOST_VERSION}"
     COMPANY_NAME        "PolyHost Project"
-    BUNDLE_ID           "com.polyhost.app"
+    BUNDLE_ID           "com.PolyHostInterface.app"
 )
 
 juce_generate_juce_header(PolyHost)

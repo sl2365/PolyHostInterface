@@ -27,7 +27,7 @@ set "ROOT=%~dp0"
 set "CMAKE=%ROOT%tools\cmake\bin\cmake.exe"
 set "BUILD_DIR=%ROOT%build"
 set "DIST_DIR=%ROOT%dist"
-set "EXENAME=PolyHost.exe"
+set "EXENAME=PolyHostInterface.exe"
 set "VST2_SDK=%ROOT%tools\vstsdk2.4"
 
 echo.
