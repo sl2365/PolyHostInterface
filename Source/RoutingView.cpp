@@ -77,25 +77,25 @@ RoutingView::ModuleRow::ModuleRow()
     jumpFilterLabel.setText("Jump Filter", juce::dontSendNotification);
     jumpFilterLabel.setColour(juce::Label::textColourId, juce::Colours::lightgrey);
     jumpFilterLabel.setJustificationType(juce::Justification::centred);
-    jumpFilterLabel.setFont(juce::Font(juce::FontOptions(12.0f, juce::Font::plain)));
+    jumpFilterLabel.setFont(juce::Font(juce::FontOptions(13.0f, juce::Font::plain)));
     addAndMakeVisible(jumpFilterLabel);
 
     maxStepLabel.setText("Max Step", juce::dontSendNotification);
     maxStepLabel.setColour(juce::Label::textColourId, juce::Colours::lightgrey);
     maxStepLabel.setJustificationType(juce::Justification::centred);
-    maxStepLabel.setFont(juce::Font(juce::FontOptions(12.0f, juce::Font::plain)));
+    maxStepLabel.setFont(juce::Font(juce::FontOptions(13.0f, juce::Font::plain)));
     addAndMakeVisible(maxStepLabel);
 
     multiplierLabel.setText("Step Mult", juce::dontSendNotification);
     multiplierLabel.setColour(juce::Label::textColourId, juce::Colours::lightgrey);
     multiplierLabel.setJustificationType(juce::Justification::centred);
-    multiplierLabel.setFont(juce::Font(juce::FontOptions(12.0f, juce::Font::plain)));
+    multiplierLabel.setFont(juce::Font(juce::FontOptions(13.0f, juce::Font::plain)));
     addAndMakeVisible(multiplierLabel);
 
     jumpFilterBox.setInputRestrictions(3, "0123456789");
     jumpFilterBox.setJustification(juce::Justification::centred);
     jumpFilterBox.setRange(1, 127);
-    jumpFilterBox.setFont(juce::Font(juce::FontOptions(12.0f)));
+    jumpFilterBox.setFont(juce::Font(juce::FontOptions(12.5f)));
     jumpFilterBox.onValueChanged = [this](int value)
     {
         if (onPointerJumpFilterChanged)
@@ -241,34 +241,45 @@ void RoutingView::ModuleRow::resized()
 
     area.removeFromTop(6);
 
-    auto pointerRow = area.removeFromTop(42);
+    auto pointerRow = area.removeFromTop(44);
 
     pointerOverrideToggle.setBounds(pointerRow.removeFromLeft(130));
 
-    pointerRow.removeFromLeft(12);
+    pointerRow.removeFromLeft(14);
 
-    const int groupWidth = 52;
-    const int labelHeight = 14;
-    const int boxHeight = 20;
+    const int boxWidth = 28;
+    const int boxHeight = 17;
+    const int labelWidth = 52;
+    const int labelHeight = 16;
+    const int labelToBoxGap = 2;
     const int groupGap = 14;
-    const int resetWidth = ButtonStyling::defaultButtonWidth();
+    const int verticalShift = 6;
 
     auto placeGroup = [&](juce::Label& label, NumberBox& box)
     {
-        auto group = pointerRow.removeFromLeft(groupWidth);
-        label.setBounds(group.removeFromTop(labelHeight));
-        group.removeFromTop(2);
-        box.setBounds(group.withSizeKeepingCentre(groupWidth, boxHeight));
+        auto group = pointerRow.removeFromLeft(labelWidth);
+
+        auto labelArea = group.removeFromTop(labelHeight).translated(0, -verticalShift);
+        label.setBounds(labelArea);
+
+        group.removeFromTop(labelToBoxGap);
+
+        auto boxArea = group.removeFromTop(boxHeight).translated(0, -verticalShift);
+        box.setBounds(boxArea.withSizeKeepingCentre(boxWidth, boxHeight));
+
         pointerRow.removeFromLeft(groupGap);
     };
-
     placeGroup(jumpFilterLabel, jumpFilterBox);
     placeGroup(maxStepLabel, maxStepBox);
     placeGroup(multiplierLabel, multiplierBox);
 
-    auto resetArea = pointerRow.removeFromLeft(resetWidth);
-    resetArea = resetArea.withSizeKeepingCentre(resetWidth, ButtonStyling::defaultButtonHeight());
-    resetPointerButton.setBounds(resetArea);
+    auto resetBounds = pointerRow.removeFromLeft(ButtonStyling::defaultButtonWidth());
+    resetBounds = resetBounds.withSizeKeepingCentre(resetBounds.getWidth(), buttonHeight);
+    resetPointerButton.setBounds(resetBounds);
+
+    // Move the reset button up to sit on the same row as Bypass/Up/Down/Info/Close.
+    // Horizontal position, width and height are deliberately left untouched.
+    resetPointerButton.setBounds(resetPointerButton.getBounds().withY(bypassBounds.getY()));
 }
 
 RoutingView::RoutingView()
