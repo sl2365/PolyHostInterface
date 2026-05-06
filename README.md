@@ -21,6 +21,8 @@ I always liked tools like TobyBear's MiniHost, SaviHost and Tone2's NanoHost. Bu
 | Portable settings (no AppData/registry) | ✅ Working |
 | Audio/MIDI recording | 🔲 Planned |
 | PointerCC functionality | ✅ Working - WIP-basics only |
+| Release as app | ✅ Working |
+| Release as VST3 | 🔲 Planned |
 
 ## Folder Structure
 
