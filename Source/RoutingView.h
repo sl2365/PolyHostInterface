@@ -15,6 +15,7 @@ public:
         bool canMoveUp = false;
         bool canMoveDown = false;
         int midiAssignmentCount = 0;
+        juce::String routingTooltip;
     };
 
     RoutingView();
@@ -67,6 +68,7 @@ private:
         };
         ButtonStyling::SmallIconButton upButton { ButtonStyling::Glyphs::arrowUp() };
         ButtonStyling::SmallIconButton downButton { ButtonStyling::Glyphs::arrowDown() };
+        ButtonStyling::SmallIconButton infoButton { ButtonStyling::Glyphs::info() };
     };
 
     void rebuildModuleRows();

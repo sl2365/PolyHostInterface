@@ -21,6 +21,7 @@ namespace ButtonStyling
         juce::String arrowDown()       { return juce::String::charToString((juce_wchar) 0xe70d); }
         juce::String activeTick()      { return juce::String::charToString((juce_wchar) 0xe930); }
         juce::String bypassCross()     { return juce::String::charToString((juce_wchar) 0xf140); }
+        juce::String info()            { return juce::String::charToString((juce_wchar) 0xe946); }
     }
 
     namespace Tooltips
@@ -44,6 +45,7 @@ namespace ButtonStyling
         juce::String toggleBypass()     { return "Toggle Bypass"; }
         juce::String moveUp()           { return "Move Up"; }
         juce::String moveDown()         { return "Move Down"; }
+        juce::String routingInfo()      { return "Routing Info"; }
     }
 
     namespace Labels

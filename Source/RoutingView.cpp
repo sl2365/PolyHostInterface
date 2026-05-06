@@ -17,11 +17,12 @@ RoutingView::ModuleRow::ModuleRow()
     };
     addAndMakeVisible(typeButton);
 
-    addAndMakeVisible(closeButton);
     addAndMakeVisible(midiButton);
     addAndMakeVisible(bypassButton);
     addAndMakeVisible(upButton);
     addAndMakeVisible(downButton);
+    addAndMakeVisible(infoButton);
+    addAndMakeVisible(closeButton);
 
     midiButton.setLookAndFeel(&roundedButtonLookAndFeel);
 
@@ -33,6 +34,7 @@ RoutingView::ModuleRow::ModuleRow()
     bypassButton.setTooltip(ButtonStyling::Tooltips::toggleBypass());
     upButton.setTooltip(ButtonStyling::Tooltips::moveUp());
     downButton.setTooltip(ButtonStyling::Tooltips::moveDown());
+    infoButton.setTooltip(ButtonStyling::Tooltips::routingInfo());
 
     midiButton.onClick = [this]
     {
@@ -74,6 +76,10 @@ void RoutingView::ModuleRow::setModule(const ModuleEntry& newEntry)
     entry = newEntry;
 
     nameLabel.setText(entry.name, juce::dontSendNotification);
+    infoButton.setTooltip(entry.routingTooltip.isNotEmpty() ? entry.routingTooltip
+                                                            : ButtonStyling::Tooltips::routingInfo());
+    infoButton.setVisible(entry.routingTooltip.isNotEmpty());
+    infoButton.setEnabled(entry.routingTooltip.isNotEmpty());
 
     if (entry.type == PluginTabComponent::SlotType::Synth)
     {
@@ -125,6 +131,11 @@ void RoutingView::ModuleRow::resized()
     auto closeArea = area.removeFromRight(ButtonStyling::defaultButtonWidth());
     closeArea = closeArea.withSizeKeepingCentre(closeArea.getWidth(), buttonHeight);
     closeButton.setBounds(closeArea);
+    area.removeFromRight(8);
+
+    auto infoArea = area.removeFromRight(ButtonStyling::defaultButtonWidth());
+    infoArea = infoArea.withSizeKeepingCentre(infoArea.getWidth(), buttonHeight);
+    infoButton.setBounds(infoArea);
     area.removeFromRight(8);
 
     auto downBounds = area.removeFromRight(ButtonStyling::defaultButtonWidth());

@@ -29,6 +29,7 @@ namespace ButtonStyling
         juce::String arrowDown();
         juce::String activeTick();
         juce::String bypassCross();
+        juce::String info();
     }
 
     namespace Tooltips
@@ -52,6 +53,7 @@ namespace ButtonStyling
         juce::String toggleBypass();
         juce::String moveUp();
         juce::String moveDown();
+        juce::String routingInfo();
     }
 
     namespace Labels

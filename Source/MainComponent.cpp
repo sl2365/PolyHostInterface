@@ -3266,58 +3266,104 @@ void MainComponent::resetRoutingWindowSizeToDefault()
 
 void MainComponent::refreshRoutingView()
 {
-    ensureMidiRoutingStateForCurrentTabs();
     juce::Array<RoutingView::ModuleEntry> modules;
 
-    juce::Array<int> loadedTabIndices;
-
-    for (int i = 0; i < tabs.getNumTabs(); ++i)
+    for (int tabIndex = 0; tabIndex < pluginTabs.size(); ++tabIndex)
     {
-        if (auto* tc = getTabComponent(i))
-        {
-            if (!tc->hasPlugin())
-                continue;
+        auto* tc = getTabComponent(tabIndex);
+        if (tc == nullptr || !tc->hasPlugin())
+            continue;
 
-            loadedTabIndices.add(i);
+        RoutingView::ModuleEntry entry;
+        entry.tabIndex = tabIndex;
+
+        auto pluginName = tc->getPluginName().trim();
+        if (pluginName.isEmpty())
+        {
+            if (tc->getType() == PluginTabComponent::SlotType::Synth)
+                pluginName = "Synth Tab " + juce::String(tabIndex + 1);
+            else if (tc->getType() == PluginTabComponent::SlotType::FX)
+                pluginName = "FX Tab " + juce::String(tabIndex + 1);
+            else
+                pluginName = "Tab " + juce::String(tabIndex + 1);
         }
-    }
 
-    for (int listIndex = 0; listIndex < loadedTabIndices.size(); ++listIndex)
-    {
-        const int tabIndex = loadedTabIndices[listIndex];
+        entry.name = pluginName;
+        entry.type = tc->getType();
+        entry.isBypassed = tc->isBypassed();
+        entry.canMoveUp = (tabIndex > 0);
+        entry.canMoveDown = (tabIndex < pluginTabs.size() - 1);
+        if (const auto* midiState = getMidiRoutingStateForTab(tabIndex))
+            entry.midiAssignmentCount = midiState->assignedDeviceIdentifiers.size();
+        else
+            entry.midiAssignmentCount = 0;
 
-        if (auto* tc = getTabComponent(tabIndex))
+        juce::StringArray relatedNames;
+
+        if (tc->getType() == PluginTabComponent::SlotType::Synth && !tc->isBypassed())
         {
-            RoutingView::ModuleEntry entry;
-            entry.tabIndex = tabIndex;
-            entry.name = tc->getPluginName();
-            entry.type = tc->getType();
-            entry.isBypassed = tc->isBypassed();
-            entry.canMoveUp = (listIndex > 0);
-            entry.canMoveDown = (listIndex < loadedTabIndices.size() - 1);
-
-            if (auto* midiState = getMidiRoutingStateForTab(tabIndex))
+            for (int j = tabIndex + 1; j < pluginTabs.size(); ++j)
             {
-                int availableAssignedCount = 0;
-                auto availableDevices = midiEngine.getAvailableDevices();
-
-                for (auto& identifier : midiState->assignedDeviceIdentifiers)
+                if (auto* downstream = getTabComponent(j))
                 {
-                    for (auto& device : availableDevices)
+                    if (!downstream->hasPlugin() || downstream->isBypassed())
+                        continue;
+
+                    if (downstream->getType() == PluginTabComponent::SlotType::FX)
                     {
-                        if (device.identifier == identifier)
-                        {
-                            ++availableAssignedCount;
-                            break;
-                        }
+                        auto fxName = downstream->getPluginName().trim();
+                        if (fxName.isEmpty())
+                            fxName = "FX Tab " + juce::String(j + 1);
+
+                        relatedNames.add(fxName);
                     }
                 }
-
-                entry.midiAssignmentCount = availableAssignedCount;
             }
 
-            modules.add(entry);
+            if (relatedNames.isEmpty())
+            {
+                entry.routingTooltip = "Output:\nDirect to output";
+            }
+            else
+            {
+                entry.routingTooltip = "Output:\n" + relatedNames.joinIntoString("\n");
+            }
         }
+        else if (tc->getType() == PluginTabComponent::SlotType::FX && !tc->isBypassed())
+        {
+            for (int j = 0; j < tabIndex; ++j)
+            {
+                if (auto* upstream = getTabComponent(j))
+                {
+                    if (!upstream->hasPlugin() || upstream->isBypassed())
+                        continue;
+
+                    if (upstream->getType() == PluginTabComponent::SlotType::Synth)
+                    {
+                        auto synthName = upstream->getPluginName().trim();
+                        if (synthName.isEmpty())
+                            synthName = "Synth Tab " + juce::String(j + 1);
+
+                        relatedNames.add(synthName);
+                    }
+                }
+            }
+
+            if (relatedNames.isEmpty())
+            {
+                entry.routingTooltip = "Input:\nNo synth inputs";
+            }
+            else
+            {
+                entry.routingTooltip = "Input:\n" + relatedNames.joinIntoString("\n");
+            }
+        }
+        else
+        {
+            entry.routingTooltip.clear();
+        }
+
+        modules.add(entry);
     }
 
     routingView.setModules(modules);
