@@ -67,11 +67,15 @@ RoutingView::ModuleRow::ModuleRow()
             onCloseTab(entry.tabIndex);
     };
 
-    addAndMakeVisible(pointerOverrideToggle);
-    pointerOverrideToggle.onClick = [this]
+    addAndMakeVisible(pointerOverrideButton);
+    pointerOverrideButton.setTooltip(ButtonStyling::Tooltips::useTabPointerSettings());
+    pointerOverrideButton.onClick = [this]
     {
+        pointerOverrideActive = ! pointerOverrideActive;
+        pointerOverrideButton.setVisualState(pointerOverrideActive);
+
         if (onPointerUseTabSettingsChanged)
-            onPointerUseTabSettingsChanged(entry.tabIndex, pointerOverrideToggle.getToggleState());
+            onPointerUseTabSettingsChanged(entry.tabIndex, pointerOverrideActive);
     };
 
     jumpFilterLabel.setText("Jump Filter", juce::dontSendNotification);
@@ -86,7 +90,7 @@ RoutingView::ModuleRow::ModuleRow()
     maxStepLabel.setFont(juce::Font(juce::FontOptions(13.0f, juce::Font::plain)));
     addAndMakeVisible(maxStepLabel);
 
-    multiplierLabel.setText("Step Mult", juce::dontSendNotification);
+    multiplierLabel.setText("Step X", juce::dontSendNotification);
     multiplierLabel.setColour(juce::Label::textColourId, juce::Colours::lightgrey);
     multiplierLabel.setJustificationType(juce::Justification::centred);
     multiplierLabel.setFont(juce::Font(juce::FontOptions(13.0f, juce::Font::plain)));
@@ -173,7 +177,8 @@ void RoutingView::ModuleRow::setModule(const ModuleEntry& newEntry)
     upButton.setEnabled(entry.canMoveUp);
     downButton.setEnabled(entry.canMoveDown);
 
-    pointerOverrideToggle.setToggleState(entry.pointerUseTabSettings, juce::dontSendNotification);
+    pointerOverrideActive = entry.pointerUseTabSettings;
+    pointerOverrideButton.setVisualState(pointerOverrideActive);
     jumpFilterBox.setValue(entry.pointerJumpFilter);
     maxStepBox.setValue(entry.pointerMaxStepSize);
     multiplierBox.setValue(entry.pointerStepMultiplier);
@@ -237,23 +242,27 @@ void RoutingView::ModuleRow::resized()
     midiButton.setBounds(area.removeFromRight(90).reduced(0, 8));
     area.removeFromRight(12);
 
-    nameLabel.setBounds(area);
-
-    area.removeFromTop(6);
-
-    auto pointerRow = area.removeFromTop(44);
-
-    pointerOverrideToggle.setBounds(pointerRow.removeFromLeft(130));
-
-    pointerRow.removeFromLeft(14);
-
+    constexpr int maxNameWidth = 110;
     const int boxWidth = 28;
     const int boxHeight = 17;
     const int labelWidth = 52;
     const int labelHeight = 16;
-    const int labelToBoxGap = 2;
-    const int groupGap = 14;
+    const int labelToBoxGap = 5;
+    const int groupGap = 10;
     const int verticalShift = 6;
+    nameLabel.setBounds(area.removeFromLeft(juce::jmin(maxNameWidth, area.getWidth())));
+
+    area.removeFromTop(6);
+
+    auto pointerRow = area.removeFromTop(44);
+    pointerRow.removeFromLeft(groupGap);
+
+    auto overrideBounds = pointerRow.removeFromLeft(ButtonStyling::defaultButtonWidth());
+    overrideBounds = overrideBounds.withSizeKeepingCentre(overrideBounds.getWidth(), buttonHeight);
+    pointerOverrideButton.setBounds(overrideBounds.withY(bypassBounds.getY()));
+
+    pointerRow.removeFromLeft(groupGap);
+
 
     auto placeGroup = [&](juce::Label& label, NumberBox& box)
     {
@@ -277,8 +286,6 @@ void RoutingView::ModuleRow::resized()
     resetBounds = resetBounds.withSizeKeepingCentre(resetBounds.getWidth(), buttonHeight);
     resetPointerButton.setBounds(resetBounds);
 
-    // Move the reset button up to sit on the same row as Bypass/Up/Down/Info/Close.
-    // Horizontal position, width and height are deliberately left untouched.
     resetPointerButton.setBounds(resetPointerButton.getBounds().withY(bypassBounds.getY()));
 }
 

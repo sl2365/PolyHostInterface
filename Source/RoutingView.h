@@ -177,7 +177,16 @@ private:
         ButtonStyling::SmallIconButton downButton { ButtonStyling::Glyphs::arrowDown() };
         ButtonStyling::SmallIconButton infoButton { ButtonStyling::Glyphs::info() };
 
-        juce::ToggleButton pointerOverrideToggle { "Tab Pointer Settings" };
+        ButtonStyling::StatusIconButton pointerOverrideButton {
+            ButtonStyling::Glyphs::pointerTabSettings(),
+            ButtonStyling::Glyphs::pointerTabSettings(),
+            ButtonStyling::bypassActiveBackground(),
+            ButtonStyling::defaultBackground(),
+            ButtonStyling::defaultCornerRadius(),
+            ButtonStyling::defaultIconSize(),
+            1
+        };
+        bool pointerOverrideActive = false;
         juce::Label jumpFilterLabel;
         juce::Label maxStepLabel;
         juce::Label multiplierLabel;

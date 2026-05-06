@@ -31,6 +31,7 @@ namespace ButtonStyling
         juce::String bypassCross();
         juce::String info();
         juce::String pointerControl();
+        juce::String pointerTabSettings();
     }
 
     namespace Tooltips
@@ -57,6 +58,7 @@ namespace ButtonStyling
         juce::String routingInfo();
         juce::String pointerControl();
         juce::String resetPointerSettings();
+        juce::String useTabPointerSettings();
     }
 
     namespace Labels
