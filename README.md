@@ -20,6 +20,7 @@ I always liked tools like TobyBear's MiniHost, SaviHost and Tone2's NanoHost. Bu
 | Tab-order = FX routing order | ✅ Working |
 | Portable settings (no AppData/registry) | ✅ Working |
 | Audio/MIDI recording | 🔲 Planned |
+| PointerCC functionality | ✅ Working - WIP-basics only |
 
 ## Folder Structure
 
@@ -97,14 +98,14 @@ Install to tools/clap/CMakeLists.txt
 
 ## Audio Routing
 ```
-MIDI Device
+MIDI Device(s)
 |
 ├── [Synth Tab 1] --+
 ├── [Synth Tab 2] --+  (summed)
 |                   |
 |              [FX Tab 1]
 |                   |
-|              [FX Tab 2]
+├──----------- [FX Tab 2]
 |                   |
 └── [Synth Tab 3] --+  (only passes through FX below, bypasses any above)
                     |

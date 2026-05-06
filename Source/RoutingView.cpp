@@ -35,6 +35,7 @@ RoutingView::ModuleRow::ModuleRow()
     upButton.setTooltip(ButtonStyling::Tooltips::moveUp());
     downButton.setTooltip(ButtonStyling::Tooltips::moveDown());
     infoButton.setTooltip(ButtonStyling::Tooltips::routingInfo());
+    resetPointerButton.setTooltip(ButtonStyling::Tooltips::resetPointerSettings());
 
     midiButton.onClick = [this]
     {
@@ -59,10 +60,76 @@ RoutingView::ModuleRow::ModuleRow()
         if (onMoveDown)
             onMoveDown(entry.tabIndex);
     };
+
     closeButton.onClick = [this]
     {
         if (onCloseTab)
             onCloseTab(entry.tabIndex);
+    };
+
+    addAndMakeVisible(pointerOverrideToggle);
+    pointerOverrideToggle.onClick = [this]
+    {
+        if (onPointerUseTabSettingsChanged)
+            onPointerUseTabSettingsChanged(entry.tabIndex, pointerOverrideToggle.getToggleState());
+    };
+
+    jumpFilterLabel.setText("Jump Filter", juce::dontSendNotification);
+    jumpFilterLabel.setColour(juce::Label::textColourId, juce::Colours::lightgrey);
+    jumpFilterLabel.setJustificationType(juce::Justification::centred);
+    jumpFilterLabel.setFont(juce::Font(juce::FontOptions(12.0f, juce::Font::plain)));
+    addAndMakeVisible(jumpFilterLabel);
+
+    maxStepLabel.setText("Max Step", juce::dontSendNotification);
+    maxStepLabel.setColour(juce::Label::textColourId, juce::Colours::lightgrey);
+    maxStepLabel.setJustificationType(juce::Justification::centred);
+    maxStepLabel.setFont(juce::Font(juce::FontOptions(12.0f, juce::Font::plain)));
+    addAndMakeVisible(maxStepLabel);
+
+    multiplierLabel.setText("Step Mult", juce::dontSendNotification);
+    multiplierLabel.setColour(juce::Label::textColourId, juce::Colours::lightgrey);
+    multiplierLabel.setJustificationType(juce::Justification::centred);
+    multiplierLabel.setFont(juce::Font(juce::FontOptions(12.0f, juce::Font::plain)));
+    addAndMakeVisible(multiplierLabel);
+
+    jumpFilterBox.setInputRestrictions(3, "0123456789");
+    jumpFilterBox.setJustification(juce::Justification::centred);
+    jumpFilterBox.setRange(1, 127);
+    jumpFilterBox.setFont(juce::Font(juce::FontOptions(12.0f)));
+    jumpFilterBox.onValueChanged = [this](int value)
+    {
+        if (onPointerJumpFilterChanged)
+            onPointerJumpFilterChanged(entry.tabIndex, value);
+    };
+    addAndMakeVisible(jumpFilterBox);
+
+    maxStepBox.setInputRestrictions(2, "0123456789");
+    maxStepBox.setJustification(juce::Justification::centred);
+    maxStepBox.setRange(1, 32);
+    maxStepBox.setFont(juce::Font(juce::FontOptions(12.0f)));
+    maxStepBox.onValueChanged = [this](int value)
+    {
+        if (onPointerMaxStepSizeChanged)
+            onPointerMaxStepSizeChanged(entry.tabIndex, value);
+    };
+    addAndMakeVisible(maxStepBox);
+
+    multiplierBox.setInputRestrictions(2, "0123456789");
+    multiplierBox.setJustification(juce::Justification::centred);
+    multiplierBox.setRange(1, 8);
+    multiplierBox.setFont(juce::Font(juce::FontOptions(12.0f)));
+    multiplierBox.onValueChanged = [this](int value)
+    {
+        if (onPointerStepMultiplierChanged)
+            onPointerStepMultiplierChanged(entry.tabIndex, value);
+    };
+    addAndMakeVisible(multiplierBox);
+
+    addAndMakeVisible(resetPointerButton);
+    resetPointerButton.onClick = [this]
+    {
+        if (onPointerResetRequested)
+            onPointerResetRequested(entry.tabIndex);
     };
 }
 
@@ -102,9 +169,23 @@ void RoutingView::ModuleRow::setModule(const ModuleEntry& newEntry)
     else
         midiButton.setButtonText(ButtonStyling::Labels::midi());
 
-    bypassButton.setVisualState(! entry.isBypassed);
+    bypassButton.setVisualState(!entry.isBypassed);
     upButton.setEnabled(entry.canMoveUp);
     downButton.setEnabled(entry.canMoveDown);
+
+    pointerOverrideToggle.setToggleState(entry.pointerUseTabSettings, juce::dontSendNotification);
+    jumpFilterBox.setValue(entry.pointerJumpFilter);
+    maxStepBox.setValue(entry.pointerMaxStepSize);
+    multiplierBox.setValue(entry.pointerStepMultiplier);
+
+    const bool enabled = entry.pointerUseTabSettings;
+    jumpFilterLabel.setEnabled(enabled);
+    maxStepLabel.setEnabled(enabled);
+    multiplierLabel.setEnabled(enabled);
+    jumpFilterBox.setEnabled(enabled);
+    maxStepBox.setEnabled(enabled);
+    multiplierBox.setEnabled(enabled);
+    resetPointerButton.setEnabled(enabled);
 
     repaint();
 }
@@ -157,6 +238,37 @@ void RoutingView::ModuleRow::resized()
     area.removeFromRight(12);
 
     nameLabel.setBounds(area);
+
+    area.removeFromTop(6);
+
+    auto pointerRow = area.removeFromTop(42);
+
+    pointerOverrideToggle.setBounds(pointerRow.removeFromLeft(130));
+
+    pointerRow.removeFromLeft(12);
+
+    const int groupWidth = 52;
+    const int labelHeight = 14;
+    const int boxHeight = 20;
+    const int groupGap = 14;
+    const int resetWidth = ButtonStyling::defaultButtonWidth();
+
+    auto placeGroup = [&](juce::Label& label, NumberBox& box)
+    {
+        auto group = pointerRow.removeFromLeft(groupWidth);
+        label.setBounds(group.removeFromTop(labelHeight));
+        group.removeFromTop(2);
+        box.setBounds(group.withSizeKeepingCentre(groupWidth, boxHeight));
+        pointerRow.removeFromLeft(groupGap);
+    };
+
+    placeGroup(jumpFilterLabel, jumpFilterBox);
+    placeGroup(maxStepLabel, maxStepBox);
+    placeGroup(multiplierLabel, multiplierBox);
+
+    auto resetArea = pointerRow.removeFromLeft(resetWidth);
+    resetArea = resetArea.withSizeKeepingCentre(resetWidth, ButtonStyling::defaultButtonHeight());
+    resetPointerButton.setBounds(resetArea);
 }
 
 RoutingView::RoutingView()
@@ -167,7 +279,7 @@ RoutingView::RoutingView()
     titleLabel.setColour(juce::Label::textColourId, juce::Colours::white);
     addAndMakeVisible(titleLabel);
 
-    midiHelpLabel.setText("NOTE: MIDI assignment behavior for new tabs follows the current MIDI menu auto-assign preference. Use the MIDI button to adjust per-tab assignments.",
+    midiHelpLabel.setText("Per-tab Pointer Control settings can be adjusted below. Use Tab Pointer Settings to override the global defaults for a plugin.",
                           juce::dontSendNotification);
     midiHelpLabel.setJustificationType(juce::Justification::centredLeft);
     midiHelpLabel.setColour(juce::Label::textColourId, juce::Colours::lightgrey);
@@ -251,6 +363,36 @@ void RoutingView::rebuildModuleRows()
                 onCloseTab(tabIndex);
         };
 
+        row->onPointerUseTabSettingsChanged = [this](int tabIndex, bool shouldUse)
+        {
+            if (onPointerUseTabSettingsChanged)
+                onPointerUseTabSettingsChanged(tabIndex, shouldUse);
+        };
+
+        row->onPointerJumpFilterChanged = [this](int tabIndex, int value)
+        {
+            if (onPointerJumpFilterChanged)
+                onPointerJumpFilterChanged(tabIndex, value);
+        };
+
+        row->onPointerMaxStepSizeChanged = [this](int tabIndex, int value)
+        {
+            if (onPointerMaxStepSizeChanged)
+                onPointerMaxStepSizeChanged(tabIndex, value);
+        };
+
+        row->onPointerStepMultiplierChanged = [this](int tabIndex, int value)
+        {
+            if (onPointerStepMultiplierChanged)
+                onPointerStepMultiplierChanged(tabIndex, value);
+        };
+
+        row->onPointerResetRequested = [this](int tabIndex)
+        {
+            if (onPointerResetRequested)
+                onPointerResetRequested(tabIndex);
+        };
+
         contentComponent.addAndMakeVisible(row);
     }
 }
@@ -271,7 +413,6 @@ void RoutingView::resized()
 
     area.removeFromTop(6);
     midiHelpLabel.setBounds(area.removeFromTop(24));
-
     area.removeFromTop(10);
 
     emptyLabel.setBounds(area);

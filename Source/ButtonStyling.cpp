@@ -22,6 +22,7 @@ namespace ButtonStyling
         juce::String activeTick()      { return juce::String::charToString((juce_wchar) 0xe930); }
         juce::String bypassCross()     { return juce::String::charToString((juce_wchar) 0xf140); }
         juce::String info()            { return juce::String::charToString((juce_wchar) 0xe946); }
+        juce::String pointerControl()  { return juce::String::charToString((juce_wchar) 0xe7c9); }
     }
 
     namespace Tooltips
@@ -31,8 +32,8 @@ namespace ButtonStyling
         juce::String revertPreset()     { return "Revert preset"; }
         juce::String midiPanic()        { return "MIDI Panic"; }
         juce::String routing()          { return "Toggle Routing View"; }
-        juce::String fitWindow()        { return "Fit window to current plugin"; }
-        juce::String saveWindowSize()   { return "Save current window size for this tab"; }
+        juce::String fitWindow()        { return "Size window to current plugin"; }
+        juce::String saveWindowSize()   { return "Save window size for this tab"; }
         juce::String clearWindowSize()  { return "Clear saved window size for this tab"; }
         juce::String closeTab()         { return "Close Tab"; }
         juce::String metronome()        { return "Metronome"; }
@@ -46,6 +47,8 @@ namespace ButtonStyling
         juce::String moveUp()           { return "Move Up"; }
         juce::String moveDown()         { return "Move Down"; }
         juce::String routingInfo()      { return "Routing Info"; }
+        juce::String pointerControl()   { return "Toggle Pointer Control View"; }
+        juce::String resetPointerSettings() { return "Reset Pointer Settings"; }
     }
 
     namespace Labels

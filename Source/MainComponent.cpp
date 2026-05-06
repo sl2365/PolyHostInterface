@@ -394,9 +394,76 @@ MainComponent::MainComponent()
         moveTabLater(tabIndex);
     };
 
+    routingView.onPointerUseTabSettingsChanged = [this](int tabIndex, bool shouldUse)
+    {
+        setPointerTabUseOverride(tabIndex, shouldUse);
+    };
+
+    routingView.onPointerJumpFilterChanged = [this](int tabIndex, int value)
+    {
+        setPointerTabJumpFilter(tabIndex, value);
+    };
+
+    routingView.onPointerMaxStepSizeChanged = [this](int tabIndex, int value)
+    {
+        setPointerTabMaxStepSize(tabIndex, value);
+    };
+
+    routingView.onPointerStepMultiplierChanged = [this](int tabIndex, int value)
+    {
+        setPointerTabStepMultiplier(tabIndex, value);
+    };
+
+    routingView.onPointerResetRequested = [this](int tabIndex)
+    {
+        resetPointerTabSettingsToDefaults(tabIndex);
+    };
+
+    addAndMakeVisible(pointerControlView);
+    pointerControlView.setVisible(false);
+
+    pointerControlView.setPointerControlEnabled(settings.getPointerControlEnabled());
+    pointerControlView.setAdjustCcNumber(settings.getPointerControlAdjustCcNumber());
+    pointerControlView.setDiscontinuityThreshold(settings.getPointerControlDiscontinuityThreshold());
+    pointerControlView.setDeltaClamp(settings.getPointerControlDeltaClamp());
+
+    pointerControl.setEnabled(settings.getPointerControlEnabled());
+    pointerControl.setAdjustCcNumber(settings.getPointerControlAdjustCcNumber());
+    pointerControl.setDiscontinuityThreshold(settings.getPointerControlDiscontinuityThreshold());
+    pointerControl.setDeltaClamp(settings.getPointerControlDeltaClamp());
+
+    pointerControlView.onEnabledChanged = [this](bool shouldEnable)
+    {
+        settings.setPointerControlEnabled(shouldEnable);
+        pointerControl.setEnabled(shouldEnable);
+    };
+
+    pointerControlView.onAdjustCcChanged = [this](int ccNumber)
+    {
+        settings.setPointerControlAdjustCcNumber(ccNumber);
+        pointerControl.setAdjustCcNumber(ccNumber);
+        pointerControl.resetInteractionState();
+    };
+
+    pointerControlView.onDiscontinuityThresholdChanged = [this](int threshold)
+    {
+        settings.setPointerControlDiscontinuityThreshold(threshold);
+        pointerControl.setDiscontinuityThreshold(threshold);
+        pointerControl.resetInteractionState();
+    };
+
+    pointerControlView.onDeltaClampChanged = [this](int clampAmount)
+    {
+        settings.setPointerControlDeltaClamp(clampAmount);
+        pointerControl.setDeltaClamp(clampAmount);
+    };
+
     addEmptyTab();
 
     refreshRoutingView();
+
+    ensurePointerSettingsForCurrentTabs();
+    applyPointerSettingsToCurrentTab();
 
     auto enabledMidiDeviceIdentifiers = settings.getEnabledMidiDeviceIdentifiers();
 
@@ -427,8 +494,25 @@ MainComponent::MainComponent()
         }
     }
 
+    pointerControl.setPointerDebugLoggingEnabledProvider([this]()
+    {
+        return settings.getDebugLoggingEnabled()
+            && settings.getPointerControlDebugLoggingEnabled();
+    });
+
     midiEngine.onMidiMessageReceived = [this](const MidiEngine::IncomingMidiMessage& incoming)
     {
+        auto* currentTab = getTabComponent(tabs.getCurrentTabIndex());
+
+        if (currentTab == nullptr || !currentTab->hasPlugin())
+            pointerControl.resetInteractionState();
+
+        if (currentTab != nullptr)
+        {
+            if (pointerControl.handleMidiMessageForCurrentTab(incoming.message, currentTab))
+                return;
+        }
+
         juce::Array<juce::AudioProcessorGraph::NodeID> targetNodeIds;
 
         for (int i = 0; i < pluginTabs.size(); ++i)
@@ -508,6 +592,14 @@ SessionData MainComponent::buildSessionData() const
             if (auto* midiState = getMidiRoutingStateForTab(i))
                 tab.midiAssignedDeviceIdentifiers = midiState->assignedDeviceIdentifiers;
 
+            if (auto* pointerState = getPointerSettingsForTab(i))
+            {
+                tab.pointerControlUseTabSettings = pointerState->useTabSettings;
+                tab.pointerControlJumpFilter = pointerState->jumpFilter;
+                tab.pointerControlMaxStepSize = pointerState->maxStepSize;
+                tab.pointerControlStepMultiplier = pointerState->stepMultiplier;
+            }
+
             if (tc->hasPlugin())
             {
                 auto pluginFile = tc->getPluginFile();
@@ -560,6 +652,7 @@ void MainComponent::applySessionData(const SessionData& session,
         rebuildVisibleTabs();
 
     ensureMidiRoutingStateForCurrentTabs();
+    ensurePointerSettingsForCurrentTabs();
 
     for (int i = 0; i < session.tabs.size(); ++i)
     {
@@ -570,6 +663,14 @@ void MainComponent::applySessionData(const SessionData& session,
 
         if (auto* midiState = getMidiRoutingStateForTab(i))
             midiState->assignedDeviceIdentifiers = tabData.midiAssignedDeviceIdentifiers;
+
+        if (auto* pointerState = getPointerSettingsForTab(i))
+        {
+            pointerState->useTabSettings = tabData.pointerControlUseTabSettings;
+            pointerState->jumpFilter = tabData.pointerControlJumpFilter;
+            pointerState->maxStepSize = tabData.pointerControlMaxStepSize;
+            pointerState->stepMultiplier = tabData.pointerControlStepMultiplier;
+        }
 
         if (auto* tc = getTabComponent(i))
         {
@@ -996,6 +1097,7 @@ void MainComponent::addEmptyTab()
     tc->addChangeListener(this);
 
     rebuildVisibleTabs();
+    ensurePointerSettingsForCurrentTabs();
 
     if (!shouldSuppressDirtyForSinglePluginQuickOpen())
         markSessionDirty();
@@ -1100,6 +1202,10 @@ PluginTabComponent* MainComponent::getTabComponent(int index) const
 
 void MainComponent::handleCurrentTabChanged()
 {
+    pointerControl.resetInteractionState();
+    ensurePointerSettingsForCurrentTabs();
+    applyPointerSettingsToCurrentTab();
+
     for (int i = 0; i < tabs.getNumTabs(); ++i)
         refreshTabAppearance(i);
 
@@ -1233,6 +1339,7 @@ void MainComponent::resized()
 
     tabs.setBounds(area);
     routingView.setBounds(area);
+    pointerControlView.setBounds(area);
 
     const int plusButtonWidth = 28;
     const int plusButtonHeight = tabs.getTabBarDepth() - 4;
@@ -1328,19 +1435,24 @@ juce::PopupMenu MainComponent::getMenuForIndex(int index, const juce::String&)
             menu.addSeparator();
 
             juce::PopupMenu debugMenu;
-            debugMenu.addItem(505,
-                              "Enable Debug Logging",
-                              true,
-                              settings.getDebugLoggingEnabled());
-            debugMenu.addItem(507,
-                              "Enable Advanced Debug Logging",
-                              settings.getDebugLoggingEnabled(),
-                              settings.getAdvancedDebugLoggingEnabled());
-            debugMenu.addItem(506,
-                              "Clear Debug Log On Startup",
-                              true,
-                              settings.getClearDebugLogOnStartup());
-            debugMenu.addItem(508, "Clear Debug Log Now");
+             debugMenu.addItem(505,
+                               "Enable Debug Logging",
+                               true,
+                               settings.getDebugLoggingEnabled());
+             debugMenu.addItem(507,
+                               "Enable Advanced Logging",
+                               settings.getDebugLoggingEnabled(),
+                               settings.getAdvancedDebugLoggingEnabled());
+             debugMenu.addItem(509,
+                               "Enable Pointer Control Logging",
+                               settings.getDebugLoggingEnabled(),
+                               settings.getPointerControlDebugLoggingEnabled());
+             debugMenu.addSeparator();
+             debugMenu.addItem(506,
+                               "Clear Log On Startup",
+                               true,
+                               settings.getClearDebugLogOnStartup());
+             debugMenu.addItem(508, "Clear Log Now");
 
             menu.addSubMenu("Debug", debugMenu);
             break;
@@ -1545,6 +1657,16 @@ void MainComponent::menuItemSelected(int itemId, int)
             DebugLog::clear();
             DebugLog::write("Debug log cleared");
             break;
+        case 509:
+        {
+            if (!settings.getDebugLoggingEnabled())
+                break;
+
+            auto enabled = !settings.getPointerControlDebugLoggingEnabled();
+            settings.setPointerControlDebugLoggingEnabled(enabled);
+            DebugLog::write("Pointer Control debug logging " + juce::String(enabled ? "enabled" : "disabled"));
+            break;
+        }
 
         case 601:
             showAboutDialog();
@@ -1566,6 +1688,7 @@ void MainComponent::resetAllTabsAndRouting()
 
     pluginTabs.clear();
     midiRoutingStates.clear();
+    pointerTabSettings.clear();
 }
 
 void MainComponent::clearAllPlugins()
@@ -2831,6 +2954,18 @@ void MainComponent::removeTabAt(int tabIndex)
             --midiRoutingStates.getReference(i).tabIndex;
     }
 
+    for (int i = pointerTabSettings.size(); --i >= 0;)
+    {
+        if (pointerTabSettings.getReference(i).tabIndex == tabIndex)
+            pointerTabSettings.remove(i);
+    }
+
+    for (int i = 0; i < pointerTabSettings.size(); ++i)
+    {
+        if (pointerTabSettings.getReference(i).tabIndex > tabIndex)
+            --pointerTabSettings.getReference(i).tabIndex;
+    }
+
     if (pluginTabs.isEmpty())
     {
         addEmptyTab();
@@ -2988,6 +3123,8 @@ void MainComponent::getAllToolbarItemIds(juce::Array<int>& ids)
 {
     ids.add(toolbarRoutingToggle);
     ids.add(toolbarSpacer);
+    ids.add(toolbarPointerControl);
+    ids.add(toolbarSpacer);
     ids.add(toolbarRefitWindow);
     ids.add(toolbarSpacer);
     ids.add(toolbarSaveTabWindowSize);
@@ -3006,6 +3143,8 @@ void MainComponent::getAllToolbarItemIds(juce::Array<int>& ids)
 void MainComponent::getDefaultItemSet(juce::Array<int>& ids)
 {
     ids.add(toolbarRoutingToggle);
+    ids.add(toolbarSpacer);
+    ids.add(toolbarPointerControl);
     ids.add(toolbarSpacer);
     ids.add(toolbarRefitWindow);
     ids.add(toolbarSpacer);
@@ -3026,6 +3165,7 @@ juce::String MainComponent::getToolbarIconGlyph(int itemId)
 {
     switch (itemId)
     {
+        case toolbarPointerControl:     return ButtonStyling::Glyphs::pointerControl();
         case toolbarRoutingToggle:      return ButtonStyling::Glyphs::routing();
         case toolbarRefitWindow:        return ButtonStyling::Glyphs::fitWindow();
         case toolbarSavePreset:         return ButtonStyling::Glyphs::save();
@@ -3042,6 +3182,26 @@ juce::String MainComponent::getToolbarIconGlyph(int itemId)
 
 juce::ToolbarItemComponent* MainComponent::createItem(int itemId)
 {
+    if (itemId == toolbarPointerControl)
+    {
+        auto* button = new ButtonStyling::ToolbarIconButton(itemId,
+                                                            ButtonStyling::Tooltips::pointerControl(),
+                                                            getToolbarIconGlyph(itemId),
+                                                            ButtonStyling::ToolbarIconButton::ContentType::IconGlyph,
+                                                            ButtonStyling::defaultButtonWidth(),
+                                                            [this] { return showingPointerControlView; });
+
+        button->onClick = [this, button]
+        {
+            togglePointerControlView();
+            button->setToggleState(showingPointerControlView, juce::dontSendNotification);
+            button->repaint();
+        };
+
+        button->setToggleState(showingPointerControlView, juce::dontSendNotification);
+        return button;
+    }
+
     if (itemId == toolbarRoutingToggle)
     {
     // Toolbar button sizing
@@ -3216,12 +3376,17 @@ void MainComponent::setRoutingViewVisible(bool shouldShow)
         settings.setRoutingWindowSize(top->getWidth(), top->getHeight());
 
     showingRoutingView = shouldShow;
+    pointerControl.resetInteractionState();
+
+    if (showingRoutingView)
+        showingPointerControlView = false;
 
     if (showingRoutingView)
         refreshMidiDevices();
 
-    tabs.setVisible(!showingRoutingView);
+    tabs.setVisible(!showingRoutingView && !showingPointerControlView);
     routingView.setVisible(showingRoutingView);
+    pointerControlView.setVisible(showingPointerControlView);
 
     if (auto* item = toolbar.getItemComponent(toolbarRoutingToggle))
     {
@@ -3298,6 +3463,14 @@ void MainComponent::refreshRoutingView()
         else
             entry.midiAssignmentCount = 0;
 
+        if (const auto* pointerState = getPointerSettingsForTab(tabIndex))
+        {
+            entry.pointerUseTabSettings = pointerState->useTabSettings;
+            entry.pointerJumpFilter = pointerState->jumpFilter;
+            entry.pointerMaxStepSize = pointerState->maxStepSize;
+            entry.pointerStepMultiplier = pointerState->stepMultiplier;
+        }
+
         juce::StringArray relatedNames;
 
         if (tc->getType() == PluginTabComponent::SlotType::Synth && !tc->isBypassed())
@@ -3367,6 +3540,41 @@ void MainComponent::refreshRoutingView()
     }
 
     routingView.setModules(modules);
+}
+
+void MainComponent::setPointerControlViewVisible(bool shouldShow)
+{
+    showingPointerControlView = shouldShow;
+
+    if (showingPointerControlView)
+        showingRoutingView = false;
+
+    pointerControl.resetInteractionState();
+
+    tabs.setVisible(!showingPointerControlView && !showingRoutingView);
+    routingView.setVisible(showingRoutingView);
+    pointerControlView.setVisible(showingPointerControlView);
+
+    if (auto* item = toolbar.getItemComponent(toolbarPointerControl))
+    {
+        item->setToggleState(showingPointerControlView, juce::dontSendNotification);
+        item->repaint();
+    }
+
+    if (auto* item = toolbar.getItemComponent(toolbarRoutingToggle))
+    {
+        item->setToggleState(showingRoutingView, juce::dontSendNotification);
+        item->repaint();
+    }
+
+    toolbar.repaint();
+    repaint();
+    resized();
+}
+
+void MainComponent::togglePointerControlView()
+{
+    setPointerControlViewVisible(!showingPointerControlView);
 }
 
 bool MainComponent::shouldAutoAssignMidiToNewTabs() const
@@ -3748,5 +3956,140 @@ void MainComponent::updateStatusBarText()
 
     statusBar.setText("PolyHostInterface  |  " + midiText + "  |  " + tempoModeText + "  |  Ready",
                       juce::dontSendNotification);
+}
+
+MainComponent::PointerTabSettings* MainComponent::getPointerSettingsForTab(int tabIndex)
+{
+    for (auto& state : pointerTabSettings)
+        if (state.tabIndex == tabIndex)
+            return &state;
+
+    return nullptr;
+}
+
+const MainComponent::PointerTabSettings* MainComponent::getPointerSettingsForTab(int tabIndex) const
+{
+    for (auto& state : pointerTabSettings)
+        if (state.tabIndex == tabIndex)
+            return &state;
+
+    return nullptr;
+}
+
+void MainComponent::ensurePointerSettingsForCurrentTabs()
+{
+    juce::Array<int> existingTabs;
+
+    for (int i = 0; i < tabs.getNumTabs(); ++i)
+        existingTabs.add(i);
+
+    for (int i = pointerTabSettings.size(); --i >= 0;)
+    {
+        if (!existingTabs.contains(pointerTabSettings.getReference(i).tabIndex))
+            pointerTabSettings.remove(i);
+    }
+
+    for (int i = 0; i < tabs.getNumTabs(); ++i)
+    {
+        if (getPointerSettingsForTab(i) == nullptr)
+        {
+            PointerTabSettings state;
+            state.tabIndex = i;
+            state.useTabSettings = false;
+            state.jumpFilter = settings.getPointerControlDiscontinuityThreshold();
+            state.maxStepSize = settings.getPointerControlDeltaClamp();
+            state.stepMultiplier = 1;
+            pointerTabSettings.add(state);
+        }
+    }
+}
+
+void MainComponent::applyPointerSettingsToCurrentTab()
+{
+    auto currentIndex = tabs.getCurrentTabIndex();
+    auto* tabState = getPointerSettingsForTab(currentIndex);
+
+    if (tabState != nullptr && tabState->useTabSettings)
+    {
+        pointerControl.setDiscontinuityThreshold(tabState->jumpFilter);
+        pointerControl.setDeltaClamp(tabState->maxStepSize);
+        pointerControl.setStepMultiplier(tabState->stepMultiplier);
+    }
+    else
+    {
+        pointerControl.setDiscontinuityThreshold(settings.getPointerControlDiscontinuityThreshold());
+        pointerControl.setDeltaClamp(settings.getPointerControlDeltaClamp());
+        pointerControl.setStepMultiplier(1);
+    }
+
+    pointerControl.resetInteractionState();
+}
+
+void MainComponent::setPointerTabUseOverride(int tabIndex, bool shouldUse)
+{
+    ensurePointerSettingsForCurrentTabs();
+
+    if (auto* state = getPointerSettingsForTab(tabIndex))
+    {
+        state->useTabSettings = shouldUse;
+        applyPointerSettingsToCurrentTab();
+        refreshRoutingView();
+        markSessionDirty();
+    }
+}
+
+void MainComponent::setPointerTabJumpFilter(int tabIndex, int value)
+{
+    ensurePointerSettingsForCurrentTabs();
+
+    if (auto* state = getPointerSettingsForTab(tabIndex))
+    {
+        state->jumpFilter = juce::jlimit(1, 127, value);
+        applyPointerSettingsToCurrentTab();
+        refreshRoutingView();
+        markSessionDirty();
+    }
+}
+
+void MainComponent::setPointerTabMaxStepSize(int tabIndex, int value)
+{
+    ensurePointerSettingsForCurrentTabs();
+
+    if (auto* state = getPointerSettingsForTab(tabIndex))
+    {
+        state->maxStepSize = juce::jlimit(1, 32, value);
+        applyPointerSettingsToCurrentTab();
+        refreshRoutingView();
+        markSessionDirty();
+    }
+}
+
+void MainComponent::setPointerTabStepMultiplier(int tabIndex, int value)
+{
+    ensurePointerSettingsForCurrentTabs();
+
+    if (auto* state = getPointerSettingsForTab(tabIndex))
+    {
+        state->stepMultiplier = juce::jlimit(1, 8, value);
+        applyPointerSettingsToCurrentTab();
+        refreshRoutingView();
+        markSessionDirty();
+    }
+}
+
+void MainComponent::resetPointerTabSettingsToDefaults(int tabIndex)
+{
+    ensurePointerSettingsForCurrentTabs();
+
+    if (auto* state = getPointerSettingsForTab(tabIndex))
+    {
+        state->useTabSettings = true;
+        state->jumpFilter = 12;
+        state->maxStepSize = 4;
+        state->stepMultiplier = 1;
+        applyPointerSettingsToCurrentTab();
+        refreshRoutingView();
+        markSessionDirty();
+    }
 }
 

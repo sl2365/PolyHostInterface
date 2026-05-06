@@ -42,6 +42,10 @@ bool SessionManager::saveSessionToFile(const SessionData& session, const juce::F
         tabXml->setAttribute("hasSavedWindowBounds", tab.hasSavedWindowBounds);
         tabXml->setAttribute("savedWindowWidth", tab.savedWindowWidth);
         tabXml->setAttribute("savedWindowHeight", tab.savedWindowHeight);
+        tabXml->setAttribute("pointerControlUseTabSettings", tab.pointerControlUseTabSettings);
+        tabXml->setAttribute("pointerControlJumpFilter", tab.pointerControlJumpFilter);
+        tabXml->setAttribute("pointerControlMaxStepSize", tab.pointerControlMaxStepSize);
+        tabXml->setAttribute("pointerControlStepMultiplier", tab.pointerControlStepMultiplier);
 
         if (!tab.midiAssignedDeviceIdentifiers.isEmpty())
         {
@@ -104,6 +108,10 @@ bool SessionManager::loadSessionFromFile(const juce::File& file,
         tab.hasSavedWindowBounds = tabXml->getBoolAttribute("hasSavedWindowBounds", false);
         tab.savedWindowWidth = tabXml->getIntAttribute("savedWindowWidth", 0);
         tab.savedWindowHeight = tabXml->getIntAttribute("savedWindowHeight", 0);
+        tab.pointerControlUseTabSettings = tabXml->getBoolAttribute("pointerControlUseTabSettings", false);
+        tab.pointerControlJumpFilter = tabXml->getIntAttribute("pointerControlJumpFilter", 12);
+        tab.pointerControlMaxStepSize = tabXml->getIntAttribute("pointerControlMaxStepSize", 4);
+        tab.pointerControlStepMultiplier = tabXml->getIntAttribute("pointerControlStepMultiplier", 1);
 
         if (auto* midiAssignmentsXml = tabXml->getChildByName("MidiAssignments"))
         {

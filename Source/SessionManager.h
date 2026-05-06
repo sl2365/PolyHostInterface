@@ -35,6 +35,12 @@ struct SessionTabData
     int savedWindowWidth = 0;
     int savedWindowHeight = 0;
     juce::StringArray midiAssignedDeviceIdentifiers;
+
+    bool pointerControlUseTabSettings = false;
+    int pointerControlJumpFilter = 12;
+    int pointerControlMaxStepSize = 4;
+    int pointerControlStepMultiplier = 1;
+
     bool hasPlugin = false;
     SessionPluginData plugin;
 };

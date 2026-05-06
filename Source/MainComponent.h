@@ -10,6 +10,8 @@
 #include "SessionManager.h"
 #include "StandaloneTempoSupport.h"
 #include "ButtonStyling.h"
+#include "PointerControl.h"
+#include "PointerControlView.h"
 
 namespace
 {
@@ -279,6 +281,15 @@ private:
         juce::StringArray assignedDeviceIdentifiers;
     };
 
+    struct PointerTabSettings
+    {
+        int tabIndex = -1;
+        bool useTabSettings = false;
+        int jumpFilter = 12;
+        int maxStepSize = 4;
+        int stepMultiplier = 1;
+    };
+
     // Core UI / tab helpers
     void addEmptyTab();
     void rebuildVisibleTabs();
@@ -310,6 +321,8 @@ private:
     void refreshRoutingView();
     void resizeWindowForRoutingView();
     void resetRoutingWindowSizeToDefault();
+    void setPointerControlViewVisible(bool shouldShow);
+    void togglePointerControlView();
 
     void syncRoutingToAudioEngine();
     void autoAssignGlobalMidiToTabIfAppropriate(int tabIndex);
@@ -323,6 +336,7 @@ private:
     void showAboutDialog();
     enum ToolbarItemIds
     {
+        toolbarPointerControl         = 10000,
         toolbarRoutingToggle          = 10001,
         toolbarRefitWindow            = 10002,
         toolbarSavePreset             = 10003,
@@ -354,6 +368,7 @@ private:
     void assignAllEnabledMidiDevicesToTab(int tabIndex);
     void clearMidiAssignmentsForTab(int tabIndex);
     juce::Array<MidiTabRoutingState> midiRoutingStates;
+    juce::Array<PointerTabSettings> pointerTabSettings;
     void showMidiAssignmentsCallout(int tabIndex, juce::Component* anchorComponent);
     void refreshMidiDevices();
     void applyMidiAutoAssignModeToExistingTabs();
@@ -446,6 +461,7 @@ private:
     PresetNamePromptHelper presetNamePromptHelper;
     AudioEngine audioEngine;
     MidiEngine midiEngine { audioEngine.getDeviceManager() };
+    PointerControl pointerControl;
     bool saveCurrentSessionOrSaveAs();
     void handleSuccessfulPresetSave(const juce::File& file);
 
@@ -460,6 +476,9 @@ private:
     juce::Toolbar toolbar;
     RoutingView routingView;
     bool showingRoutingView = false;
+    PointerControlView pointerControlView;
+    bool showingPointerControlView = false;
+
     std::unique_ptr<MidiMonitorWindow> midiMonitorWindow;
     juce::File lastPluginRepairDirectory;
     bool isLoadingPreset = false;
@@ -469,6 +488,16 @@ private:
     bool suppressDirtyForSinglePluginQuickOpen = false;
     juce::Array<MissingPluginEntry> unresolvedMissingPlugins;
     PresetComboBox presetDropdown;
+
+    PointerTabSettings* getPointerSettingsForTab(int tabIndex);
+    const PointerTabSettings* getPointerSettingsForTab(int tabIndex) const;
+    void ensurePointerSettingsForCurrentTabs();
+    void applyPointerSettingsToCurrentTab();
+    void setPointerTabUseOverride(int tabIndex, bool shouldUse);
+    void setPointerTabJumpFilter(int tabIndex, int value);
+    void setPointerTabMaxStepSize(int tabIndex, int value);
+    void setPointerTabStepMultiplier(int tabIndex, int value);
+    void resetPointerTabSettingsToDefaults(int tabIndex);
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(MainComponent)
 };
