@@ -22,7 +22,7 @@ I always liked tools like TobyBear's MiniHost, SaviHost and Tone2's NanoHost. Bu
 | Audio/MIDI recording | 🔲 Planned |
 | PointerCC functionality | ✅ Working - WIP-basics only |
 | Standalone App | ✅ Working |
-| VST3 Plugin | 🔲 Planned |
+| VST3 Plugin for use in other hosts | 🔲 Planned |
 
 ## Folder Structure
 

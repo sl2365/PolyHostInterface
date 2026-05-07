@@ -16,13 +16,8 @@ static constexpr const char* kDeviceTag                     = "Device";
 static constexpr const char* kIdentifierAttribute           = "identifier";
 static constexpr const char* kNameAttribute                 = "name";
 static constexpr const char* kDebugLoggingEnabled           = "debugLoggingEnabled";
-static constexpr const char* kPointerControlDebugLoggingEnabled = "pointerControlDebugLoggingEnabled";
 static constexpr const char* kAdvancedDebugLoggingEnabled   = "advancedDebugLoggingEnabled";
 static constexpr const char* kClearDebugLogOnStartup        = "clearDebugLogOnStartup";
-static constexpr const char* kPointerControlEnabled                = "pointerControlEnabled";
-static constexpr const char* kPointerControlAdjustCcNumber         = "pointerControlAdjustCcNumber";
-static constexpr const char* kPointerControlDiscontinuityThreshold = "pointerControlDiscontinuityThreshold";
-static constexpr const char* kPointerControlDeltaClamp             = "pointerControlDeltaClamp";
 static constexpr auto kLastPresetPath   = "lastPresetPath";
 static constexpr auto kRecentPresets    = "recentPresets";
 static constexpr auto kWindowX              = "windowX";
@@ -60,61 +55,6 @@ void AppSettings::setAdvancedDebugLoggingEnabled(bool shouldEnable)
 void AppSettings::setClearDebugLogOnStartup(bool shouldClear)
 {
     xml->setAttribute(kClearDebugLogOnStartup, shouldClear);
-    save();
-}
-
-bool AppSettings::getPointerControlDebugLoggingEnabled() const
-{
-    return xml->getBoolAttribute(kPointerControlDebugLoggingEnabled, false);
-}
-
-void AppSettings::setPointerControlDebugLoggingEnabled(bool shouldEnable)
-{
-    xml->setAttribute(kPointerControlDebugLoggingEnabled, shouldEnable);
-    save();
-}
-
-bool AppSettings::getPointerControlEnabled() const
-{
-    return xml->getBoolAttribute(kPointerControlEnabled, true);
-}
-
-void AppSettings::setPointerControlEnabled(bool shouldEnable)
-{
-    xml->setAttribute(kPointerControlEnabled, shouldEnable);
-    save();
-}
-
-int AppSettings::getPointerControlAdjustCcNumber() const
-{
-    return xml->getIntAttribute(kPointerControlAdjustCcNumber, 74);
-}
-
-void AppSettings::setPointerControlAdjustCcNumber(int ccNumber)
-{
-    xml->setAttribute(kPointerControlAdjustCcNumber, juce::jlimit(0, 127, ccNumber));
-    save();
-}
-
-int AppSettings::getPointerControlDiscontinuityThreshold() const
-{
-    return xml->getIntAttribute(kPointerControlDiscontinuityThreshold, 12);
-}
-
-void AppSettings::setPointerControlDiscontinuityThreshold(int threshold)
-{
-    xml->setAttribute(kPointerControlDiscontinuityThreshold, juce::jlimit(1, 127, threshold));
-    save();
-}
-
-int AppSettings::getPointerControlDeltaClamp() const
-{
-    return xml->getIntAttribute(kPointerControlDeltaClamp, 4);
-}
-
-void AppSettings::setPointerControlDeltaClamp(int clampAmount)
-{
-    xml->setAttribute(kPointerControlDeltaClamp, juce::jlimit(1, 32, clampAmount));
     save();
 }
 

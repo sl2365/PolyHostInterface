@@ -16,21 +16,6 @@ public:
     bool getClearDebugLogOnStartup() const;
     void setClearDebugLogOnStartup(bool shouldClear);
 
-    bool getPointerControlDebugLoggingEnabled() const;
-    void setPointerControlDebugLoggingEnabled(bool shouldEnable);
-
-    bool getPointerControlEnabled() const;
-    void setPointerControlEnabled(bool shouldEnable);
-
-    int getPointerControlAdjustCcNumber() const;
-    void setPointerControlAdjustCcNumber(int ccNumber);
-
-    int getPointerControlDiscontinuityThreshold() const;
-    void setPointerControlDiscontinuityThreshold(int threshold);
-
-    int getPointerControlDeltaClamp() const;
-    void setPointerControlDeltaClamp(int clampAmount);
-
     AppSettings();
     void load();
     void save();

@@ -61,6 +61,14 @@ public:
             }
         }
 
+        void resized() override
+        {
+            DocumentWindow::resized();
+
+            if (mainComponent != nullptr && mainComponent->isShowingRoutingView())
+                mainComponent->saveCurrentRoutingWindowSize();
+        }
+
         void handleCommandLine(const juce::String& cmdLine)
         {
             juce::StringArray tokens;

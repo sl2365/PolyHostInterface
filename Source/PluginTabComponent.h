@@ -53,7 +53,6 @@ public:
     juce::PluginDescription getLoadedPluginDescription() const;
     juce::MemoryBlock getPluginState() const;
     bool restorePluginState(const juce::MemoryBlock& state);
-    juce::AudioProcessorEditor* getPluginEditor() const { return pluginEditor.get(); }
 
     void setSavedWindowBounds(int width, int height);
     void clearSavedWindowBounds();
