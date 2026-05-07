@@ -125,6 +125,7 @@ public:
     juce::StringArray getMenuBarNames() override;
     juce::PopupMenu getMenuForIndex(int index, const juce::String& name) override;
     void menuItemSelected(int itemId, int menuIndex) override;
+    PluginTabComponent* getSettingsSafeCurrentTabForOverlay() const;
 
     bool isShowingRoutingView() const { return showingRoutingView; }
     void saveCurrentRoutingWindowSize();
@@ -132,6 +133,8 @@ public:
     AppSettings& getSettings() { return settings; }
 
 private:
+    class PointerEditOverlayWindow;
+
     class PresetComboBox final : public juce::ComboBox
     {
     public:
@@ -328,14 +331,15 @@ private:
     enum ToolbarItemIds
     {
         toolbarRoutingToggle          = 10001,
-        toolbarRefitWindow            = 10002,
-        toolbarSavePreset             = 10003,
-        toolbarSavePresetAs           = 10004,
-        toolbarSpacer                 = 10005,
-        toolbarRevertPreset           = 10006,
-        toolbarMidiPanic              = 10007,
-        toolbarSaveTabWindowSize      = 10008,
-        toolbarClearTabWindowSize     = 10009
+        toolbarPointerControlEdit     = 10002,
+        toolbarRefitWindow            = 10003,
+        toolbarSavePreset             = 10004,
+        toolbarSavePresetAs           = 10005,
+        toolbarSpacer                 = 10006,
+        toolbarRevertPreset           = 10007,
+        toolbarMidiPanic              = 10008,
+        toolbarSaveTabWindowSize      = 10009,
+        toolbarClearTabWindowSize     = 10010
     };
     enum MenuItemIds
     {
@@ -389,6 +393,12 @@ private:
     void saveCurrentWindowSizeForCurrentTab();
     void clearSavedWindowSizeForCurrentTab();
     void handleCurrentTabChanged();
+
+    void setPointerControlEditMode(bool shouldEnable);
+    void togglePointerControlEditMode();
+    bool isPointerControlEditModeEnabled() const;
+    void updatePointerEditOverlay();
+    void destroyPointerEditOverlay();
 
     SessionData buildSessionData() const;
     void applySessionData(const SessionData& session,
@@ -478,6 +488,8 @@ private:
     PointerControl pointerControl;
     int lastPointerAdjustCcValue = -1;
     void refreshPointerControlTarget();
+    bool pointerControlEditModeEnabled = false;
+    std::unique_ptr<PointerEditOverlayWindow> pointerEditOverlayWindow;
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(MainComponent)
 };

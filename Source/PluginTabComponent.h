@@ -2,6 +2,7 @@
 #include <JuceHeader.h>
 #include "SessionManager.h"
 #include "ClapPluginWrapper.h"
+#include "PointerControl.h"
 
 class AudioEngine;
 
@@ -59,6 +60,13 @@ public:
     bool hasSavedWindowBounds() const;
     juce::Rectangle<int> getSavedWindowBounds() const;
 
+    void setPointerControlEditMode(bool shouldEnable);
+    bool isPointerControlEditMode() const;
+
+    const juce::Array<PointerControl::JumpPoint>& getPointerJumpPoints() const;
+    void setPointerJumpPoints(const juce::Array<PointerControl::JumpPoint>& newPoints);
+    void addPointerJumpPoint(juce::Point<float> position);
+
     std::function<void(const juce::File&)> onOpenDroppedPluginInNewTab;
     std::function<void()> onPluginLoadedDirectly;
 
@@ -102,6 +110,9 @@ private:
     bool allowEditorWindowResize = true;
     bool bypassed = false;
     juce::MemoryBlock pluginStateBaseline;
+
+    juce::Array<PointerControl::JumpPoint> pointerJumpPoints;
+    bool pointerControlEditMode = false;
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(PluginTabComponent)
 };

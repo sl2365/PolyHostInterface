@@ -356,6 +356,8 @@ void PluginTabComponent::clearPlugin()
     bypassed = false;
     clearPluginStateBaseline();
     preferredEditorBounds = { 0, 0, 360, 220 };
+    pointerJumpPoints.clear();
+    setPointerControlEditMode(false);
 
     loadButton.setVisible(true);
     statusLabel.setVisible(true);
@@ -606,6 +608,41 @@ bool PluginTabComponent::hasSavedWindowBounds() const
 juce::Rectangle<int> PluginTabComponent::getSavedWindowBounds() const
 {
     return savedWindowBounds;
+}
+
+void PluginTabComponent::setPointerControlEditMode(bool shouldEnable)
+{
+    if (pointerControlEditMode == shouldEnable)
+        return;
+
+    pointerControlEditMode = shouldEnable;
+    repaint();
+}
+
+bool PluginTabComponent::isPointerControlEditMode() const
+{
+    return pointerControlEditMode;
+}
+
+const juce::Array<PointerControl::JumpPoint>& PluginTabComponent::getPointerJumpPoints() const
+{
+    return pointerJumpPoints;
+}
+
+void PluginTabComponent::setPointerJumpPoints(const juce::Array<PointerControl::JumpPoint>& newPoints)
+{
+    pointerJumpPoints = newPoints;
+    repaint();
+}
+
+void PluginTabComponent::addPointerJumpPoint(juce::Point<float> position)
+{
+    PointerControl::JumpPoint point;
+    point.x = position.x;
+    point.y = position.y;
+    pointerJumpPoints.add(point);
+
+    sendChangeMessage();
 }
 
 juce::MemoryBlock PluginTabComponent::getPluginState() const

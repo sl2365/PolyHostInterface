@@ -187,6 +187,62 @@ namespace
         juce::Label infoLabel;
         juce::TextButton closeButton;
     };
+
+    class PointerEditOverlayContent final : public juce::Component
+    {
+    public:
+        explicit PointerEditOverlayContent(MainComponent& ownerIn)
+            : owner(ownerIn)
+        {
+            setInterceptsMouseClicks(true, true);
+        }
+
+        void paint(juce::Graphics& g) override
+        {
+            g.fillAll(juce::Colours::black.withAlpha(0.10f));
+
+            auto bounds = getLocalBounds();
+            auto banner = bounds.removeFromTop(24);
+
+            g.setColour(juce::Colours::black.withAlpha(0.45f));
+            g.fillRect(banner);
+
+            g.setColour(juce::Colours::white);
+            g.setFont(juce::Font(juce::FontOptions(14.0f, juce::Font::bold)));
+            g.drawText("Pointer Control Edit Mode Enabled",
+                       banner.reduced(8, 0),
+                       juce::Justification::centredLeft);
+
+            if (auto* tc = owner.getSettingsSafeCurrentTabForOverlay())
+            {
+                const auto& points = tc->getPointerJumpPoints();
+
+                g.setColour(juce::Colours::limegreen);
+
+                for (int i = 0; i < points.size(); ++i)
+                {
+                    const auto& point = points.getReference(i);
+                    auto r = juce::Rectangle<float>(point.x - 2.0f,
+                                                    point.y - 2.0f,
+                                                    4.0f,
+                                                    4.0f);
+                    g.fillEllipse(r);
+                }
+            }
+        }
+
+        void mouseDown(const juce::MouseEvent& event) override
+        {
+            if (auto* tc = owner.getSettingsSafeCurrentTabForOverlay())
+            {
+                tc->addPointerJumpPoint(event.position);
+                repaint();
+            }
+        }
+
+    private:
+        MainComponent& owner;
+    };
 }
 
     class FixedWidthSpacer final : public juce::ToolbarItemComponent
@@ -215,6 +271,37 @@ namespace
     private:
         int width = 10;
     };
+
+class MainComponent::PointerEditOverlayWindow final : public juce::DocumentWindow
+{
+public:
+    explicit PointerEditOverlayWindow(MainComponent& ownerIn)
+        : juce::DocumentWindow("PointerEditOverlay",
+                               juce::Colours::transparentBlack,
+                               0),
+          owner(ownerIn)
+    {
+        setUsingNativeTitleBar(false);
+        setOpaque(false);
+        setResizable(false, false);
+        setAlwaysOnTop(true);
+        setTitleBarHeight(0);
+        setContentOwned(new PointerEditOverlayContent(owner), true);
+    }
+
+    void closeButtonPressed() override
+    {
+    }
+
+    void refresh()
+    {
+        if (auto* content = getContentComponent())
+            content->repaint();
+    }
+
+private:
+    MainComponent& owner;
+};
 
 void MainComponent::AddTabButton::paintButton(juce::Graphics& g, bool isMouseOverButton, bool /*isButtonDown*/)
 {
@@ -510,6 +597,7 @@ MainComponent::MainComponent()
 
 MainComponent::~MainComponent()
 {
+    destroyPointerEditOverlay();
     tabs.getTabbedButtonBar().removeMouseListener(&tabBarMouseListener);
     tabs.getTabbedButtonBar().removeChangeListener(this);
     tabs.getTabbedButtonBar().setLookAndFeel(nullptr);
@@ -547,6 +635,18 @@ SessionData MainComponent::buildSessionData() const
 
             if (auto* midiState = getMidiRoutingStateForTab(i))
                 tab.midiAssignedDeviceIdentifiers = midiState->assignedDeviceIdentifiers;
+
+            const auto& jumpPoints = tc->getPointerJumpPoints();
+
+            for (int pointIndex = 0; pointIndex < jumpPoints.size(); ++pointIndex)
+            {
+                const auto& point = jumpPoints.getReference(pointIndex);
+
+                SessionPointerPoint sessionPoint;
+                sessionPoint.x = point.x;
+                sessionPoint.y = point.y;
+                tab.pointerPoints.add(sessionPoint);
+            }
 
             if (tc->hasPlugin())
             {
@@ -623,6 +723,22 @@ void MainComponent::applySessionData(const SessionData& session,
             else
             {
                 tc->clearSavedWindowBounds();
+            }
+
+            {
+                juce::Array<PointerControl::JumpPoint> jumpPoints;
+
+                for (int pointIndex = 0; pointIndex < tabData.pointerPoints.size(); ++pointIndex)
+                {
+                    const auto& sessionPoint = tabData.pointerPoints.getReference(pointIndex);
+
+                    PointerControl::JumpPoint point;
+                    point.x = sessionPoint.x;
+                    point.y = sessionPoint.y;
+                    jumpPoints.add(point);
+                }
+
+                tc->setPointerJumpPoints(jumpPoints);
             }
 
             if (tabData.hasPlugin)
@@ -1148,6 +1264,83 @@ PluginTabComponent* MainComponent::getTabComponent(int index) const
     return pluginTabs[index];
 }
 
+PluginTabComponent* MainComponent::getSettingsSafeCurrentTabForOverlay() const
+{
+    return getTabComponent(tabs.getCurrentTabIndex());
+}
+
+void MainComponent::setPointerControlEditMode(bool shouldEnable)
+{
+    pointerControlEditModeEnabled = shouldEnable;
+
+    for (int i = 0; i < pluginTabs.size(); ++i)
+    {
+        if (auto* tc = getTabComponent(i))
+            tc->setPointerControlEditMode(i == tabs.getCurrentTabIndex() && pointerControlEditModeEnabled);
+    }
+
+    if (auto* item = toolbar.getItemComponent(toolbarPointerControlEdit))
+    {
+        item->setToggleState(pointerControlEditModeEnabled, juce::dontSendNotification);
+        item->repaint();
+    }
+
+    toolbar.repaint();
+    updatePointerEditOverlay();
+}
+
+void MainComponent::togglePointerControlEditMode()
+{
+    setPointerControlEditMode(!pointerControlEditModeEnabled);
+}
+
+bool MainComponent::isPointerControlEditModeEnabled() const
+{
+    return pointerControlEditModeEnabled;
+}
+
+void MainComponent::destroyPointerEditOverlay()
+{
+    if (pointerEditOverlayWindow != nullptr)
+    {
+        pointerEditOverlayWindow->setVisible(false);
+        pointerEditOverlayWindow.reset();
+    }
+}
+
+void MainComponent::updatePointerEditOverlay()
+{
+    if (!pointerControlEditModeEnabled)
+    {
+        destroyPointerEditOverlay();
+        return;
+    }
+
+    auto* tc = getTabComponent(tabs.getCurrentTabIndex());
+
+    if (tc == nullptr || !tc->isShowing())
+    {
+        destroyPointerEditOverlay();
+        return;
+    }
+
+    auto screenBounds = tc->getScreenBounds();
+
+    if (screenBounds.isEmpty())
+    {
+        destroyPointerEditOverlay();
+        return;
+    }
+
+    if (pointerEditOverlayWindow == nullptr)
+        pointerEditOverlayWindow = std::make_unique<PointerEditOverlayWindow>(*this);
+
+    pointerEditOverlayWindow->setBounds(screenBounds);
+    pointerEditOverlayWindow->setVisible(true);
+    pointerEditOverlayWindow->toFront(true);
+    pointerEditOverlayWindow->refresh();
+}
+
 void MainComponent::handleCurrentTabChanged()
 {
     for (int i = 0; i < tabs.getNumTabs(); ++i)
@@ -1155,6 +1348,14 @@ void MainComponent::handleCurrentTabChanged()
 
     refreshRoutingView();
     refreshPointerControlTarget();
+
+    for (int i = 0; i < pluginTabs.size(); ++i)
+    {
+        if (auto* tc = getTabComponent(i))
+            tc->setPointerControlEditMode(i == tabs.getCurrentTabIndex() && pointerControlEditModeEnabled);
+    }
+
+    updatePointerEditOverlay();
 
     if (!showingRoutingView)
         resizeWindowToFitCurrentTab();
@@ -1294,6 +1495,8 @@ void MainComponent::resized()
                            tabs.getY() + plusButtonMarginTop,
                            plusButtonWidth,
                            plusButtonHeight);
+
+    updatePointerEditOverlay();
 }
 
 juce::StringArray MainComponent::getMenuBarNames() { return { "File", "Audio", "MIDI", "Recording", "Options", "Help" }; }
@@ -3039,6 +3242,8 @@ void MainComponent::getAllToolbarItemIds(juce::Array<int>& ids)
 {
     ids.add(toolbarRoutingToggle);
     ids.add(toolbarSpacer);
+    ids.add(toolbarPointerControlEdit);
+    ids.add(toolbarSpacer);
     ids.add(toolbarRefitWindow);
     ids.add(toolbarSpacer);
     ids.add(toolbarSaveTabWindowSize);
@@ -3057,6 +3262,8 @@ void MainComponent::getAllToolbarItemIds(juce::Array<int>& ids)
 void MainComponent::getDefaultItemSet(juce::Array<int>& ids)
 {
     ids.add(toolbarRoutingToggle);
+    ids.add(toolbarSpacer);
+    ids.add(toolbarPointerControlEdit);
     ids.add(toolbarSpacer);
     ids.add(toolbarRefitWindow);
     ids.add(toolbarSpacer);
@@ -3078,6 +3285,7 @@ juce::String MainComponent::getToolbarIconGlyph(int itemId)
     switch (itemId)
     {
         case toolbarRoutingToggle:      return ButtonStyling::Glyphs::routing();
+        case toolbarPointerControlEdit: return ButtonStyling::Glyphs::pointerControl();
         case toolbarRefitWindow:        return ButtonStyling::Glyphs::fitWindow();
         case toolbarSavePreset:         return ButtonStyling::Glyphs::save();
         case toolbarSavePresetAs:       return ButtonStyling::Glyphs::saveAs();
@@ -3111,6 +3319,26 @@ juce::ToolbarItemComponent* MainComponent::createItem(int itemId)
         };
 
         button->setToggleState(showingRoutingView, juce::dontSendNotification);
+        return button;
+    }
+
+    if (itemId == toolbarPointerControlEdit)
+    {
+        auto* button = new ButtonStyling::ToolbarIconButton(itemId,
+                                               ButtonStyling::Tooltips::pointerControlEditMode(),
+                                               getToolbarIconGlyph(itemId),
+                                               ButtonStyling::ToolbarIconButton::ContentType::IconGlyph,
+                                               ButtonStyling::defaultButtonWidth(),
+                                               [this] { return isPointerControlEditModeEnabled(); });
+
+        button->onClick = [this, button]
+        {
+            togglePointerControlEditMode();
+            button->setToggleState(isPointerControlEditModeEnabled(), juce::dontSendNotification);
+            button->repaint();
+        };
+
+        button->setToggleState(isPointerControlEditModeEnabled(), juce::dontSendNotification);
         return button;
     }
 
@@ -3814,13 +4042,16 @@ void MainComponent::refreshPointerControlTarget()
         return;
     }
 
-    auto editorBounds = tc->getScreenBounds();
+    auto targetBounds = tc->getScreenBounds();
 
-    if (editorBounds.isEmpty())
+    if (targetBounds.isEmpty())
     {
         pointerControl.clearTarget();
         return;
     }
 
-    pointerControl.setTargetScreenBounds(editorBounds);
+    pointerControl.setTargetScreenBounds(targetBounds);
+
+    const auto& jumpPoints = tc->getPointerJumpPoints();
+    pointerControl.setJumpPoints(jumpPoints, targetBounds);
 }
