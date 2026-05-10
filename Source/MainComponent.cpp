@@ -149,6 +149,8 @@ namespace
             configureLabel(yCcLabel, "Y CC:", juce::Justification::centredRight);
             configureLabel(adjustCcLabel, "Adjust CC:", juce::Justification::centredRight);
             configureLabel(toleranceCcLabel, "Tolerance CC:", juce::Justification::centredRight);
+            configureLabel(sensitivityCcLabel, "Sensitivity CC:", juce::Justification::centredRight);
+            configureLabel(adjustSensitivityLabel, "Adjust Sens:", juce::Justification::centredRight);
             configureLabel(xWeightLabel, "X Weight:", juce::Justification::centredRight);
             configureLabel(yWeightLabel, "Y Weight:", juce::Justification::centredRight);
             configureLabel(overlayTransparencyLabel, "Overlay\nTransparency:", juce::Justification::centredRight);
@@ -165,6 +167,8 @@ namespace
             configureTipLabel(tipXcc, "Horizontal pointer control movement.");
             configureTipLabel(tipYcc, "Vertical pointer control movement.");
             configureTipLabel(tipAdjustCc, "Used to adjust software parameters.");
+            configureTipLabel(tipAdjustSensitivity, "Repeats adjust steps per encoder movement. Higher values help stubborn plugin controls.");
+            configureTipLabel(tipSensitivityCc, "MIDI CC used to control Adjust Sensitivity live.");
             configureTipLabel(tipWeights, "Fallback snap weighting. (Legacy?)\nDefaults: X=1.0  Y=0.2");
             configureTipLabel(tipOverlay, "Overlay darkness while editing.");
             configureTipLabel(tipPointSize, "Size of saved jump-point colour markers.");
@@ -176,7 +180,10 @@ namespace
             configureCcEditor(yCcEditor, settings.getPointerControlYccNumber());
             configureCcEditor(adjustCcEditor, settings.getPointerControlAdjustCcNumber());
             configureCcEditor(toleranceCcEditor, settings.getPointerControlToleranceCcNumber());
-
+            configureCcEditor(sensitivityCcEditor, settings.getPointerControlSensitivityCcNumber());
+            configureIntegerEditor(adjustSensitivityEditor,
+                                   settings.getPointerControlAdjustSensitivity(),
+                                   1, 20);
             configureWeightEditor(xWeightEditor, settings.getPointerControlXSnapWeight());
             configureWeightEditor(yWeightEditor, settings.getPointerControlYSnapWeight());
 
@@ -211,10 +218,12 @@ namespace
 
         void apply()
         {
-            settings.setPointerControlXccNumber(parseInt(xCcEditor.getText(), 76, 0, 127));
-            settings.setPointerControlYccNumber(parseInt(yCcEditor.getText(), 77, 0, 127));
-            settings.setPointerControlAdjustCcNumber(parseInt(adjustCcEditor.getText(), 78, 0, 127));
-            settings.setPointerControlToleranceCcNumber(parseInt(toleranceCcEditor.getText(), 75, 0, 127));
+            settings.setPointerControlXccNumber(parseInt(xCcEditor.getText(), 24, 0, 127));
+            settings.setPointerControlYccNumber(parseInt(yCcEditor.getText(), 25, 0, 127));
+            settings.setPointerControlAdjustCcNumber(parseInt(adjustCcEditor.getText(), 26, 0, 127));
+            settings.setPointerControlToleranceCcNumber(parseInt(toleranceCcEditor.getText(), 22, 0, 127));
+            settings.setPointerControlSensitivityCcNumber(parseInt(sensitivityCcEditor.getText(), 23, 0, 127));
+            settings.setPointerControlAdjustSensitivity(parseInt(adjustSensitivityEditor.getText(), 1, 1, 20));
 
             settings.setPointerControlXSnapWeight(parseFloat(xWeightEditor.getText(), 1.0f, 0.001f, 100.0f));
             settings.setPointerControlYSnapWeight(parseFloat(yWeightEditor.getText(), 0.20f, 0.001f, 100.0f));
@@ -242,13 +251,15 @@ namespace
 
         void resetToDefaults()
         {
-            xCcEditor.setText("76", juce::dontSendNotification);
-            yCcEditor.setText("77", juce::dontSendNotification);
-            adjustCcEditor.setText("78", juce::dontSendNotification);
-            toleranceCcEditor.setText("75", juce::dontSendNotification);
+            xCcEditor.setText("24", juce::dontSendNotification);
+            yCcEditor.setText("25", juce::dontSendNotification);
+            adjustCcEditor.setText("26", juce::dontSendNotification);
+            toleranceCcEditor.setText("22", juce::dontSendNotification);
+            sensitivityCcEditor.setText("23", juce::dontSendNotification);
+            adjustSensitivityEditor.setText("1", juce::dontSendNotification);
 
-            xWeightEditor.setText("1.000", juce::dontSendNotification);
-            yWeightEditor.setText("0.200", juce::dontSendNotification);
+            xWeightEditor.setText("1.0", juce::dontSendNotification);
+            yWeightEditor.setText("0.2", juce::dontSendNotification);
 
             overlayTransparencyEditor.setText("30", juce::dontSendNotification);
             pointSizeEditor.setText("4", juce::dontSendNotification);
@@ -317,6 +328,9 @@ namespace
 
                 area.removeFromTop(rowGap);
             }
+
+            layoutStandardRow(sensitivityCcLabel, sensitivityCcEditor, &tipSensitivityCc);
+            layoutStandardRow(adjustSensitivityLabel, adjustSensitivityEditor, &tipAdjustSensitivity);
 
             {
                 auto combinedArea = area.removeFromTop(rowHeight * 2 + rowGap);
@@ -575,18 +589,18 @@ namespace
         AppSettings& settings;
         float currentTolerance = 30.0f;
 
-        juce::Label xCcLabel, yCcLabel, adjustCcLabel, toleranceCcLabel;
-        juce::Label xWeightLabel, yWeightLabel;
+        juce::Label xCcLabel, yCcLabel, adjustCcLabel, toleranceCcLabel, sensitivityCcLabel;
+        juce::Label xWeightLabel, yWeightLabel, adjustSensitivityLabel;
         juce::Label overlayTransparencyLabel, pointSizeLabel, showCrosshairLabel;
         juce::Label pointRgbLabel, previewRgbLabel, crosshairRgbaLabel;
 
         juce::Label currentToleranceInfoLabel, currentToleranceLineLabel;
 
-        juce::Label tipXcc, tipYcc, tipAdjustCc;
+        juce::Label tipXcc, tipYcc, tipAdjustCc, tipAdjustSensitivity, tipSensitivityCc;
         juce::Label tipWeights, tipOverlay, tipPointSize, tipShowCrosshair, tipRgb, tipCrosshairRgba;
 
-        ScrollableTextEditor xCcEditor, yCcEditor, adjustCcEditor, toleranceCcEditor;
-        ScrollableTextEditor xWeightEditor, yWeightEditor;
+        ScrollableTextEditor xCcEditor, yCcEditor, adjustCcEditor, toleranceCcEditor, sensitivityCcEditor;
+        ScrollableTextEditor xWeightEditor, yWeightEditor, adjustSensitivityEditor;
         ScrollableTextEditor overlayTransparencyEditor, pointSizeEditor;
         juce::ToggleButton showCrosshairToggle;
 
@@ -887,6 +901,7 @@ namespace
             if (tc == nullptr)
             {
                 owner.showPointerOverlayCoordinates(event.position);
+                repaint();
                 return;
             }
 
@@ -902,6 +917,8 @@ namespace
             {
                 owner.showPointerOverlayCoordinates(event.position);
             }
+
+            repaint();
         }
 
         void mouseExit(const juce::MouseEvent&) override
@@ -1320,6 +1337,7 @@ MainComponent::MainComponent()
             const int pointerYcc = settings.getPointerControlYccNumber();
             const int pointerAdjustCc = settings.getPointerControlAdjustCcNumber();
             const int pointerToleranceCc = settings.getPointerControlToleranceCcNumber();
+            const int pointerSensitivityCc = settings.getPointerControlSensitivityCcNumber();
 
             if (cc == pointerXcc)
             {
@@ -1342,7 +1360,14 @@ MainComponent::MainComponent()
                         delta += 128;
 
                     if (delta != 0)
-                        pointerControl.wheelAdjust(delta);
+                    {
+                        const int sensitivity = settings.getPointerControlAdjustSensitivity();
+                        const int direction = (delta > 0 ? 1 : -1);
+                        const int repeatCount = std::abs(delta) * sensitivity;
+
+                        for (int i = 0; i < repeatCount; ++i)
+                            pointerControl.wheelAdjust(direction);
+                    }
                 }
 
                 lastPointerAdjustCcValue = value;
@@ -1377,6 +1402,17 @@ MainComponent::MainComponent()
                 }
 
                 lastPointerToleranceCcValue = value;
+            }
+            else if (cc == pointerSensitivityCc)
+            {
+                const int mappedSensitivity = juce::jlimit(1, 20,
+                    1 + (value * 19) / 127);
+
+                settings.setPointerControlAdjustSensitivity(mappedSensitivity);
+
+                showTemporaryStatusMessage("PolyHostInterface  |  Adjust Sensitivity: "
+                                           + juce::String(mappedSensitivity),
+                                           1800);
             }
         }
 
@@ -5074,10 +5110,15 @@ void MainComponent::showPointerControlSettingsDialog()
     options.escapeKeyTriggersCloseButton = true;
     options.useNativeTitleBar = true;
     options.resizable = false;
-    options.componentToCentreAround = this;
+    if (auto* top = findParentComponentOfClass<juce::DocumentWindow>())
+        options.componentToCentreAround = top;
+    else
+    options.componentToCentreAround = nullptr;
 
     auto* dialog = options.launchAsync();
     if (dialog != nullptr)
-        dialog->setSize(460, 480);
+    {
+        dialog->centreWithSize(460, 545);
+    }
 }
 

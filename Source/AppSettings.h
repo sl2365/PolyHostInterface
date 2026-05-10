@@ -85,6 +85,12 @@ public:
     int getPointerControlToleranceCcNumber() const;
     void setPointerControlToleranceCcNumber(int ccNumber);
 
+    int getPointerControlSensitivityCcNumber() const;
+    void setPointerControlSensitivityCcNumber(int ccNumber);
+
+    int getPointerControlAdjustSensitivity() const;
+    void setPointerControlAdjustSensitivity(int amount);
+
     juce::Colour getPointerControlCrosshairColour() const;
     void setPointerControlCrosshairColour(juce::Colour colour);
 

@@ -43,6 +43,8 @@ static constexpr auto kPointerControlPreviewColourR         = "pointerControlPre
 static constexpr auto kPointerControlPreviewColourG         = "pointerControlPreviewColourG";
 static constexpr auto kPointerControlPreviewColourB         = "pointerControlPreviewColourB";
 static constexpr auto kPointerControlToleranceCcNumber      = "pointerControlToleranceCcNumber";
+static constexpr auto kPointerControlSensitivityCcNumber    = "pointerControlSensitivityCcNumber";
+static constexpr auto kPointerControlAdjustSensitivity      = "pointerControlAdjustSensitivity";
 
 bool AppSettings::getDebugLoggingEnabled() const
 {
@@ -476,7 +478,7 @@ void AppSettings::clearRoutingWindowSize()
 
 int AppSettings::getPointerControlXccNumber() const
 {
-    return juce::jlimit(0, 127, xml->getIntAttribute(kPointerControlXccNumber, 76));
+    return juce::jlimit(0, 127, xml->getIntAttribute(kPointerControlXccNumber, 24));
 }
 
 void AppSettings::setPointerControlXccNumber(int ccNumber)
@@ -487,7 +489,7 @@ void AppSettings::setPointerControlXccNumber(int ccNumber)
 
 int AppSettings::getPointerControlYccNumber() const
 {
-    return juce::jlimit(0, 127, xml->getIntAttribute(kPointerControlYccNumber, 77));
+    return juce::jlimit(0, 127, xml->getIntAttribute(kPointerControlYccNumber, 25));
 }
 
 void AppSettings::setPointerControlYccNumber(int ccNumber)
@@ -498,7 +500,7 @@ void AppSettings::setPointerControlYccNumber(int ccNumber)
 
 int AppSettings::getPointerControlAdjustCcNumber() const
 {
-    return juce::jlimit(0, 127, xml->getIntAttribute(kPointerControlAdjustCcNumberNew, 78));
+    return juce::jlimit(0, 127, xml->getIntAttribute(kPointerControlAdjustCcNumberNew, 26));
 }
 
 void AppSettings::setPointerControlAdjustCcNumber(int ccNumber)
@@ -603,12 +605,34 @@ void AppSettings::setPointerControlPreviewColour(juce::Colour colour)
 
 int AppSettings::getPointerControlToleranceCcNumber() const
 {
-    return juce::jlimit(0, 127, xml->getIntAttribute(kPointerControlToleranceCcNumber, 75));
+    return juce::jlimit(0, 127, xml->getIntAttribute(kPointerControlToleranceCcNumber, 22));
 }
 
 void AppSettings::setPointerControlToleranceCcNumber(int ccNumber)
 {
     xml->setAttribute(kPointerControlToleranceCcNumber, juce::jlimit(0, 127, ccNumber));
+    save();
+}
+
+int AppSettings::getPointerControlSensitivityCcNumber() const
+{
+    return juce::jlimit(0, 127, xml->getIntAttribute(kPointerControlSensitivityCcNumber, 23));
+}
+
+void AppSettings::setPointerControlSensitivityCcNumber(int ccNumber)
+{
+    xml->setAttribute(kPointerControlSensitivityCcNumber, juce::jlimit(0, 127, ccNumber));
+    save();
+}
+
+int AppSettings::getPointerControlAdjustSensitivity() const
+{
+    return juce::jlimit(1, 20, xml->getIntAttribute(kPointerControlAdjustSensitivity, 1));
+}
+
+void AppSettings::setPointerControlAdjustSensitivity(int amount)
+{
+    xml->setAttribute(kPointerControlAdjustSensitivity, juce::jlimit(1, 20, amount));
     save();
 }
 
