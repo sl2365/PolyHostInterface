@@ -47,6 +47,8 @@ static constexpr auto kPointerControlSensitivityCcNumber    = "pointerControlSen
 static constexpr auto kPointerControlAdjustSensitivity      = "pointerControlAdjustSensitivity";
 static constexpr auto kPointerControlAdjustCcMode           = "pointerControlAdjustCcMode";
 static constexpr auto kPointerControlAdjustMethod           = "pointerControlAdjustMethod";
+static constexpr auto kPointerControlSnapXEnabled           = "pointerControlSnapXEnabled";
+static constexpr auto kPointerControlSnapYEnabled           = "pointerControlSnapYEnabled";
 
 bool AppSettings::getDebugLoggingEnabled() const
 {
@@ -670,3 +672,26 @@ void AppSettings::setPointerControlAdjustMethod(int method)
     xml->setAttribute(kPointerControlAdjustMethod, juce::jlimit(1, 2, method));
     save();
 }
+
+bool AppSettings::getPointerControlSnapXEnabled() const
+{
+    return xml->getBoolAttribute(kPointerControlSnapXEnabled, false);
+}
+
+void AppSettings::setPointerControlSnapXEnabled(bool shouldEnable)
+{
+    xml->setAttribute(kPointerControlSnapXEnabled, shouldEnable);
+    save();
+}
+
+bool AppSettings::getPointerControlSnapYEnabled() const
+{
+    return xml->getBoolAttribute(kPointerControlSnapYEnabled, false);
+}
+
+void AppSettings::setPointerControlSnapYEnabled(bool shouldEnable)
+{
+    xml->setAttribute(kPointerControlSnapYEnabled, shouldEnable);
+    save();
+}
+

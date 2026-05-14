@@ -837,19 +837,15 @@ namespace
     class PointerEditOverlayContent final : public juce::Component
     {
     public:
-        enum class SnapMode
-        {
-            off,
-            row,
-            column
-        };
-
         explicit PointerEditOverlayContent(MainComponent& ownerIn)
             : owner(ownerIn)
         {
             setInterceptsMouseClicks(true, true);
             setWantsKeyboardFocus(false);
             setMouseClickGrabsKeyboardFocus(false);
+
+            snapRowEnabled = owner.getSettings().getPointerControlSnapXEnabled();
+            snapColumnEnabled = owner.getSettings().getPointerControlSnapYEnabled();
         }
 
         void paint(juce::Graphics& g) override
@@ -923,8 +919,8 @@ namespace
             g.setColour(juce::Colours::black.withAlpha(0.45f));
             g.fillRect(bottomBar);
 
-            drawSnapButton(g, getSnapXButtonBounds(), "Snap X", snapMode == SnapMode::row);
-            drawSnapButton(g, getSnapYButtonBounds(), "Snap Y", snapMode == SnapMode::column);
+            drawSnapButton(g, getSnapXButtonBounds(), "Snap X", snapRowEnabled);
+            drawSnapButton(g, getSnapYButtonBounds(), "Snap Y", snapColumnEnabled);
 
             g.setColour(juce::Colours::white.withAlpha(0.85f));
             g.setFont(juce::Font(juce::FontOptions(12.0f, juce::Font::plain)));
@@ -952,14 +948,16 @@ namespace
 
             if (getSnapXButtonBounds().contains(event.position.toInt()))
             {
-                snapMode = (snapMode == SnapMode::row ? SnapMode::off : SnapMode::row);
+                snapRowEnabled = !snapRowEnabled;
+                owner.getSettings().setPointerControlSnapXEnabled(snapRowEnabled);
                 repaint();
                 return;
             }
 
             if (getSnapYButtonBounds().contains(event.position.toInt()))
             {
-                snapMode = (snapMode == SnapMode::column ? SnapMode::off : SnapMode::column);
+                snapColumnEnabled = !snapColumnEnabled;
+                owner.getSettings().setPointerControlSnapYEnabled(snapRowEnabled);
                 repaint();
                 return;
             }
@@ -1118,12 +1116,14 @@ namespace
 
         juce::String getSnapModeText() const
         {
-            switch (snapMode)
-            {
-                case SnapMode::row:    return "Snap X";
-                case SnapMode::column: return "Snap Y";
-                case SnapMode::off:    break;
-            }
+            if (snapRowEnabled && snapColumnEnabled)
+                return "Snap X + Y";
+
+            if (snapRowEnabled)
+                return "Snap X";
+
+            if (snapColumnEnabled)
+                return "Snap Y";
 
             return "Free";
         }
@@ -1153,10 +1153,11 @@ namespace
 
             const auto& points = tc.getPointerJumpPoints();
 
-            if (points.isEmpty() || snapMode == SnapMode::off)
+            if (points.isEmpty() || (!snapRowEnabled && !snapColumnEnabled))
                 return position;
 
-            if (snapMode == SnapMode::row)
+            // Original "Snap X" behavior: snap to an existing row (adjust Y)
+            if (snapRowEnabled)
             {
                 float bestDelta = rowTolerance + 1.0f;
                 float snappedY = position.y;
@@ -1178,7 +1179,9 @@ namespace
                 if (matchedExistingRow)
                     position.y = snappedY;
             }
-            else if (snapMode == SnapMode::column)
+
+            // Original "Snap Y" behavior: snap to an existing column (adjust X)
+            if (snapColumnEnabled)
             {
                 float bestDelta = columnTolerance + 1.0f;
                 float snappedX = position.x;
@@ -1211,7 +1214,8 @@ namespace
         bool hasHoverPosition = false;
         int pendingDeletePointIndex = -1;
         juce::Point<float> mouseDownPosition;
-        SnapMode snapMode = SnapMode::off;
+        bool snapRowEnabled = false;
+        bool snapColumnEnabled = false;
         juce::Optional<juce::Point<float>> snapAnchor;
     };
 }

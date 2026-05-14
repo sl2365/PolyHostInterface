@@ -97,6 +97,12 @@ public:
     int getPointerControlAdjustMethod() const;
     void setPointerControlAdjustMethod(int method);
 
+    bool getPointerControlSnapXEnabled() const;
+    void setPointerControlSnapXEnabled(bool shouldEnable);
+
+    bool getPointerControlSnapYEnabled() const;
+    void setPointerControlSnapYEnabled(bool shouldEnable);
+
     juce::Colour getPointerControlCrosshairColour() const;
     void setPointerControlCrosshairColour(juce::Colour colour);
 
