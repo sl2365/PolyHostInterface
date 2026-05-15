@@ -119,6 +119,7 @@ public:
 
     static juce::File getSettingsFile();
     static juce::File getPresetsDirectory();
+    static juce::File getPluginMapsDirectory();
     static juce::File getAppDirectory();
     static juce::String makePathPortable(const juce::File& file);
     static juce::File resolvePortablePath(const juce::String& path);

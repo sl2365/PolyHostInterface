@@ -110,6 +110,14 @@ juce::File AppSettings::getPresetsDirectory()
     return presetsDir;
 }
 
+juce::File AppSettings::getPluginMapsDirectory()
+{
+    auto pluginMapsDir = juce::File::getSpecialLocation(juce::File::currentExecutableFile)
+                         .getParentDirectory().getChildFile("PluginMaps");
+    pluginMapsDir.createDirectory();
+    return pluginMapsDir;
+}
+
 AppSettings::AppSettings() { xml = std::make_unique<juce::XmlElement>(kRootTag); load(); }
 
 void AppSettings::load()

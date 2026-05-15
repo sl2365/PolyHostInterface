@@ -136,7 +136,8 @@ namespace ButtonStyling
                           std::function<bool()> isActiveProviderIn = {},
                           juce::Colour baseColourIn = defaultBackground(),
                           int iconYOffsetIn = 0,
-                          float iconFontHeightIn = defaultIconSize());
+                          float iconFontHeightIn = defaultIconSize(),
+                          std::function<juce::Colour()> baseColourProviderIn = {});
 
         bool isVisuallyActive() const;
 
@@ -160,6 +161,7 @@ namespace ButtonStyling
         juce::Rectangle<int> contentArea;
         std::function<bool()> isActiveProvider;
         juce::Colour baseColour;
+        std::function<juce::Colour()> baseColourProvider;
     };
 
     class SmallIconButton final : public juce::Button

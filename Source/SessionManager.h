@@ -9,13 +9,6 @@ enum class PluginSlotType
     FX
 };
 
-
-struct SessionPointerPoint
-{
-    float x = 0.0f;
-    float y = 0.0f;
-};
-
 struct SessionPluginData
 {
     juce::String pluginName;
@@ -42,7 +35,6 @@ struct SessionTabData
     int savedWindowWidth = 0;
     int savedWindowHeight = 0;
     juce::StringArray midiAssignedDeviceIdentifiers;
-    juce::Array<SessionPointerPoint> pointerPoints;
     float pointerLaneTolerance = 30.0f;
     int pointerAdjustMethodOverride = 0;
     bool hasPlugin = false;

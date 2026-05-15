@@ -56,18 +56,6 @@ bool SessionManager::saveSessionToFile(const SessionData& session, const juce::F
             }
         }
 
-        if (!tab.pointerPoints.isEmpty())
-        {
-            auto* pointerPointsXml = tabXml->createNewChildElement("PointerPoints");
-
-            for (auto& point : tab.pointerPoints)
-            {
-                auto* pointXml = pointerPointsXml->createNewChildElement("Point");
-                pointXml->setAttribute("x", point.x);
-                pointXml->setAttribute("y", point.y);
-            }
-        }
-
         if (tab.hasPlugin)
         {
             tabXml->setAttribute("pluginName", tab.plugin.pluginName);
@@ -132,20 +120,6 @@ bool SessionManager::loadSessionFromFile(const juce::File& file,
 
                     if (identifier.isNotEmpty())
                         tab.midiAssignedDeviceIdentifiers.addIfNotAlreadyThere(identifier);
-                }
-            }
-        }
-
-        if (auto* pointerPointsXml = tabXml->getChildByName("PointerPoints"))
-        {
-            for (auto* pointXml : pointerPointsXml->getChildIterator())
-            {
-                if (pointXml->hasTagName("Point"))
-                {
-                    SessionPointerPoint point;
-                    point.x = (float) pointXml->getDoubleAttribute("x", 0.0);
-                    point.y = (float) pointXml->getDoubleAttribute("y", 0.0);
-                    tab.pointerPoints.add(point);
                 }
             }
         }

@@ -130,6 +130,7 @@ public:
 
     bool isShowingRoutingView() const { return showingRoutingView; }
     void saveCurrentRoutingWindowSize();
+    void refreshToolbarButtonStates();
 
     AppSettings& getSettings() { return settings; }
     void showPointerOverlayCoordinates(juce::Point<float> position,
@@ -398,6 +399,9 @@ private:
     void resizeWindowToFitCurrentTab();
     void saveCurrentWindowSizeForCurrentTab();
     void clearSavedWindowSizeForCurrentTab();
+    juce::Colour getCurrentTabWindowSizeSaveButtonColour() const;
+    juce::Colour getCurrentTabWindowSizeClearButtonColour() const;
+    bool isCurrentTabWindowSizeDirty() const;
     void handleCurrentTabChanged();
 
     void setPointerControlEditMode(bool shouldEnable);
@@ -406,6 +410,14 @@ private:
     void updatePointerEditOverlay();
     void hidePointerEditOverlay();
     void destroyPointerEditOverlay();
+
+    juce::String getPointerMapKeyForPlugin(const PluginTabComponent& tabComponent) const;
+    juce::String sanitisePointerMapFileName(const juce::String& name) const;
+    juce::File getPointerMapFileForPlugin(const PluginTabComponent& tabComponent) const;
+    juce::File getLegacyPointerMapFileForPlugin(const PluginTabComponent& tabComponent) const;
+    bool loadPointerMapForTab(PluginTabComponent& tabComponent);
+    bool savePointerMapForTab(const PluginTabComponent& tabComponent) const;
+    void saveAllPointerMaps() const;
 
     SessionData buildSessionData() const;
     void applySessionData(const SessionData& session,

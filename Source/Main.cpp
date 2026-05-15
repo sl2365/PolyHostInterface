@@ -65,8 +65,13 @@ public:
         {
             DocumentWindow::resized();
 
-            if (mainComponent != nullptr && mainComponent->isShowingRoutingView())
-                mainComponent->saveCurrentRoutingWindowSize();
+            if (mainComponent != nullptr)
+            {
+                if (mainComponent->isShowingRoutingView())
+                    mainComponent->saveCurrentRoutingWindowSize();
+
+                mainComponent->refreshToolbarButtonStates();
+            }
         }
 
         void handleCommandLine(const juce::String& cmdLine)

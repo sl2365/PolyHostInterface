@@ -655,6 +655,7 @@ void PluginTabComponent::setPointerJumpPoints(const juce::Array<PointerControl::
                     + juce::String(pointerJumpPoints.size()) + " point(s)");
 
     repaint();
+    sendChangeMessage();
 }
 
 void PluginTabComponent::addPointerJumpPoint(juce::Point<float> position)
@@ -674,6 +675,7 @@ void PluginTabComponent::clearPointerJumpPoints()
 
     pointerJumpPoints.clear();
     repaint();
+    sendChangeMessage();
 }
 
 int PluginTabComponent::findPointerJumpPointAt(juce::Point<float> position, float hitRadius) const

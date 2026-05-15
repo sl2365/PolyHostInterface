@@ -236,7 +236,8 @@ namespace ButtonStyling
                                          std::function<bool()> isActiveProviderIn,
                                          juce::Colour baseColourIn,
                                          int iconYOffsetIn,
-                                         float iconFontHeightIn)
+                                         float iconFontHeightIn,
+                                         std::function<juce::Colour()> baseColourProviderIn)
         : juce::ToolbarButton(itemId, "", nullptr, nullptr),
           tooltip(tooltipText),
           content(contentText),
@@ -245,7 +246,8 @@ namespace ButtonStyling
           iconYOffset(iconYOffsetIn),
           iconFontHeight(iconFontHeightIn),
           isActiveProvider(std::move(isActiveProviderIn)),
-          baseColour(baseColourIn)
+          baseColour(baseColourIn),
+          baseColourProvider(std::move(baseColourProviderIn))
     {
         setTooltip(tooltip);
         setWantsKeyboardFocus(false);
@@ -277,9 +279,12 @@ namespace ButtonStyling
                    .withCentre(area.getCentre())
                    .reduced(0.0f, verticalGap);
 
+        auto resolvedBaseColour = baseColourProvider ? baseColourProvider()
+                                                     : baseColour;
+
         drawButtonBackground(g,
                              area,
-                             baseColour,
+                             resolvedBaseColour,
                              isMouseOver,
                              isMouseDown,
                              isVisuallyActive(),

@@ -1730,18 +1730,6 @@ SessionData MainComponent::buildSessionData() const
             tab.pointerLaneTolerance = tc->getPointerLaneTolerance();
             tab.pointerAdjustMethodOverride = tc->getPointerAdjustMethodOverride();
 
-            const auto& jumpPoints = tc->getPointerJumpPoints();
-
-            for (int pointIndex = 0; pointIndex < jumpPoints.size(); ++pointIndex)
-            {
-                const auto& point = jumpPoints.getReference(pointIndex);
-
-                SessionPointerPoint sessionPoint;
-                sessionPoint.x = point.x;
-                sessionPoint.y = point.y;
-                tab.pointerPoints.add(sessionPoint);
-            }
-
             if (tc->hasPlugin())
             {
                 auto pluginFile = tc->getPluginFile();
@@ -1822,25 +1810,6 @@ void MainComponent::applySessionData(const SessionData& session,
             tc->setPointerLaneTolerance(tabData.pointerLaneTolerance);
             tc->setPointerAdjustMethodOverride(tabData.pointerAdjustMethodOverride);
 
-            {
-                juce::Array<PointerControl::JumpPoint> jumpPoints;
-
-                for (int pointIndex = 0; pointIndex < tabData.pointerPoints.size(); ++pointIndex)
-                {
-                    const auto& sessionPoint = tabData.pointerPoints.getReference(pointIndex);
-
-                    PointerControl::JumpPoint point;
-                    point.x = sessionPoint.x;
-                    point.y = sessionPoint.y;
-                    jumpPoints.add(point);
-                }
-
-                DebugLog::write("[PointerControl] applySessionData: tab " + juce::String(i)
-                                + " restoring " + juce::String(jumpPoints.size()) + " point(s)");
-
-                tc->setPointerJumpPoints(jumpPoints);
-            }
-
             if (tabData.hasPlugin)
             {
                 auto pluginFile = AppSettings::resolvePluginPath(tabData.plugin.pluginPath,
@@ -1895,6 +1864,14 @@ void MainComponent::applySessionData(const SessionData& session,
                         loadErrors.add("Failed to restore plugin state: " + tabData.plugin.pluginName
                                        + "\n  Path: " + pluginFile.getFullPathName());
                     }
+
+                    const bool loadedMap = loadPointerMapForTab(*tc);
+
+                    DebugLog::write("[PointerControl] applySessionData: tab="
+                                    + juce::String(i)
+                                    + " | plugin=" + tc->getPluginName()
+                                    + " | loadedMap=" + juce::String(loadedMap ? "true" : "false")
+                                    + " | tabPoints=" + juce::String(tc->getPointerJumpPoints().size()));
 
                     tc->setBypassed(tabData.bypassed);
                 }
@@ -2002,6 +1979,11 @@ void MainComponent::saveCurrentRoutingWindowSize()
         settings.setRoutingWindowSize(top->getWidth(), top->getHeight());
 }
 
+void MainComponent::refreshToolbarButtonStates()
+{
+    toolbar.repaint();
+}
+
 void MainComponent::updateWindowTitle()
 {
     if (auto* top = findParentComponentOfClass<juce::DocumentWindow>())
@@ -2028,7 +2010,20 @@ void MainComponent::handleSuccessfulPluginLoadIntoTab(int tabIndex, bool markDir
     resized();
     handleCurrentTabChanged();
     resizeWindowToFitCurrentTab();
-    refreshPointerControlTarget();
+
+    if (auto* tc = getTabComponent(tabIndex))
+    {
+        const bool loadedMap = loadPointerMapForTab(*tc);
+
+        DebugLog::write("[PointerControl] handleSuccessfulPluginLoadIntoTab: tab="
+                        + juce::String(tabIndex)
+                        + " | plugin=" + tc->getPluginName()
+                        + " | loadedMap=" + juce::String(loadedMap ? "true" : "false")
+                        + " | tabPoints=" + juce::String(tc->getPointerJumpPoints().size()));
+
+        refreshPointerControlTarget();
+        tc->repaint();
+    }
 
     if (markDirtyAfterLoad)
         markSessionDirty();
@@ -2370,6 +2365,198 @@ PluginTabComponent* MainComponent::getSettingsSafeCurrentTabForOverlay() const
     return getTabComponent(tabs.getCurrentTabIndex());
 }
 
+juce::String MainComponent::getPointerMapKeyForPlugin(const PluginTabComponent& tabComponent) const
+{
+    auto desc = tabComponent.getLoadedPluginDescription();
+
+    auto key = desc.descriptiveName.trim();
+
+    if (key.isEmpty())
+        key = desc.name.trim();
+
+    return key;
+}
+
+juce::String MainComponent::sanitisePointerMapFileName(const juce::String& name) const
+{
+    auto result = name.trim();
+
+    if (result.isEmpty())
+        return {};
+
+    const juce::String invalidChars = "\\/:*?\"<>|";
+
+    for (auto ch : invalidChars)
+        result = result.replaceCharacter(ch, '_');
+
+    while (result.contains("__"))
+        result = result.replace("__", "_");
+
+    result = result.trim();
+
+    while (result.startsWithChar('.'))
+        result = result.substring(1);
+
+    while (result.endsWithChar('.'))
+        result = result.dropLastCharacters(1);
+
+    return result.trim();
+}
+
+juce::File MainComponent::getPointerMapFileForPlugin(const PluginTabComponent& tabComponent) const
+{
+    auto key = getPointerMapKeyForPlugin(tabComponent);
+
+    if (key.isEmpty())
+        return {};
+
+    auto safeFileName = sanitisePointerMapFileName(key);
+
+    if (safeFileName.isEmpty())
+        return {};
+
+    return AppSettings::getPluginMapsDirectory().getChildFile(safeFileName + ".xml");
+}
+
+juce::File MainComponent::getLegacyPointerMapFileForPlugin(const PluginTabComponent& tabComponent) const
+{
+    auto pluginFile = tabComponent.getPluginFile();
+
+    if (!pluginFile.existsAsFile())
+        return {};
+
+    auto pluginFileName = pluginFile.getFileName();
+
+    if (pluginFileName.isEmpty())
+        return {};
+
+    return AppSettings::getPluginMapsDirectory().getChildFile(pluginFileName + ".xml");
+}
+
+bool MainComponent::loadPointerMapForTab(PluginTabComponent& tabComponent)
+{
+    auto mapFile = getPointerMapFileForPlugin(tabComponent);
+    auto legacyMapFile = getLegacyPointerMapFileForPlugin(tabComponent);
+
+    DebugLog::write("[PointerControl] loadPointerMapForTab: key="
+                    + getPointerMapKeyForPlugin(tabComponent)
+                    + " | mapFile=" + mapFile.getFullPathName()
+                    + " | exists=" + juce::String(mapFile.existsAsFile() ? "true" : "false")
+                    + " | legacyMapFile=" + legacyMapFile.getFullPathName()
+                    + " | legacyExists=" + juce::String(legacyMapFile.existsAsFile() ? "true" : "false"));
+
+    if (mapFile == juce::File() || !mapFile.existsAsFile())
+    {
+        if (legacyMapFile != juce::File() && legacyMapFile.existsAsFile())
+            mapFile = legacyMapFile;
+    }
+
+    if (mapFile == juce::File() || !mapFile.existsAsFile())
+    {
+        DebugLog::write("[PointerControl] No pointer map found for key="
+                        + getPointerMapKeyForPlugin(tabComponent));
+        return false;
+    }
+
+    auto xml = juce::XmlDocument::parse(mapFile);
+
+    if (xml == nullptr || !xml->hasTagName("PointerMap"))
+    {
+        DebugLog::write("[PointerControl] Failed to parse pointer map: "
+                        + mapFile.getFullPathName());
+        return false;
+    }
+
+    juce::Array<PointerControl::JumpPoint> points;
+
+    for (auto* pointXml : xml->getChildIterator())
+    {
+        if (!pointXml->hasTagName("Point"))
+            continue;
+
+        PointerControl::JumpPoint point;
+        point.x = (float) pointXml->getDoubleAttribute("x", 0.0);
+        point.y = (float) pointXml->getDoubleAttribute("y", 0.0);
+        points.add(point);
+    }
+
+    tabComponent.setPointerJumpPoints(points);
+
+    DebugLog::write("[PointerControl] Loaded pointer map: "
+                    + mapFile.getFullPathName()
+                    + " | key=" + getPointerMapKeyForPlugin(tabComponent)
+                    + " | points=" + juce::String(points.size()));
+
+    return true;
+}
+
+bool MainComponent::savePointerMapForTab(const PluginTabComponent& tabComponent) const
+{
+    if (!tabComponent.hasPlugin())
+        return false;
+
+    auto mapFile = getPointerMapFileForPlugin(tabComponent);
+    auto mapKey = getPointerMapKeyForPlugin(tabComponent);
+
+    if (mapFile == juce::File())
+    {
+        DebugLog::write("[PointerControl] Could not resolve pointer map file for plugin");
+        return false;
+    }
+
+    const auto& points = tabComponent.getPointerJumpPoints();
+
+    if (points.isEmpty())
+    {
+        if (mapFile.existsAsFile())
+            mapFile.deleteFile();
+
+        DebugLog::write("[PointerControl] Deleted empty pointer map: "
+                        + mapFile.getFullPathName()
+                        + " | key=" + mapKey);
+
+        return true;
+    }
+
+    auto desc = tabComponent.getLoadedPluginDescription();
+
+    juce::XmlElement xml("PointerMap");
+    xml.setAttribute("pluginKey", mapKey);
+    xml.setAttribute("pluginName", desc.name);
+    xml.setAttribute("pluginDescriptiveName", desc.descriptiveName);
+
+    for (int i = 0; i < points.size(); ++i)
+    {
+        const auto& point = points.getReference(i);
+        auto* pointXml = xml.createNewChildElement("Point");
+        pointXml->setAttribute("x", point.x);
+        pointXml->setAttribute("y", point.y);
+    }
+
+    const bool ok = xml.writeTo(mapFile, {});
+
+    DebugLog::write("[PointerControl] "
+                    + juce::String(ok ? "Saved" : "Failed to save")
+                    + " pointer map: "
+                    + mapFile.getFullPathName()
+                    + " | key=" + mapKey
+                    + " | points=" + juce::String(points.size()));
+
+    return ok;
+}
+
+void MainComponent::saveAllPointerMaps() const
+{
+    for (int i = 0; i < pluginTabs.size(); ++i)
+    {
+        if (auto* tc = getTabComponent(i))
+        {
+            if (tc->hasPlugin())
+                savePointerMapForTab(*tc);
+        }
+    }
+}
+
 void MainComponent::setPointerControlEditMode(bool shouldEnable)
 {
     pointerControlEditModeEnabled = shouldEnable;
@@ -2581,6 +2768,46 @@ void MainComponent::clearSavedWindowSizeForCurrentTab()
     markSessionDirty();
     resizeWindowToFitCurrentTab();
     toolbar.repaint();
+}
+
+bool MainComponent::isCurrentTabWindowSizeDirty() const
+{
+    auto* tc = getTabComponent(tabs.getCurrentTabIndex());
+    if (tc == nullptr || !tc->hasSavedWindowBounds())
+        return false;
+
+    auto* top = findParentComponentOfClass<juce::DocumentWindow>();
+    if (top == nullptr)
+        return false;
+
+    auto savedBounds = tc->getSavedWindowBounds();
+
+    return top->getWidth() != savedBounds.getWidth()
+        || top->getHeight() != savedBounds.getHeight();
+}
+
+juce::Colour MainComponent::getCurrentTabWindowSizeSaveButtonColour() const
+{
+    auto* tc = getTabComponent(tabs.getCurrentTabIndex());
+    if (tc == nullptr || !tc->hasSavedWindowBounds())
+        return ButtonStyling::defaultBackground();
+
+    if (isCurrentTabWindowSizeDirty())
+        return ButtonStyling::destructiveBackground();
+
+    return ButtonStyling::bypassActiveBackground();
+}
+
+juce::Colour MainComponent::getCurrentTabWindowSizeClearButtonColour() const
+{
+    auto* tc = getTabComponent(tabs.getCurrentTabIndex());
+    if (tc == nullptr || !tc->hasSavedWindowBounds())
+        return ButtonStyling::defaultBackground();
+
+    if (isCurrentTabWindowSizeDirty())
+        return ButtonStyling::destructiveBackground();
+
+    return ButtonStyling::bypassActiveBackground();
 }
 
 void MainComponent::paint(juce::Graphics& g)
@@ -3094,6 +3321,8 @@ bool MainComponent::writePresetToFile(const juce::File& file)
 
     if (!SessionManager::saveSessionToFile(session, file))
         return false;
+
+    saveAllPointerMaps();
 
     for (int tabIndex = 0; tabIndex < tabs.getNumTabs(); ++tabIndex)
     {
@@ -4518,12 +4747,13 @@ juce::ToolbarItemComponent* MainComponent::createItem(int itemId)
                                                getToolbarIconGlyph(itemId),
                                                ButtonStyling::ToolbarIconButton::ContentType::IconGlyph,
                                                ButtonStyling::defaultButtonWidth(),
+                                               {},
+                                               ButtonStyling::defaultBackground(),
+                                               0,
+                                               ButtonStyling::defaultIconSize(),
                                                [this]
                                                {
-                                                   if (auto* tc = getTabComponent(tabs.getCurrentTabIndex()))
-                                                       return tc->hasSavedWindowBounds();
-
-                                                   return false;
+                                                   return getCurrentTabWindowSizeSaveButtonColour();
                                                });
 
         button->onClick = [this, button]
@@ -4543,12 +4773,13 @@ juce::ToolbarItemComponent* MainComponent::createItem(int itemId)
                                                getToolbarIconGlyph(itemId),
                                                ButtonStyling::ToolbarIconButton::ContentType::IconGlyph,
                                                ButtonStyling::defaultButtonWidth(),
+                                               {},
+                                               ButtonStyling::defaultBackground(),
+                                               0,
+                                               ButtonStyling::defaultIconSize(),
                                                [this]
                                                {
-                                                   if (auto* tc = getTabComponent(tabs.getCurrentTabIndex()))
-                                                       return tc->hasSavedWindowBounds();
-
-                                                   return false;
+                                                   return getCurrentTabWindowSizeClearButtonColour();
                                                });
 
         button->onClick = [this, button]
@@ -5245,6 +5476,7 @@ void MainComponent::refreshPointerControlTarget()
 
     if (tc == nullptr || !tc->hasPlugin())
     {
+        DebugLog::write("[PointerControl] refreshPointerControlTarget: no plugin, clearing target");
         pointerControl.clearTarget();
         return;
     }
@@ -5253,7 +5485,7 @@ void MainComponent::refreshPointerControlTarget()
 
     if (targetBounds.isEmpty())
     {
-        pointerControl.clearTarget();
+        DebugLog::write("[PointerControl] refreshPointerControlTarget: target bounds empty, keeping previous target");
         return;
     }
 
@@ -5264,6 +5496,10 @@ void MainComponent::refreshPointerControlTarget()
 
     const auto& jumpPoints = tc->getPointerJumpPoints();
     pointerControl.setJumpPoints(jumpPoints, targetBounds);
+
+    DebugLog::write("[PointerControl] refreshPointerControlTarget: bounds="
+                    + targetBounds.toString()
+                    + " | points=" + juce::String(jumpPoints.size()));
 }
 
 void MainComponent::showPointerControlSettingsDialog()
