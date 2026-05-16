@@ -513,6 +513,17 @@ private:
     juce::String temporaryStatusMessage;
     double temporaryStatusMessageUntilMs = 0.0;
     std::unique_ptr<PointerEditOverlayWindow> pointerEditOverlayWindow;
+
+    int debugMarkDirtyRequestCount = 0;
+    double debugLastMarkDirtyLogMs = 0.0;
+
+    int debugPointerAdjustEventCount = 0;
+    int debugPointerAdjustRepeatTotal = 0;
+    double debugLastPointerAdjustLogMs = 0.0;
+
+    int debugRefreshPointerTargetCount = 0;
+    double debugLastRefreshPointerTargetLogMs = 0.0;
+
     void timerCallback() override;
     void showPointerControlSettingsDialog();
     void setPointerAdjustMethodOverrideForTab(int tabIndex, int methodOverride);

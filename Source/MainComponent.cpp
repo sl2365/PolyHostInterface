@@ -1588,11 +1588,34 @@ MainComponent::MainComponent()
                     const int direction = (delta > 0 ? 1 : -1);
                     const int repeatCount = std::abs(delta) * sensitivity;
 
-                    for (int i = 0; i < repeatCount; ++i)
+                    ++debugPointerAdjustEventCount;
+                    debugPointerAdjustRepeatTotal += repeatCount;
+
+                    const double nowMs = juce::Time::getMillisecondCounterHiRes();
+
+                    if (settings.getAdvancedDebugLoggingEnabled()
+                        && (nowMs - debugLastPointerAdjustLogMs >= 250.0))
                     {
-                        if (adjustMethod == 2)
-                            pointerControl.dragAdjust(direction);
-                        else
+                        DebugLog::writeAdvanced("[PointerControl] adjust burst"
+                                                " | eventsInWindow=" + juce::String(debugPointerAdjustEventCount)
+                                                + " | totalRepeatsInWindow=" + juce::String(debugPointerAdjustRepeatTotal)
+                                                + " | currentDelta=" + juce::String(delta)
+                                                + " | sensitivity=" + juce::String(sensitivity)
+                                                + " | repeatCount=" + juce::String(repeatCount)
+                                                + " | method=" + juce::String(adjustMethod)
+                                                + " | ccValue=" + juce::String(value));
+                        debugPointerAdjustEventCount = 0;
+                        debugPointerAdjustRepeatTotal = 0;
+                        debugLastPointerAdjustLogMs = nowMs;
+                    }
+
+                    if (adjustMethod == 2)
+                    {
+                        pointerControl.dragAdjust(direction * repeatCount);
+                    }
+                    else
+                    {
+                        for (int i = 0; i < repeatCount; ++i)
                             pointerControl.wheelAdjust(direction);
                     }
                 }
@@ -3997,16 +4020,61 @@ juce::File MainComponent::tryAutoLocateReplacement(const MissingPluginEntry& ent
 
 void MainComponent::markSessionDirty()
 {
+    const double nowMs = juce::Time::getMillisecondCounterHiRes();
+    ++debugMarkDirtyRequestCount;
+
     if (suppressDirtyMarking)
     {
-        DebugLog::write("markSessionDirty suppressed");
+        if (settings.getAdvancedDebugLoggingEnabled()
+            && (nowMs - debugLastMarkDirtyLogMs >= 500.0))
+        {
+            DebugLog::writeAdvanced("markSessionDirty suppressed"
+                                    " | requestsInWindow=" + juce::String(debugMarkDirtyRequestCount)
+                                    + " | isLoadingPreset=" + juce::String(isLoadingPreset ? "true" : "false")
+                                    + " | suppressDirtyMarking=" + juce::String(suppressDirtyMarking ? "true" : "false")
+                                    + " | ignoreDirtyChangesUntilMs=" + juce::String(ignoreDirtyChangesUntilMs)
+                                    + " | nowMs=" + juce::String(nowMs));
+            debugMarkDirtyRequestCount = 0;
+            debugLastMarkDirtyLogMs = nowMs;
+        }
+
         return;
     }
 
     if (getLoadedPluginTabCount() > 1)
         suppressDirtyForSinglePluginQuickOpen = false;
 
-    DebugLog::write("markSessionDirty applied");
+    if (sessionDocument.isDirty())
+    {
+        if (settings.getAdvancedDebugLoggingEnabled()
+            && (nowMs - debugLastMarkDirtyLogMs >= 500.0))
+        {
+            DebugLog::writeAdvanced("markSessionDirty skipped (already dirty)"
+                                    " | requestsInWindow=" + juce::String(debugMarkDirtyRequestCount)
+                                    + " | loadedPluginTabs=" + juce::String(getLoadedPluginTabCount()));
+            debugMarkDirtyRequestCount = 0;
+            debugLastMarkDirtyLogMs = nowMs;
+        }
+
+        return;
+    }
+
+    const bool alreadyDirty = sessionDocument.isDirty();
+
+    if (settings.getAdvancedDebugLoggingEnabled()
+        && (nowMs - debugLastMarkDirtyLogMs >= 500.0))
+    {
+        DebugLog::writeAdvanced("markSessionDirty applied"
+                                " | requestsInWindow=" + juce::String(debugMarkDirtyRequestCount)
+                                + " | sessionAlreadyDirty=" + juce::String(alreadyDirty ? "true" : "false")
+                                + " | loadedPluginTabs=" + juce::String(getLoadedPluginTabCount()));
+        debugMarkDirtyRequestCount = 0;
+        debugLastMarkDirtyLogMs = nowMs;
+    }
+
+    if (alreadyDirty)
+        return;
+
     sessionDocument.markDirty();
     updateWindowTitle();
     updatePresetDropdownDisplayText();
@@ -5497,9 +5565,21 @@ void MainComponent::refreshPointerControlTarget()
     const auto& jumpPoints = tc->getPointerJumpPoints();
     pointerControl.setJumpPoints(jumpPoints, targetBounds);
 
-    DebugLog::write("[PointerControl] refreshPointerControlTarget: bounds="
-                    + targetBounds.toString()
-                    + " | points=" + juce::String(jumpPoints.size()));
+    ++debugRefreshPointerTargetCount;
+    const double nowMs = juce::Time::getMillisecondCounterHiRes();
+
+    if (settings.getAdvancedDebugLoggingEnabled()
+        && (nowMs - debugLastRefreshPointerTargetLogMs >= 500.0))
+    {
+        DebugLog::writeAdvanced("[PointerControl] refreshPointerControlTarget burst"
+                                " | callsInWindow=" + juce::String(debugRefreshPointerTargetCount)
+                                + " | bounds=" + targetBounds.toString()
+                                + " | points=" + juce::String(jumpPoints.size())
+                                + " | tabIndex=" + juce::String(tabs.getCurrentTabIndex())
+                                + " | plugin=" + tc->getPluginName());
+        debugRefreshPointerTargetCount = 0;
+        debugLastRefreshPointerTargetLogMs = nowMs;
+    }
 }
 
 void MainComponent::showPointerControlSettingsDialog()

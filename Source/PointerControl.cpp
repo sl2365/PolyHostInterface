@@ -1,4 +1,5 @@
 #include "PointerControl.h"
+#include "DebugLog.h"
 #include <cmath>
 
 #if JUCE_WINDOWS
@@ -329,6 +330,11 @@ void PointerControl::wheelAdjust(int delta)
     if (!hasTarget() || delta == 0)
         return;
 
+    DebugLog::writeAdvanced("[PointerControl] wheelAdjust"
+                            " | delta=" + juce::String(delta)
+                            + " | currentX=" + juce::String(currentX)
+                            + " | currentY=" + juce::String(currentY));
+
     syncToPhysicalCursorPosition();
 
    #if JUCE_WINDOWS
@@ -347,13 +353,18 @@ void PointerControl::dragAdjust(int delta)
     if (!hasTarget() || delta == 0)
         return;
 
+    DebugLog::writeAdvanced("[PointerControl] dragAdjust"
+                            " | delta=" + juce::String(delta)
+                            + " | currentX=" + juce::String(currentX)
+                            + " | currentY=" + juce::String(currentY));
+
    #if JUCE_WINDOWS
     syncToPhysicalCursorPosition();
 
     const int anchorX = currentX;
     const int anchorY = currentY;
-    const int dragPixels = 1;
-    const int moveY = -delta * dragPixels;
+    const int pixelsPerStep = 1;
+    const int moveY = -delta * pixelsPerStep;
 
     SetCursorPos(anchorX, anchorY);
 

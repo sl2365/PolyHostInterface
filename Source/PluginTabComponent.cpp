@@ -447,8 +447,14 @@ void PluginTabComponent::detachFromCurrentProcessor()
         proc->removeListener(this);
 }
 
-void PluginTabComponent::audioProcessorParameterChanged(juce::AudioProcessor*, int, float)
+void PluginTabComponent::audioProcessorParameterChanged(juce::AudioProcessor*, int parameterIndex, float newValue)
 {
+    DebugLog::writeAdvanced("[PluginTab] audioProcessorParameterChanged"
+                            " | slotIndex=" + juce::String(slotIndex)
+                            + " | plugin=" + getPluginName()
+                            + " | parameterIndex=" + juce::String(parameterIndex)
+                            + " | newValue=" + juce::String(newValue));
+
     juce::MessageManager::callAsync([safe = juce::Component::SafePointer<PluginTabComponent>(this)]
     {
         if (safe != nullptr)
@@ -459,6 +465,10 @@ void PluginTabComponent::audioProcessorParameterChanged(juce::AudioProcessor*, i
 void PluginTabComponent::audioProcessorChanged(juce::AudioProcessor*,
                                                const juce::AudioProcessorListener::ChangeDetails&)
 {
+    DebugLog::writeAdvanced("[PluginTab] audioProcessorChanged"
+                            " | slotIndex=" + juce::String(slotIndex)
+                            + " | plugin=" + getPluginName());
+
     juce::MessageManager::callAsync([safe = juce::Component::SafePointer<PluginTabComponent>(this)]
     {
         if (safe != nullptr)
