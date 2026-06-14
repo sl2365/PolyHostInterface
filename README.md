@@ -8,59 +8,61 @@ I always liked tools like TobyBear's MiniHost, SaviHost and Tone2's NanoHost. Bu
 
 ## Feature Status
 
-| Feature | Status |
+| Feature | Status | - Some features not yet implemented * |
 |---|---|
 | VST3 x64 | ✅ Working |
-| CLAP x64 | ✅ Working - May be buggy - Requires CLAP SDK — see below |
-| VST2 x64 | ✅ Working - Requires Steinberg VST2 SDK — see below |
+| CLAP x64 | ✅ Working * - May be buggy - Requires CLAP SDK to build — see below |
+| VST2 x64 | ✅ Working * - Requires Steinberg VST2 SDK to build — see below |
 | VST2 **32-bit** in 64-bit host | 🔴 Needs plugin bridge — see below - planned |
 | MIDI 1.0 | ✅ Working |
 | MIDI 2.0 (Windows MIDI Services) | ⚠️ Requires JUCE 8+ and Windows 11 - planned |
 | Tabbed interface (Synth: parallel + FX: serial) | ✅ Working |
 | Tab-order = FX routing order | ✅ Working |
 | Portable settings (no AppData/registry) | ✅ Working |
-| Audio / MIDI recording | 🔲 Planned |
+| Audio / MIDI recording | 🔲 Planned for standalone |
 | Pointer Control functionality | ✅ Working - Absolute (1) and Relative (3) knob modes|
 | Standalone App | ✅ Working |
-| VST3 Plugin for use in other hosts | 🔲 Planned |
+| VST3 Plugin for use in other hosts | ✅ Working |
 
 ## Folder Structure
 
 ```
-PolyHost\                        ← your project root
+_Projects\PolyHost\              ← your project root
 │
-├── build.bat                    ← THE build script (run this)
-├── CMakeLists.txt
+├── build-APP/VST3.bat           ← THE build script (run this)
 ├── README.md
 │
 │
 ├── Source\
-│   ├── Main.cpp
-│   ├── MainComponent.h / .cpp
-│   ├── PluginTabComponent.h / .cpp
-│   ├── AudioEngine.h / .cpp
-│   ├── MidiEngine.h / .cpp
-│   └── AppSettings.h / .cpp
+│   ├── APP\
+│	│	├── CMakeLists.txt
+│   │	└── Standalone Source files here...
+│   └── VST3\
+│		├── CMakeLists.txt
+│   	└── VST3 Plugin Source files here...
 │
 │
-├── tools\
-│   ├── cmake\                   ← extract cmake-3.x.x-windows-x86_64.zip HERE
-│   │   └── bin\
-│   │       └── cmake.exe
-│   │
-│   ├── vstsdk2.4\      		 ← drop your VST2.4 SDK here
-│   │   └── pluginterfaces\
-│   │       └── vst2.x\
-│   │           └── aeffect.h    ← CMake checks for this file
-│	│
-│	└── clap\					 ← drop your CLAP SDK here
-│	   	└── CMakeLists.txt
-│
-│
-├── dist\                        ← build output — PolyHostInterface.exe lands here
-└── [PolyHostInterface.exe]\
+├── dist\                        ← build output — PolyHost.exe/PolyHost VST3 lands here
+└── [PolyHost.exe/.vst3]\
     └── Settings\                ← created at runtime, settings stored here
-        └── settings.xml
+        └── polyhost.xml
+
+
+
+_Projects\_Tools\
+    ├── cmake\                   ← extract cmake-3.x.x-windows-x86_64.zip HERE
+    │   └── bin\
+    │       └── cmake.exe
+    │
+    ├── vstsdk2.4\      		 ← drop your VST2.4 SDK here
+    │   └── pluginterfaces\
+    │       └── vst2.x\
+    │           └── aeffect.h    ← CMake checks for this file
+ 	│
+ 	└── clap\					 ← drop your CLAP SDK here
+ 	   	└── CMakeLists.txt
+ 
+ 
 ```
 
 ## Build Setup (one-time)
@@ -95,7 +97,7 @@ then run build.bat.
 Download clap-main here: https://github.com/free-audio/clap
 Install to tools/clap/CMakeLists.txt
 
-## Audio Routing
+## Audio/MIDI Routing
 ```
 MIDI Device(s)
 |
@@ -113,3 +115,11 @@ MIDI Device(s)
               [Audio Out]  ->  Output meter
 ```
 MIDI always wired in parallel. Synth and FX audio routing is partially flexible, where plugins are in series and routing can be modified by entering the Routing page. Click the Routing toolbar button and a list of all tabs appears, use Up and Down buttons to manage the processing order.
+
+- The Synth/FX labels are buttons that when clicked, close routing view and open the tab for that row. Next to which is the plugin name.
+- Adjust Method is used for setting the PointerControl, which hasnt been done yet, so can be left until a later date.
+- The MIDI(#) buttons are used to designate which connected devices will be used for which loaded plugins. ie, you may want to designate a keyboard to the synths, but have a MIDI controller to adjust FX so you may need to specify on/off per device for each plugin.
+- The Green buttons are used to enable/disable the audio/MIDI for that tab/plugin so effectively making it a bypass function.
+- The next two buttons are the Up/Down arrows and are used to adjust the position in the chain so you can set up different chains for the same plugins, thereby saving different presets with different chains for different situations.
+- The next button is an info button, used more as a tooltip than a clickable button. This just shows info about what FX a synth is outputting its audio to and which Synths an FX is receiving input from.
+- The last button is a Close Tab button to allow closing tabs from the routing view.
