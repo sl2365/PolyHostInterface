@@ -75,7 +75,7 @@ One-time installs (unavoidable for C++)
 Portable tools (no installer, just extract)
 
     Go to https://cmake.org/download/
-    Find "Windows x64 ZIP" (e.g. cmake-3.31.x-windows-x86_64.zip)
+    Find "Windows x64 ZIP" (e.g. cmake-4.3.1.x-windows-x86_64.zip)
     Extract it so the structure is:
 ;    Projects\_Tools\cmake\bin\cmake.exe
 

@@ -1,3 +1,4 @@
+#include "DebugLog.h"
 #include "MainView.h"
 #include "PluginProcessor.h"
 #include "PluginEditor.h"
@@ -587,6 +588,8 @@ void MainView::MidiAssignmentsPopup::buttonClicked(juce::Button* button)
 
     if (button == &assignAllButton)
     {
+        DebugLog::write("[MIDI] Assign All Enabled | tabIndex=" + juce::String(tabIndex));
+
         for (int i = 0; i < inputNames.size(); ++i)
             core.setMidiInputAssignedToTab(tabIndex, inputNames[i], true);
 
@@ -598,6 +601,8 @@ void MainView::MidiAssignmentsPopup::buttonClicked(juce::Button* button)
 
     if (button == &clearAllButton)
     {
+        DebugLog::write("[MIDI] Clear All assignments | tabIndex=" + juce::String(tabIndex));
+
         for (int i = 0; i < inputNames.size(); ++i)
             core.setMidiInputAssignedToTab(tabIndex, inputNames[i], false);
 
@@ -611,6 +616,11 @@ void MainView::MidiAssignmentsPopup::buttonClicked(juce::Button* button)
     {
         if (button == deviceButtons[i])
         {
+            DebugLog::write("[MIDI] Toggle assignment | tabIndex="
+                            + juce::String(tabIndex)
+                            + " | input="
+                            + inputNames[i]);
+
             core.toggleMidiInputAssignedToTab(tabIndex, inputNames[i]);
             refresh();
             owner.refreshFromCore();
@@ -627,6 +637,14 @@ MainView::MainView(PolyHostPluginProcessor& processorIn)
       recentPresetMenuHelper(presetController),
       toolbarFactory(*this)
 {
+    DebugLog::setEnabled(appSettings.getDebugLoggingEnabled());
+    DebugLog::setAdvancedEnabled(appSettings.getAdvancedDebugLoggingEnabled());
+
+    if (appSettings.getClearDebugLogOnStartup())
+        DebugLog::clear();
+
+    DebugLog::write("MainView startup");
+
     menuBar = std::make_unique<juce::MenuBarComponent>(this);
     menuBar->setColour(juce::PopupMenu::backgroundColourId, juce::Colour(0xFF1E2430));
     addAndMakeVisible(*menuBar);
@@ -806,8 +824,29 @@ juce::PopupMenu MainView::getMenuForIndex(int topLevelMenuIndex,
             break;
 
         case 2:
+        {
             menu.addItem(commandPointerControlSettings, "Pointer Control Settings...");
+            menu.addSeparator();
+
+            juce::PopupMenu debugMenu;
+            debugMenu.addItem(commandEnableDebugLogging,
+                              "Enable Debug Logging",
+                              true,
+                              appSettings.getDebugLoggingEnabled());
+            debugMenu.addItem(commandEnableAdvancedDebugLogging,
+                              "Enable Advanced Debug Logging",
+                              appSettings.getDebugLoggingEnabled(),
+                              appSettings.getAdvancedDebugLoggingEnabled());
+            debugMenu.addItem(commandClearDebugLogOnStartup,
+                              "Clear Debug Log On Startup",
+                              true,
+                              appSettings.getClearDebugLogOnStartup());
+            debugMenu.addItem(commandClearDebugLogNow,
+                              "Clear Debug Log Now");
+
+            menu.addSubMenu("Debug", debugMenu);
             break;
+        }
 
         case 3:
             menu.addItem(9005, "About PolyHost...");
@@ -879,6 +918,55 @@ void MainView::menuItemSelected(int menuItemID,
             showPointerControlSettingsDialog();
             break;
 
+        case commandEnableDebugLogging:
+        {
+            auto enabled = !appSettings.getDebugLoggingEnabled();
+            appSettings.setDebugLoggingEnabled(enabled);
+            DebugLog::setEnabled(enabled);
+
+            if (!enabled)
+            {
+                appSettings.setAdvancedDebugLoggingEnabled(false);
+                DebugLog::setAdvancedEnabled(false);
+            }
+
+            DebugLog::write("Debug logging " + juce::String(enabled ? "enabled" : "disabled"));
+            refreshDirtyUiOnly();
+            repaint();
+            break;
+        }
+
+        case commandEnableAdvancedDebugLogging:
+        {
+            if (!appSettings.getDebugLoggingEnabled())
+                break;
+
+            auto advancedEnabled = !appSettings.getAdvancedDebugLoggingEnabled();
+            appSettings.setAdvancedDebugLoggingEnabled(advancedEnabled);
+            DebugLog::setAdvancedEnabled(advancedEnabled);
+            DebugLog::write("Advanced debug logging "
+                            + juce::String(advancedEnabled ? "enabled" : "disabled"));
+            refreshDirtyUiOnly();
+            repaint();
+            break;
+        }
+
+        case commandClearDebugLogOnStartup:
+        {
+            auto shouldClear = !appSettings.getClearDebugLogOnStartup();
+            appSettings.setClearDebugLogOnStartup(shouldClear);
+            refreshDirtyUiOnly();
+            repaint();
+            break;
+        }
+
+        case commandClearDebugLogNow:
+            DebugLog::clear();
+            DebugLog::write("Debug log cleared");
+            refreshDirtyUiOnly();
+            repaint();
+            break;
+
         case 9005:
             showAboutDialog();
             break;
@@ -931,6 +1019,8 @@ void MainView::clearHostedEditor()
 {
     if (hostedEditor != nullptr)
     {
+        DebugLog::writeAdvanced("[HostedEditor] clearing hosted editor");
+
         if (auto* instance = processor.getCore().getMainPluginInstance())
             instance->editorBeingDeleted(hostedEditor.get());
 
@@ -946,19 +1036,29 @@ bool MainView::promptToSaveIfNeeded()
 {
     auto& core = processor.getCore();
 
+    DebugLog::write("[Preset] promptToSaveIfNeeded | dirty="
+                    + juce::String(core.isDirty() ? "true" : "false"));
+
     if (! core.isDirty())
         return true;
 
     auto decision = unsavedChangesHelper.promptToSaveChanges();
 
     if (decision == UnsavedChangesHelper::Decision::cancel)
+    {
+        DebugLog::write("[Preset] promptToSaveIfNeeded | user chose cancel");
         return false;
+    }
 
     if (decision == UnsavedChangesHelper::Decision::discard)
+    {
+        DebugLog::write("[Preset] promptToSaveIfNeeded | user chose discard");
         return true;
+    }
 
     if (decision == UnsavedChangesHelper::Decision::save)
     {
+        DebugLog::write("[Preset] promptToSaveIfNeeded | user chose save");
         savePreset();
         return ! core.isDirty();
     }
@@ -968,6 +1068,8 @@ bool MainView::promptToSaveIfNeeded()
 
 void MainView::createNewPreset()
 {
+    DebugLog::write("[Preset] createNewPreset requested");
+
     clearHostedEditor();
 
     auto& core = processor.getCore();
@@ -1002,6 +1104,9 @@ void MainView::rebuildPresetDropdown()
             presetNames.addIfNotAlreadyThere(presetFile.getFileNameWithoutExtension());
     }
 
+    DebugLog::writeAdvanced("[Preset] rebuildPresetDropdown | recentPresetCount="
+                            + juce::String(presetNames.size()));
+
     presetNames.sort(true);
 
     int itemId = 2;
@@ -1018,8 +1123,12 @@ void MainView::handlePresetSelection()
 {
     auto selectedId = presetDropdown.getSelectedId();
 
+    DebugLog::write("[Preset] handlePresetSelection | selectedId=" + juce::String(selectedId));
+
     if (selectedId == 1)
     {
+        DebugLog::write("[Preset] New Preset selected from dropdown");
+
         if (promptToSaveIfNeeded())
             createNewPreset();
 
@@ -1066,6 +1175,7 @@ void MainView::handlePresetSelection()
         return;
 
     auto selectedFile = validFiles.getReference(sortedIndices.getReference(recentIndex));
+    DebugLog::write("[Preset] Dropdown preset selected | file=" + selectedFile.getFullPathName());
 
     if (! promptToSaveIfNeeded())
     {
@@ -1265,6 +1375,8 @@ void MainView::refreshPointerControlTarget()
 
 void MainView::processPendingPointerMidi()
 {
+    DebugLog::writeAdvanced("[PointerControl] processPendingPointerMidi called");
+
     auto* thisWindow = findParentComponentOfClass<juce::TopLevelWindow>();
     juce::ignoreUnused(thisWindow);
 
@@ -1419,6 +1531,9 @@ void MainView::rebuildTabButtons()
 
     auto& tabModel = processor.getCore().getTabModel();
 
+    DebugLog::writeAdvanced("[Tabs] rebuildTabButtons | tabCount="
+                            + juce::String(tabModel.getNumTabs()));
+
     for (int i = 0; i < tabModel.getNumTabs(); ++i)
     {
         const auto& tab = tabModel.getTab(i);
@@ -1447,8 +1562,14 @@ void MainView::rebuildTabButtons()
 
 void MainView::toggleRoutingView()
 {
+    DebugLog::write("[Routing] toggleRoutingView requested | current="
+                    + juce::String(showingRoutingView ? "true" : "false"));
+
     dismissMidiAssignmentsPopup();
     showingRoutingView = ! showingRoutingView;
+
+    DebugLog::write("[Routing] toggleRoutingView new state="
+                    + juce::String(showingRoutingView ? "true" : "false"));
 
     auto& core = processor.getCore();
 
@@ -1502,6 +1623,8 @@ void MainView::rebuildRoutingView()
 
 void MainView::selectTab(int tabIndex)
 {
+    DebugLog::write("[Tabs] selectTab | tabIndex=" + juce::String(tabIndex));
+
     dismissMidiAssignmentsPopup();
     auto& core = processor.getCore();
 
@@ -1549,6 +1672,11 @@ void MainView::showTabContextMenuAsync(int tabIndex, juce::Component* anchor)
 
 void MainView::handleTabContextCommand(int commandId, int tabIndex)
 {
+    DebugLog::write("[Tabs] handleTabContextCommand | commandId="
+                    + juce::String(commandId)
+                    + " | tabIndex="
+                    + juce::String(tabIndex));
+
     auto& core = processor.getCore();
 
     if (! juce::isPositiveAndBelow(tabIndex, core.getNumTabs()))
@@ -1574,7 +1702,14 @@ void MainView::handleTabContextCommand(int commandId, int tabIndex)
             clearHostedEditor();
 
             if (! core.reloadTabPlugin(tabIndex))
+            {
+                DebugLog::write("[Plugin] context reload failed | tabIndex=" + juce::String(tabIndex));
                 core.setStatusText("Plugin reload failed");
+            }
+            else
+            {
+                DebugLog::write("[Plugin] context reload succeeded | tabIndex=" + juce::String(tabIndex));
+            }
 
             core.getTabModel().selectTab(core.getSelectedTabIndex());
             refreshFromCore();
@@ -1583,6 +1718,7 @@ void MainView::handleTabContextCommand(int commandId, int tabIndex)
         }
 
         case commandTabContextClearTab:
+            DebugLog::write("[Tabs] context clear tab | tabIndex=" + juce::String(tabIndex));
             clearHostedEditor();
             core.clearTab(tabIndex);
             core.getTabModel().selectTab(core.getSelectedTabIndex());
@@ -1591,6 +1727,8 @@ void MainView::handleTabContextCommand(int commandId, int tabIndex)
             return;
 
         case commandTabContextCloseTab:
+            DebugLog::write("[Tabs] context close tab | tabIndex=" + juce::String(tabIndex));
+
             if (core.getNumTabs() <= 1)
                 return;
 
@@ -1610,6 +1748,8 @@ void MainView::handleTabContextCommand(int commandId, int tabIndex)
 
 void MainView::clearTab(int tabIndex)
 {
+    DebugLog::write("[Tabs] clearTab | tabIndex=" + juce::String(tabIndex));
+
     dismissMidiAssignmentsPopup();
     auto& core = processor.getCore();
 
@@ -1627,6 +1767,8 @@ void MainView::clearTab(int tabIndex)
 
 void MainView::closeTab(int tabIndex)
 {
+    DebugLog::write("[Tabs] closeTab | tabIndex=" + juce::String(tabIndex));
+
     dismissMidiAssignmentsPopup();
     auto& core = processor.getCore();
 
@@ -1647,6 +1789,8 @@ void MainView::closeTab(int tabIndex)
 
 void MainView::newTab()
 {
+    DebugLog::write("[Tabs] newTab requested");
+
     auto& core = processor.getCore();
     core.addTab();
     core.getTabModel().selectTab(core.getSelectedTabIndex());
@@ -1657,6 +1801,8 @@ void MainView::newTab()
 
 void MainView::closeCurrentTab()
 {
+    DebugLog::write("[Tabs] closeCurrentTab requested");
+
     auto& core = processor.getCore();
 
     if (core.closeSelectedTab())
@@ -1669,6 +1815,8 @@ void MainView::closeCurrentTab()
 
 void MainView::loadPluginIntoMainSlot()
 {
+    DebugLog::write("[Plugin] loadPluginIntoMainSlot opened chooser");
+
     juce::FileChooser chooser("Select a plugin to associate with the current tab",
                               {},
                               "*.vst3");
@@ -1699,11 +1847,14 @@ void MainView::loadPluginIntoMainSlot()
 
 void MainView::replacePlugin()
 {
+    DebugLog::write("[Plugin] replacePlugin requested");
     loadPluginIntoMainSlot();
 }
 
 void MainView::newPlugin()
 {
+    DebugLog::write("[Plugin] newPlugin requested");
+
     auto& core = processor.getCore();
 
     core.addTab();
@@ -1717,6 +1868,7 @@ void MainView::newPlugin()
 
 void MainView::openPresetsFolder()
 {
+    DebugLog::write("[Preset] openPresetsFolder requested");
     AppSettings::getPresetsDirectory().startAsProcess();
 }
 
@@ -1726,6 +1878,8 @@ void MainView::deleteCurrentPreset()
 
     if (! currentFile.existsAsFile())
         return;
+
+    DebugLog::write("[Preset] deleteCurrentPreset requested | file=" + currentFile.getFullPathName());
 
     juce::AlertWindow alert("Delete Current Preset",
                             "Delete preset file?\n\n" + currentFile.getFullPathName(),
@@ -1739,6 +1893,8 @@ void MainView::deleteCurrentPreset()
 
     if (currentFile.deleteFile())
     {
+        DebugLog::write("[Preset] deleteCurrentPreset success");
+
         clearHostedEditor();
 
         presetController.forgetFile(currentFile);
@@ -1757,6 +1913,8 @@ void MainView::deleteCurrentPreset()
     }
     else
     {
+        DebugLog::write("[Preset] deleteCurrentPreset failed");
+
         processor.getCore().setStatusText("Preset delete failed");
         refreshDirtyUiOnly();
     }
@@ -1764,6 +1922,8 @@ void MainView::deleteCurrentPreset()
 
 void MainView::savePreset()
 {
+    DebugLog::write("[Preset] savePreset requested");
+
     if (presetController.hasCurrentFile())
     {
         saveSessionToFile(presetController.getCurrentFile());
@@ -1776,6 +1936,8 @@ void MainView::savePreset()
 
 void MainView::savePresetAs()
 {
+    DebugLog::write("[Preset] savePresetAs requested");
+
     auto initialDirectory = presetFileHelper.getDefaultPresetDirectory();
     auto suggestedName = presetFileHelper.getSuggestedSaveName();
 
@@ -1798,6 +1960,8 @@ void MainView::savePresetAs()
 
 void MainView::loadPresetFromFile()
 {
+    DebugLog::write("[Preset] loadPresetFromFile chooser opened");
+
     juce::FileChooser chooser("Load PolyHost preset",
                               presetFileHelper.getDefaultPresetDirectory(),
                               "*.xml");
@@ -1808,6 +1972,8 @@ void MainView::loadPresetFromFile()
 
 void MainView::loadRecentPreset(int menuItemID)
 {
+    DebugLog::write("[Preset] loadRecentPreset | menuItemID=" + juce::String(menuItemID));
+
     if (! promptToSaveIfNeeded())
         return;
 
@@ -1815,11 +1981,16 @@ void MainView::loadRecentPreset(int menuItemID)
                                                                     commandRecentPresetBase);
 
     if (file.existsAsFile())
+    {
+        DebugLog::write("[Preset] loadRecentPreset | file=" + file.getFullPathName());
         loadSessionFromFile(file);
+    }
 }
 
 bool MainView::saveSessionToFile(const juce::File& file)
 {
+    DebugLog::write("[Preset] saveSessionToFile | file=" + file.getFullPathName());
+
     auto& core = processor.getCore();
 
     if (showingRoutingView)
@@ -1833,6 +2004,8 @@ bool MainView::saveSessionToFile(const juce::File& file)
 
     if (SessionManager::saveSessionToFile(sessionData, file))
     {
+        DebugLog::write("[Preset] saveSessionToFile success");
+
         presetController.handleSuccessfulSave(file);
         core.setStatusText("Preset saved");
         core.markClean();
@@ -1842,6 +2015,8 @@ bool MainView::saveSessionToFile(const juce::File& file)
         return true;
     }
 
+    DebugLog::write("[Preset] saveSessionToFile failed");
+
     core.setStatusText("Preset save failed");
     refreshDirtyUiOnly();
     return false;
@@ -1849,11 +2024,15 @@ bool MainView::saveSessionToFile(const juce::File& file)
 
 bool MainView::loadSessionFromFile(const juce::File& file)
 {
+    DebugLog::write("[Preset] loadSessionFromFile | file=" + file.getFullPathName());
+
     SessionData sessionData;
     juce::StringArray warnings;
 
     if (! SessionManager::loadSessionFromFile(file, sessionData, warnings))
     {
+        DebugLog::write("[Preset] loadSessionFromFile failed during parse/load");
+
         processor.getCore().setStatusText("Preset load failed");
         refreshDirtyUiOnly();
         return false;
@@ -1874,6 +2053,11 @@ bool MainView::loadSessionFromFile(const juce::File& file)
 
     if (processor.getCore().restoreSessionData(sessionData, warnings))
     {
+        if (warnings.size() > 0)
+            DebugLog::write("[Preset] loadSessionFromFile success with warnings | count=" + juce::String(warnings.size()));
+        else
+            DebugLog::write("[Preset] loadSessionFromFile success");
+
         presetController.rememberLoadedFile(file);
 
         if (warnings.size() > 0)
@@ -1887,6 +2071,8 @@ bool MainView::loadSessionFromFile(const juce::File& file)
         return true;
     }
 
+    DebugLog::write("[Preset] loadSessionFromFile failed during restoreSessionData");
+
     processor.getCore().setStatusText("Preset load failed");
     refreshFromCore();
     repaint();
@@ -1896,6 +2082,11 @@ bool MainView::loadSessionFromFile(const juce::File& file)
 void MainView::refreshDirtyUiOnly()
 {
     auto& core = processor.getCore();
+
+    DebugLog::writeAdvanced("[MainView] refreshDirtyUiOnly | sessionName="
+                            + core.getSessionName()
+                            + " | dirty="
+                            + juce::String(core.isDirty() ? "true" : "false"));
 
     rebuildPresetDropdown();
 
@@ -1935,18 +2126,22 @@ void MainView::resizeParentEditorToFitHostedPlugin()
 
 void MainView::refreshHostedEditor()
 {
+    DebugLog::writeAdvanced("[HostedEditor] refreshHostedEditor begin");
+
     clearHostedEditor();
 
     auto* instance = processor.getCore().getMainPluginInstance();
 
     if (instance == nullptr)
     {
+        DebugLog::writeAdvanced("[HostedEditor] no plugin instance");
         resizeParentEditorToFitHostedPlugin();
         return;
     }
 
     if (! instance->hasEditor())
     {
+        DebugLog::writeAdvanced("[HostedEditor] plugin has no editor");
         resizeParentEditorToFitHostedPlugin();
         return;
     }
@@ -1955,6 +2150,8 @@ void MainView::refreshHostedEditor()
 
     if (hostedEditor != nullptr)
     {
+        DebugLog::writeAdvanced("[HostedEditor] editor created successfully");
+
         editorHolder.addAndMakeVisible(hostedEditor.get());
         hostedEditor->setTopLeftPosition(0, 0);
         hostedEditor->setVisible(true);
@@ -1982,6 +2179,7 @@ void MainView::refreshHostedEditor()
     }
     else
     {
+        DebugLog::writeAdvanced("[HostedEditor] createEditorIfNeeded returned null");
         resizeParentEditorToFitHostedPlugin();
     }
 
@@ -1998,6 +2196,8 @@ void MainView::clearHostedEditorForWindowClose()
 
 void MainView::recoverCurrentTabAfterWindowReopen()
 {
+    DebugLog::write("[Window] recoverCurrentTabAfterWindowReopen requested");
+
     if (showingRoutingView)
         return;
 
@@ -2009,6 +2209,7 @@ void MainView::recoverCurrentTabAfterWindowReopen()
 
     if (core.getTabModel().getTab(tabIndex).type == PluginSlotType::Empty)
     {
+        DebugLog::writeAdvanced("[Window] selected tab is empty, refreshing hosted editor only");
         refreshHostedEditorForWindowReopen();
         return;
     }
@@ -2032,7 +2233,14 @@ void MainView::recoverCurrentTabAfterWindowReopen()
         core.getTabModel().selectTab(tabIndex);
 
         if (! core.reloadTabPlugin(tabIndex))
+        {
+            DebugLog::write("[Window] plugin reload failed after window reopen");
             core.setStatusText("Plugin reload failed after window reopen");
+        }
+        else
+        {
+            DebugLog::writeAdvanced("[Window] plugin reload succeeded after window reopen");
+        }
 
         safePtr->refreshFromCore();
         safePtr->repaint();
@@ -2041,6 +2249,8 @@ void MainView::recoverCurrentTabAfterWindowReopen()
 
 void MainView::refreshHostedEditorForWindowReopen()
 {
+    DebugLog::writeAdvanced("[Window] refreshHostedEditorForWindowReopen requested");
+
     if (showingRoutingView)
         return;
 
@@ -2062,6 +2272,13 @@ void MainView::refreshHostedEditorForWindowReopen()
 
 void MainView::refreshFromCore()
 {
+    DebugLog::writeAdvanced("[MainView] refreshFromCore | showingRoutingView="
+                            + juce::String(showingRoutingView ? "true" : "false")
+                            + " | dirty="
+                            + juce::String(processor.getCore().isDirty() ? "true" : "false")
+                            + " | selectedTab="
+                            + juce::String(processor.getCore().getSelectedTabIndex()));
+
     auto& core = processor.getCore();
 
     if (! showingRoutingView)
@@ -2301,6 +2518,197 @@ void MainView::showAboutDialog()
         window->centreWithSize(dialogWidth, dialogHeight);
 }
 
+bool MainView::isInterestedInFileDrag(const juce::StringArray& files)
+{
+    DebugLog::write("[DragDrop] isInterestedInFileDrag called | count=" + juce::String(files.size()));
+
+    for (auto& path : files)
+    {
+        const juce::File file(path);
+        DebugLog::writeAdvanced("[DragDrop] candidate path=" + path);
+
+        if (file.hasFileExtension(".vst3"))
+        {
+            DebugLog::write("[DragDrop] accepted .vst3 file");
+            return true;
+        }
+    }
+
+    DebugLog::writeAdvanced("[DragDrop] no accepted files");
+    return false;
+}
+
+void MainView::filesDropped(const juce::StringArray& files, int x, int y)
+{
+    DebugLog::write("[DragDrop] filesDropped called | count=" + juce::String(files.size())
+                    + " | x=" + juce::String(x)
+                    + " | y=" + juce::String(y));
+
+    auto& core = processor.getCore();
+    int targetTabIndex = core.getSelectedTabIndex();
+
+    if (! juce::isPositiveAndBelow(targetTabIndex, core.getNumTabs()))
+        targetTabIndex = 0;
+
+    for (auto& path : files)
+    {
+        const juce::File file(path);
+        DebugLog::writeAdvanced("[DragDrop] dropped path=" + path);
+
+        if (handleDroppedPluginFile(file, targetTabIndex))
+        {
+            DebugLog::write("[DragDrop] handled successfully");
+            return;
+        }
+    }
+
+    DebugLog::write("[DragDrop] filesDropped received, but nothing handled");
+}
+
+int MainView::promptForDroppedPluginAction(const juce::File& droppedFile, int targetTabIndex) const
+{
+    auto& core = processor.getCore();
+
+    if (! juce::isPositiveAndBelow(targetTabIndex, core.getNumTabs()))
+        return 0;
+
+    const auto& tab = core.getTabModel().getTab(targetTabIndex);
+
+    if (tab.type == PluginSlotType::Empty)
+        return 1;
+
+    auto currentPluginName = tab.name.trim();
+
+    if (currentPluginName.isEmpty())
+        currentPluginName = "Current Plugin";
+
+    juce::String message;
+    message << "Replace this tab's plugin:\n"
+            << currentPluginName
+            << "\n\nWith dropped plugin:\n"
+            << droppedFile.getFileName()
+            << "\n\nWhat would you like to do?";
+
+    juce::AlertWindow w("Plugin Drop",
+                        message,
+                        juce::AlertWindow::QuestionIcon);
+
+    w.addButton("Open New Tab", 1);
+    w.addButton("Replace Plugin", 2);
+    w.addButton("Cancel", 0);
+
+    return w.runModalLoop();
+}
+
+bool MainView::loadDroppedPluginInNewTab(const juce::File& file)
+{
+    auto& core = processor.getCore();
+
+    core.addTab();
+    core.getTabModel().selectTab(core.getSelectedTabIndex());
+
+    refreshFromCore();
+    repaint();
+
+    clearHostedEditor();
+
+    if (core.loadMainSlotPluginFromPath(file.getFullPathName()))
+    {
+        core.refreshTabModel();
+        core.getTabModel().selectTab(core.getSelectedTabIndex());
+        refreshFromCore();
+        repaint();
+        return true;
+    }
+
+    refreshFromCore();
+    repaint();
+    return false;
+}
+
+bool MainView::handleDroppedPluginFile(const juce::File& file, int targetTabIndex)
+{
+    if (! file.hasFileExtension(".vst3"))
+    {
+        DebugLog::writeAdvanced("[DragDrop] rejected non-vst3 file: " + file.getFullPathName());
+        return false;
+    }
+
+    DebugLog::write("[DragDrop] handleDroppedPluginFile | file=" + file.getFullPathName()
+                    + " | targetTabIndex=" + juce::String(targetTabIndex));
+
+    auto& core = processor.getCore();
+
+    if (! juce::isPositiveAndBelow(targetTabIndex, core.getNumTabs()))
+    {
+        DebugLog::write("[DragDrop] invalid target tab index");
+        return false;
+    }
+
+    const auto& tab = core.getTabModel().getTab(targetTabIndex);
+
+    if (tab.type == PluginSlotType::Empty)
+    {
+        DebugLog::write("[DragDrop] target tab is empty, loading directly");
+
+        core.setSelectedTabIndex(targetTabIndex);
+        core.getTabModel().selectTab(targetTabIndex);
+
+        clearHostedEditor();
+
+        if (core.loadMainSlotPluginFromPath(file.getFullPathName()))
+        {
+            DebugLog::write("[DragDrop] plugin loaded into empty tab");
+            core.refreshTabModel();
+            core.getTabModel().selectTab(core.getSelectedTabIndex());
+            refreshFromCore();
+            repaint();
+            return true;
+        }
+
+        DebugLog::write("[DragDrop] failed to load plugin into empty tab");
+        refreshFromCore();
+        repaint();
+        return false;
+    }
+
+    const int action = promptForDroppedPluginAction(file, targetTabIndex);
+
+    if (action == 1)
+    {
+        DebugLog::write("[DragDrop] user chose Open New Tab");
+        return loadDroppedPluginInNewTab(file);
+    }
+
+    if (action == 2)
+    {
+        DebugLog::write("[DragDrop] user chose Replace Plugin");
+
+        core.setSelectedTabIndex(targetTabIndex);
+        core.getTabModel().selectTab(targetTabIndex);
+
+        clearHostedEditor();
+
+        if (core.loadMainSlotPluginFromPath(file.getFullPathName()))
+        {
+            DebugLog::write("[DragDrop] plugin replaced successfully");
+            core.refreshTabModel();
+            core.getTabModel().selectTab(core.getSelectedTabIndex());
+            refreshFromCore();
+            repaint();
+            return true;
+        }
+
+        DebugLog::write("[DragDrop] plugin replace failed");
+        refreshFromCore();
+        repaint();
+        return false;
+    }
+
+    DebugLog::write("[DragDrop] user cancelled drop action");
+    return false;
+}
+
 void MainView::showPointerControlSettingsDialog()
 {
     class PointerControlSettingsContent final : public juce::Component
@@ -2424,6 +2832,7 @@ void MainView::showPointerControlSettingsDialog()
             okButton.onClick = [this]
             {
                 apply();
+                DebugLog::write("[PointerControl] settings applied");
 
                 if (auto* dw = findParentComponentOfClass<juce::DialogWindow>())
                     dw->exitModalState(1);

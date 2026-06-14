@@ -124,9 +124,9 @@ if not exist "%PLUGIN_BINARY%" (
 
 :: Close cmd and Launch plugin
 echo.
-echo =================================================================
+echo ======================================================================
 echo VST3 Build complete. Launching %PLUGIN_NAME% in 2 seconds...
-echo =================================================================
+echo ======================================================================
 rem pause
 timeout /t 2 /nobreak >nul
 start "" "%PLUGIN_BINARY%"

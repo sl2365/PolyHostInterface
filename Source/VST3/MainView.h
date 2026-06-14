@@ -11,6 +11,7 @@ class PolyHostPluginProcessor;
 
 class MainView : public juce::Component,
                  public juce::MenuBarModel,
+                 public juce::FileDragAndDropTarget,
                  private juce::Timer
 {
 public:
@@ -21,6 +22,9 @@ public:
     PolyHostPluginProcessor& getProcessor() { return processor; }
     juce::Point<int> getHostedEditorLocalPointFromScreen(juce::Point<int> screenPoint) const;
     juce::Point<int> getHostedEditorScreenPointFromLocal(juce::Point<int> localPoint) const;
+
+    bool isInterestedInFileDrag(const juce::StringArray& files) override;
+    void filesDropped(const juce::StringArray& files, int x, int y) override;
 
     void paint(juce::Graphics& g) override;
     void resized() override;
@@ -368,8 +372,12 @@ private:
         commandTabContextClearTab = 2301,
         commandTabContextCloseTab = 2302,
         commandTabContextReplacePlugin = 2303,
+        commandTabContextReloadPlugin = 2304,
         commandPointerControlSettings = 2400,
-        commandTabContextReloadPlugin = 2304
+        commandEnableDebugLogging = 2500,
+        commandEnableAdvancedDebugLogging = 2501,
+        commandClearDebugLogOnStartup = 2502,
+        commandClearDebugLogNow = 2503
     };
 
     juce::StringArray getMenuBarNames() override;
@@ -466,6 +474,10 @@ private:
 
     bool pointerControlEditModeEnabled = false;
     std::unique_ptr<PointerEditOverlayWindow> pointerEditOverlayWindow;
+
+    bool handleDroppedPluginFile(const juce::File& file, int targetTabIndex);
+    bool loadDroppedPluginInNewTab(const juce::File& file);
+    int promptForDroppedPluginAction(const juce::File& droppedFile, int targetTabIndex) const;
 
     bool lastKnownDirtyState = false;
     bool lastKnownShowingState = true;
