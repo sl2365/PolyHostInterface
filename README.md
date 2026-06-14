@@ -8,7 +8,7 @@ I always liked tools like TobyBear's MiniHost, SaviHost and Tone2's NanoHost. Bu
 
 ## Feature Status
 
-| Feature | Status - Some features not yet implemented * |
+| Feature | Status - Some features only in APP or VST3 * |
 |---|---|
 | VST3 x64 | ✅ Working |
 | CLAP x64 | ✅ Working * - May be buggy - Requires CLAP SDK to build — see below |
