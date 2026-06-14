@@ -50,7 +50,7 @@ _Projects\PolyHost\              ← your project root
 
 
 _Projects\_Tools\
-    ├── cmake\                   ← extract cmake-3.x.x-windows-x86_64.zip HERE
+    ├── cmake\                   ← extract cmake-4.3.1-windows-x86_64.zip HERE
     │   └── bin\
     │       └── cmake.exe
     │
