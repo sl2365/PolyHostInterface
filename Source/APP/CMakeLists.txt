@@ -1,6 +1,7 @@
 cmake_minimum_required(VERSION 3.22)
 
-set(POLYHOST_VERSION "1.0.0")
+# ── Standalone Application Version ────────────────────────────────────────────────────────
+set(POLYHOST_VERSION "1.5.23")
 
 project(PolyHostInterface VERSION ${POLYHOST_VERSION} LANGUAGES CXX)
 
