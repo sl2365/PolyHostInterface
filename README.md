@@ -8,7 +8,7 @@ I always liked tools like TobyBear's MiniHost, SaviHost and Tone2's NanoHost. Bu
 
 ## Feature Status
 
-| Feature | Status | - Some features not yet implemented * |
+| Feature | Status - Some features not yet implemented * |
 |---|---|
 | VST3 x64 | ✅ Working |
 | CLAP x64 | ✅ Working * - May be buggy - Requires CLAP SDK to build — see below |
@@ -66,6 +66,18 @@ _Projects\_Tools\
 ```
 
 ## Build Setup (one-time)
+Setup Steps for You
+One-time installs (unavoidable for C++)
+
+    Visual Studio 2026 Community — free: https://visualstudio.microsoft.com/vs/community/
+        During install tick: Desktop development with C++
+
+Portable tools (no installer, just extract)
+
+    Go to https://cmake.org/download/
+    Find "Windows x64 ZIP" (e.g. cmake-3.31.x-windows-x86_64.zip)
+    Extract it so the structure is:
+;    Projects\_Tools\cmake\bin\cmake.exe
 
 ### 1. Visual Studio 2022 Community (free)
 https://visualstudio.microsoft.com/vs/community/
