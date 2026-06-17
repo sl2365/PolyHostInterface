@@ -129,9 +129,9 @@ MIDI Device(s)
 MIDI always wired in parallel. Synth and FX audio routing is partially flexible, where plugins are in series and routing can be modified by entering the Routing page. Click the Routing toolbar button and a list of all tabs appears, use Up and Down buttons to manage the processing order.
 
 - The Synth/FX labels are buttons that when clicked, close routing view and open the tab for that row. Next to which is the plugin name.
-- Adjust Method is used for setting the PointerControl, which hasnt been done yet, so can be left until a later date.
+- Adjust Method is used for setting the PointerControl mode. Global uses the settings in the PointerControlSettings panel. Drag sets only this tab/plugin to sue drag method of adjustment. Scroll sets it to use mouse scroll as adjustment type. Setting this to Drag or Scroll allows a global setting to be use for every other tab/plugin, while allowing you to use these specific settings per tab for independant plugin control.
 - The MIDI(#) buttons are used to designate which connected devices will be used for which loaded plugins. ie, you may want to designate a keyboard to the synths, but have a MIDI controller to adjust FX so you may need to specify on/off per device for each plugin.
-- The Green buttons are used to enable/disable the audio/MIDI for that tab/plugin so effectively making it a bypass function.
+- The Green buttons are used to enable/disable the audio/MIDI for that tab/plugin so effectively making it a bypass/mute function.
 - The next two buttons are the Up/Down arrows and are used to adjust the position in the chain so you can set up different chains for the same plugins, thereby saving different presets with different chains for different situations.
 - The next button is an info button, used more as a tooltip than a clickable button. This just shows info about what FX a synth is outputting its audio to and which Synths an FX is receiving input from.
 - The last button is a Close Tab button to allow closing tabs from the routing view.
