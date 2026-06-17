@@ -79,7 +79,7 @@ Portable tools (no installer, just extract)
     Go to https://cmake.org/download/
     Find "Windows x64 ZIP" (e.g. cmake-4.3.1.x-windows-x86_64.zip)
     Extract it so the structure is:
-;    Projects\_Tools\cmake\bin\cmake.exe
+    Projects\_Tools\cmake\bin\cmake.exe
 
 ### 1. Visual Studio 2022 Community (free)
 https://visualstudio.microsoft.com/vs/community/
@@ -102,6 +102,7 @@ The finished exe appears in dist\PolyHostInterface.exe
 2. Open with > Choose another app
 3. Browse to PolyHostInterface.exe
 4. Tick "Always use this app" if you want it permanent
+This means that anytime you then double-click a plugin in Explorer, it will auto-open into the first tab of PolyHostInterface, or add a new tab with that plguin if already open. So only one instance can be run at present.
 
 ## VST2 Support
 If you have a copy of vstsdk2.4, place it here: {CMAKE_SOURCE_DIR}/tools/vstsdk2.4
