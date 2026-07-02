@@ -219,7 +219,8 @@ namespace
                     "Clear Preset Pointer Map",
                     message,
                     "Clear Preset",
-                    "Cancel");
+                    "Cancel",
+                    owner.getWindowCenterTarget());
 
                 if (! confirmed)
                     return;
@@ -1307,7 +1308,8 @@ MainView::MainView(PolyHostPluginProcessor& processorIn)
             "Clear All Macro Mappings",
             "Delete all macro mappings?",
             "Clear All",
-            "Cancel");
+            "Cancel",
+            getWindowCenterTarget());
 
         if (! confirmed)
             return;
@@ -1515,7 +1517,8 @@ void MainView::menuItemSelected(int menuItemID,
 
         case commandMidiMonitor:
             if (midiMonitorWindow == nullptr)
-                midiMonitorWindow = std::make_unique<VstMidiMonitorWindow>(processor);
+                midiMonitorWindow = std::make_unique<VstMidiMonitorWindow>(processor,
+                                                                          getWindowCenterTarget());
 
             midiMonitorWindow->setVisible(true);
             midiMonitorWindow->toFront(true);
@@ -1702,7 +1705,8 @@ void MainView::timerCallback()
                     "Missing Plugins",
                     message,
                     "Locate Now",
-                    "Later");
+                    "Later",
+                    getWindowCenterTarget());
 
                 if (locate)
                 {
@@ -1763,7 +1767,7 @@ bool MainView::promptToSaveIfNeeded()
     if (! core.isDirty())
         return true;
 
-    auto decision = unsavedChangesHelper.promptToSaveChanges();
+    auto decision = unsavedChangesHelper.promptToSaveChanges(getWindowCenterTarget());
 
     if (decision == UnsavedChangesHelper::Decision::cancel)
     {
@@ -1935,6 +1939,7 @@ void MainView::reloadCurrentPreset()
 
     alert.addButton("Revert Changes", 1, juce::KeyPress(juce::KeyPress::returnKey));
     alert.addButton("Cancel", 0, juce::KeyPress(juce::KeyPress::escapeKey));
+    alert.centreAroundComponent(getWindowCenterTarget(), 420, 180);
 
     if (alert.runModalLoop() != 1)
     {
@@ -1963,6 +1968,14 @@ void MainView::showTemporaryStatusMessage(const juce::String& text)
     temporaryStatusMessage = text;
     temporaryStatusExpiryMs = juce::Time::getMillisecondCounter() + 5000;
     repaint();
+}
+
+juce::Component* MainView::getWindowCenterTarget() const
+{
+    if (auto* parentEditor = findParentComponentOfClass<PolyHostPluginEditor>())
+        return parentEditor;
+
+    return const_cast<MainView*>(this);
 }
 
 void MainView::setPointerControlEditMode(bool shouldEnable)
@@ -2886,7 +2899,10 @@ void MainView::loadPluginIntoMainSlot()
 
     juce::FileChooser chooser("Select a plugin to associate with the current tab",
                               {},
-                              fileFilter);
+                              fileFilter,
+                              true,
+                              false,
+                              getWindowCenterTarget());
 
     if (chooser.browseForFileToOpen())
     {
@@ -2957,6 +2973,8 @@ void MainView::deleteCurrentPreset()
     alert.addButton("Delete", 1, juce::KeyPress(juce::KeyPress::returnKey));
     alert.addButton("Cancel", 0, juce::KeyPress(juce::KeyPress::escapeKey));
 
+    alert.centreAroundComponent(getWindowCenterTarget(), 460, 220);
+
     if (alert.runModalLoop() != 1)
         return;
 
@@ -3016,7 +3034,10 @@ void MainView::savePresetAs()
 
     juce::FileChooser chooser("Save PolyHost preset",
                               initialFile,
-                              "*.xml");
+                              "*.xml",
+                              true,
+                              false,
+                              getWindowCenterTarget());
 
     if (chooser.browseForFileToSave(true))
     {
@@ -3048,7 +3069,10 @@ void MainView::loadPresetFromFile()
 
     juce::FileChooser chooser("Load PolyHost preset",
                               presetFileHelper.getDefaultPresetDirectory(),
-                              "*.xml");
+                              "*.xml",
+                              true,
+                              false,
+                              getWindowCenterTarget());
 
     if (chooser.browseForFileToOpen())
         loadSessionFromFile(chooser.getResult());
@@ -3750,10 +3774,10 @@ void MainView::showAboutDialog()
     options.escapeKeyTriggersCloseButton = true;
     options.useNativeTitleBar = true;
     options.resizable = false;
-    options.componentToCentreAround = this;
+    options.componentToCentreAround = getWindowCenterTarget();
 
     if (auto* window = options.launchAsync())
-        window->centreWithSize(dialogWidth, dialogHeight);
+        window->centreAroundComponent(getWindowCenterTarget(), dialogWidth, dialogHeight);
 }
 
 bool MainView::isInterestedInFileDrag(const juce::StringArray& files)
@@ -3843,6 +3867,7 @@ int MainView::promptForDroppedPluginAction(const juce::File& droppedFile, int ta
     w.addButton("Replace Plugin", 2);
     w.addButton("Cancel", 0);
 
+    w.centreAroundComponent(getWindowCenterTarget(), 460, 220);
     return w.runModalLoop();
 }
 
@@ -3967,7 +3992,10 @@ void MainView::addPluginScanFolder()
 {
     juce::FileChooser chooser("Select Plugin Scan Folder",
                               juce::File::getSpecialLocation(juce::File::userHomeDirectory),
-                              "*");
+                              "*",
+                              true,
+                              false,
+                              getWindowCenterTarget());
 
     if (! chooser.browseForDirectory())
         return;
@@ -3982,7 +4010,9 @@ void MainView::addPluginScanFolder()
     juce::AlertWindow::showMessageBoxAsync(
         juce::AlertWindow::InfoIcon,
         "Plugin Scan Folder Added",
-        "Added:\n" + folder.getFullPathName());
+        "Added:\n" + folder.getFullPathName(),
+        "OK",
+        getWindowCenterTarget());
 }
 
 void MainView::showPluginScanFolders()
@@ -3994,7 +4024,9 @@ void MainView::showPluginScanFolders()
         juce::AlertWindow::showMessageBoxAsync(
             juce::AlertWindow::InfoIcon,
             "Plugin Scan Folders",
-            "No plugin scan folders have been configured.");
+            "No plugin scan folders have been configured.",
+            "OK",
+            getWindowCenterTarget());
         return;
     }
 
@@ -4006,7 +4038,9 @@ void MainView::showPluginScanFolders()
     juce::AlertWindow::showMessageBoxAsync(
         juce::AlertWindow::InfoIcon,
         "Plugin Scan Folders",
-        message.trimEnd());
+        message.trimEnd(),
+        "OK",
+        getWindowCenterTarget());
 }
 
 void MainView::clearPluginScanFolders()
@@ -4019,7 +4053,8 @@ void MainView::clearPluginScanFolders()
         "Clear Plugin Scan Folders",
         "Remove all configured plugin scan folders?",
         "Clear All",
-        "Cancel");
+        "Cancel",
+        getWindowCenterTarget());
 
     if (! confirmed)
         return;
@@ -4029,7 +4064,9 @@ void MainView::clearPluginScanFolders()
     juce::AlertWindow::showMessageBoxAsync(
         juce::AlertWindow::InfoIcon,
         "Plugin Scan Folders",
-        "All plugin scan folders have been cleared.");
+        "All plugin scan folders have been cleared.",
+        "OK",
+        getWindowCenterTarget());
 }
 
 bool MainView::tryRepairMissingPlugin(int tabIndex,
@@ -4048,7 +4085,10 @@ bool MainView::tryRepairMissingPlugin(int tabIndex,
     // Let user browse for the replacement file
     juce::FileChooser chooser("Locate Plugin: " + pluginName,
                               startDir,
-                              "*.vst3;*.dll");
+                              "*.vst3;*.dll",
+                              true,
+                              false,
+                              getWindowCenterTarget());
 
     if (! chooser.browseForFileToOpen())
         return false;
@@ -4067,7 +4107,8 @@ bool MainView::tryRepairMissingPlugin(int tabIndex,
             + "\n\nSelected:\n"
             + replacementFile.getFullPathName(),
         "Use Replacement",
-        "Cancel");
+        "Cancel",
+        getWindowCenterTarget());
 
     if (! confirmed)
         return false;
@@ -4112,7 +4153,9 @@ void MainView::locateMissingPluginsNow()
         juce::AlertWindow::showMessageBoxAsync(
             juce::AlertWindow::InfoIcon,
             "Locate Missing Plugins",
-            "There are no unresolved missing plugins.");
+            "There are no unresolved missing plugins.",
+            "OK",
+            getWindowCenterTarget());
         return;
     }
 
@@ -4144,7 +4187,8 @@ void MainView::locateMissingPluginsNow()
             message,
             "Locate",
             "Skip",
-            "Cancel");
+            "Cancel",
+            getWindowCenterTarget());
 
         if (action == 0) // Cancel
         {
@@ -4204,7 +4248,9 @@ void MainView::locateMissingPluginsNow()
             juce::AlertWindow::showMessageBoxAsync(
                 juce::AlertWindow::InfoIcon,
                 "Plugin Repair Complete",
-                summary.trimEnd());
+                summary.trimEnd(),
+                "OK",
+                getWindowCenterTarget());
             return;
         }
 
@@ -4215,7 +4261,8 @@ void MainView::locateMissingPluginsNow()
             "Plugin Repair Complete",
             summary.trimEnd(),
             "Save Now",
-            "Later");
+            "Later",
+            getWindowCenterTarget());
 
         if (saveNow)
             savePreset();
@@ -4226,7 +4273,9 @@ void MainView::locateMissingPluginsNow()
     juce::AlertWindow::showMessageBoxAsync(
         juce::AlertWindow::InfoIcon,
         "Plugin Repair Complete",
-        summary.trimEnd());
+        summary.trimEnd(),
+        "OK",
+        getWindowCenterTarget());
 }
 
 void MainView::showPointerControlSettingsDialog()
@@ -4942,9 +4991,9 @@ void MainView::showPointerControlSettingsDialog()
     options.escapeKeyTriggersCloseButton = true;
     options.useNativeTitleBar = true;
     options.resizable = false;
-    options.componentToCentreAround = this;
+    options.componentToCentreAround = getWindowCenterTarget();
 
     if (auto* dialog = options.launchAsync())
-        dialog->centreWithSize(460, 690);
+        dialog->centreAroundComponent(getWindowCenterTarget(), 460, 690);
 }
 

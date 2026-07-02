@@ -24,9 +24,9 @@ namespace ButtonStyling
         juce::String info()            { return juce::String::charToString((juce_wchar) 0xe946); }
         juce::String pointerControl()  { return juce::String::charToString((juce_wchar) 0xe7c9); }
         juce::String solo()            { return "S"; }
-        juce::String clearSolo()       { return "CS"; }
-        juce::String mapLastTouched()  { return juce::String::charToString((juce_wchar) 0xf826); }
-        juce::String mappings()        { return juce::String::charToString((juce_wchar) 0xe8a6); }
+        juce::String clearSolo()       { return juce::String::charToString((juce_wchar) 0xe767); }
+        juce::String mapLastTouched()  { return juce::String::charToString((juce_wchar) 0xe826); }
+        juce::String mappings()        { return juce::String::charToString((juce_wchar) 0xf8a6); }
         juce::String replace()         { return juce::String::charToString((juce_wchar) 0xe895); }
     }
 

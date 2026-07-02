@@ -425,7 +425,7 @@ public:
         save
     };
 
-    Decision promptToSaveChanges() const
+    Decision promptToSaveChanges(juce::Component* componentToCentreAround = nullptr) const
     {
         juce::AlertWindow alert("Unsaved Changes",
                                 "Save changes to the current preset before continuing?",
@@ -434,6 +434,9 @@ public:
         alert.addButton("Save", 1, juce::KeyPress(juce::KeyPress::returnKey));
         alert.addButton("Discard", 2);
         alert.addButton("Cancel", 0, juce::KeyPress(juce::KeyPress::escapeKey));
+
+        if (componentToCentreAround != nullptr)
+            alert.centreAroundComponent(componentToCentreAround, 420, 180);
 
         auto result = alert.runModalLoop();
 

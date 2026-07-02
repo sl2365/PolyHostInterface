@@ -322,7 +322,8 @@ private:
 class VstMidiMonitorWindow : public juce::DocumentWindow
 {
 public:
-    explicit VstMidiMonitorWindow(PolyHostPluginProcessor& processor)
+    explicit VstMidiMonitorWindow(PolyHostPluginProcessor& processor,
+                                  juce::Component* componentToCentreAround = nullptr)
         : juce::DocumentWindow("MIDI Monitor",
                                juce::Colours::darkgrey,
                                juce::DocumentWindow::closeButton)
@@ -330,7 +331,12 @@ public:
         setUsingNativeTitleBar(true);
         setResizable(true, true);
         setContentOwned(new VstMidiMonitorComponent(processor), true);
-        centreWithSize(800, 360);
+
+        if (componentToCentreAround != nullptr)
+            centreAroundComponent(componentToCentreAround, 800, 360);
+        else
+            centreWithSize(800, 360);
+
         setVisible(true);
     }
 

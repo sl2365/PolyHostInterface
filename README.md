@@ -47,7 +47,7 @@ Tabs can be reordered, soloed, bypassed, and selected directly from this view.
 ### Soloing
 Soloing temporarily isolates one or more tabs by muting all non-soloed tabs.
 
-Behavior:
+Behaviour:
 - soloed tabs remain audible
 - non-soloed tabs are bypassed while solo is active
 - multiple tabs can be soloed at once

@@ -33,6 +33,7 @@ namespace ButtonStyling
         juce::String pointerControl();
         juce::String solo();
         juce::String clearSolo();
+        juce::String clearSoloes();
         juce::String mapLastTouched();
         juce::String mappings();
         juce::String replace();

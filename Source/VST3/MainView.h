@@ -37,6 +37,7 @@ public:
     void recoverCurrentTabAfterWindowReopen();
     void showTemporaryStatusMessage(const juce::String& text);
     bool saveCurrentTabPointerMapToCurrentPresetFile();
+    juce::Component* getWindowCenterTarget() const;
     void mouseWheelMove(const juce::MouseEvent& event,
                         const juce::MouseWheelDetails& wheel) override;
 
@@ -318,7 +319,7 @@ private:
                     itemId,
                     ButtonStyling::Tooltips::clearSolos(),
                     ButtonStyling::Glyphs::clearSolo(),
-                    ButtonStyling::ToolbarIconButton::ContentType::TextLabel,
+                    ButtonStyling::ToolbarIconButton::ContentType::IconGlyph,
                     ButtonStyling::defaultButtonWidth(),
                     [this] { return ! owner.soloedTabIndices.isEmpty(); });
 
