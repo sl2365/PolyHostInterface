@@ -14,7 +14,7 @@ I am also working on a VST3 plugin version, but it has less functionality at pre
 |---|---|
 | VST3 x64 | ✅ Working |
 | CLAP x64 | ✅ Working * - May be buggy - Requires CLAP SDK to build — see below |
-| VST2 x64 | ✅ Working * - Requires Steinberg VST2 SDK to build — see below |
+| VST2 x64 | ✅ Working - Requires Steinberg VST2 SDK to build — see below |
 | VST2 **32-bit** in 64-bit host | 🔴 Needs plugin bridge — see below - planned |
 | MIDI 1.0 | ✅ Working |
 | MIDI 2.0 (Windows MIDI Services) | ⚠️ Requires JUCE 8+ and Windows 11 - planned |
@@ -23,10 +23,164 @@ I am also working on a VST3 plugin version, but it has less functionality at pre
 | Portable settings (no AppData/registry) | ✅ Working |
 | Audio / MIDI recording | 🔲 Planned for standalone |
 | Pointer Control functionality | ✅ Working - Absolute (1) and Relative (3) knob modes|
+| MIDI Macros | ✅ Working * |
+| Plugin Repair - locates missing plugins | ✅ Working |
 | Standalone App | ✅ Working |
 | VST3 Plugin for use in other hosts | ✅ Working |
 
-## Folder Structure
+## Features
+
+### Tabbed Plugin Hosting
+PolyHostInterface hosts multiple plugins in a tabbed workflow, allowing quick switching between synth and FX tabs inside one container plugin.
+
+### Routing View
+The Routing View provides a structured overview of all tabs in the current preset, including:
+- tab order
+- synth / FX type
+- bypass state
+- solo state
+- MIDI assignment count
+- per-tab pointer adjust mode override
+
+Tabs can be reordered, soloed, bypassed, and selected directly from this view.
+
+### Soloing
+Soloing temporarily isolates one or more tabs by muting all non-soloed tabs.
+
+Behavior:
+- soloed tabs remain audible
+- non-soloed tabs are bypassed while solo is active
+- multiple tabs can be soloed at once
+- clearing solo restores the normal manual bypass states
+
+This is useful for quickly auditioning individual synths or FX chains in a larger preset.
+
+### Macro Mapping
+PolyHostInterface includes 128 host-visible macro controls.
+
+These macros can be mapped to plugin parameters so they can be automated from the DAW without needing to expose the hosted plugin's own automation directly.
+
+Macro features include:
+- map the last touched plugin parameter to the next free macro
+- replace an existing macro target with the last touched parameter
+- reorder mappings
+- delete individual mappings
+- clear all mappings
+- undo the last macro mapping edit
+- filter/search mappings in the Macro Mappings view
+
+Each mapping stores:
+- macro slot number
+- source tab
+- plugin name
+- parameter name
+- parameter index
+
+Please note: Only use the Macros 001-128, ignore the MIDI CC 0|129 etc as these are for Host side control but I couldnt find a way to hide them.
+
+### Macro Mappings View
+This provides a complete list of all current macro assignments in the preset.
+
+It allows:
+- browsing all active mappings
+- filtering by macro, tab, plugin, or parameter
+- reordering mappings
+- replacing targets
+- deleting mappings
+- clearing all mappings
+- Undo allows undoing the last action only
+
+### Pointer Control
+Pointer Control allows MIDI-driven control of the mouse cursor over the currently selected hosted plugin editor. This function allows using only three hardware knobs to control all parameters that work via a scroll or drag operation via emulation of mouse actions. Much easier and quicker than traditional MIDI mapping as it allows using the mouse to move the cursor while using a single knob to adjust whatever is under the cursor. Much better than using the scroll wheel or dragging parameters with the mouse!
+
+This includes:
+- X/Y pointer movement by MIDI CC
+- wheel-style parameter adjustment
+- drag-style parameter adjustment
+- lane tolerance control
+- adjust sensitivity control
+- optional point snapping
+- editable jump-point maps per plugin tab
+
+### Pointer Edit Overlay
+Pointer Edit Mode displays an overlay over the hosted plugin editor so jump points can be created, previewed, removed, and visually aligned.
+
+The overlay supports:
+- live point placement
+- optional X snap
+- optional Y snap
+- preview point display before release
+- optional crosshair display
+- per-tab lane tolerance feedback
+- global/preset map source indication
+
+> [!NOTE]
+> **Implementation Note: Pointer Edit Overlay**
+>
+> The pointer edit overlay is implemented as a plain `juce::Component` added to the desktop with `addToDesktop(...)`, rather than using `DocumentWindow`, `CallOutBox`, or `PopupMenu`.
+>
+> This allows the overlay to:
+> - appear correctly over hosted plugin editors
+> - match the hosted editor bounds exactly
+> - avoid title bar chrome and popup layout constraints
+> - refresh dynamically when switching tabs
+
+### Global and Preset Pointer Maps
+Pointer jump-point maps can be stored in two ways:
+
+#### Global Pointer Maps
+A global pointer map is saved per plugin and can be reused across presets. It saves having to recreate the same map for every instance of a plugin.
+
+Use this when:
+- the same plugin layout is used repeatedly
+- you want one reusable default map for a plugin
+
+#### Preset Pointer Maps
+A preset pointer map is stored inside the current preset file. Useful for plugins that have different ways of setting it up or different skins that rearrange a plugins layout.
+
+Use this when:
+- a specific preset needs its own custom point layout
+- different tabs or sound setups need different point maps
+
+#### Map Source Behaviour
+Each tab can use:
+- a preset map
+- a global map
+- no map
+
+If a preset-specific map is cleared:
+- the global map will be used if one exists
+- otherwise no map remains active
+
+A tab can also be set to **Use Global**, which forces the global pointer map to be used instead of the preset-specific one.
+
+### MIDI Assignment Per Tab
+Each tab can maintain its own MIDI channel assignment set, allowing different hosted plugins to respond to different incoming MIDI sources/channels.
+
+### Preset Handling
+PolyHostInterface supports:
+- creating presets
+- saving presets
+- saving presets as new files
+- loading presets
+- recent preset history
+- preset dirty-state tracking
+- preset deletion
+- plugin path recovery for missing plugins
+
+### Missing Plugin Repair
+If a plugin cannot be found when loading a preset, PolyHostInterface can prompt you to locate the replacement file and restore the tab.
+
+### MIDI Monitor
+A built-in MIDI monitor can be used to inspect incoming MIDI events, including:
+- notes
+- CC
+- pitch bend
+- aftertouch
+- system messages
+- clock / active sensing filtering
+
+## Project Folder Structure
 
 ```
 _Projects\PolyHost\              ← your project root
@@ -114,8 +268,8 @@ Install to tools/clap/CMakeLists.txt
 
 ## Audio/MIDI Routing
 ```
-MIDI Device(s)
-|
+MIDI Device(s)    Audio In from DAW/Host
+|					|
 ├── [Synth Tab 1] --+
 ├── [Synth Tab 2] --+  (summed)
 |                   |
