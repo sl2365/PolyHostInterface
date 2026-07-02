@@ -76,6 +76,10 @@ public:
     int getRoutingViewHeight() const;
     bool hasRoutingViewSize() const;
 
+    void setMacroMappingsViewHeight(int height);
+    int getMacroMappingsViewHeight() const;
+    bool hasMacroMappingsViewHeight() const;
+
     SlotModel& getMainSlot();
     const SlotModel& getMainSlot() const;
 
@@ -230,6 +234,9 @@ private:
     int routingViewWidth = 800;
     int routingViewHeight = 500;
     bool routingViewSizeValid = false;
+
+    int macroMappingsViewHeight = 500;
+    bool macroMappingsViewHeightValid = false;
 
     juce::StringArray availableMidiInputNames { "MIDI Ch: All" };
 

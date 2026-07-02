@@ -6,7 +6,7 @@ Fully portable: stores all settings next to the exe, touches nothing else on the
 
 I always liked tools like TobyBear's MiniHost, SaviHost and Tone2's NanoHost. But wanted something that combines all of them. A quick jamming tool that can open multiple plugin formats. I aim to add support for more formats, but the main ones will most likely be tried first at least. This is a tool that doesn't yet exist elsewhere in a small package like this, at least not as one that you can use file-associations with.
 
-I am also working on a VST3 plugin version, but it has less functionality at present, but will be updated soon as I can.
+The VST3 plugin version has superceded the abilities of the standalone version. It is more robust, less glitchy and has more functions. Eventually, I will make the standalone version be a simpler host that can load the plugin, this makes it easier to maintain and then functionality/preset compatibility will remain consistent. 
 
 ## Feature Status
 

@@ -2478,7 +2478,14 @@ void MainView::showMacroMappingsView()
     repaint();
 
     if (auto* parentEditor = findParentComponentOfClass<PolyHostPluginEditor>())
-        parentEditor->resizeToRoutingView();
+    {
+        const int width = parentEditor->getWidth();
+        const int height = processor.getCore().hasMacroMappingsViewHeight()
+                               ? processor.getCore().getMacroMappingsViewHeight()
+                               : 500;
+
+        parentEditor->setSize(width, height);
+    }
 
     updatePointerEditOverlay();
 }
@@ -3155,10 +3162,13 @@ bool MainView::saveSessionToFile(const juce::File& file)
 
     auto& core = processor.getCore();
 
-    if (showingRoutingView)
+    if (auto* parentEditor = findParentComponentOfClass<PolyHostPluginEditor>())
     {
-        if (auto* parentEditor = findParentComponentOfClass<PolyHostPluginEditor>())
+        if (showingRoutingView)
             core.setRoutingViewSize(parentEditor->getWidth(), parentEditor->getHeight());
+
+        if (showingMacroMappingsView)
+            core.setMacroMappingsViewHeight(parentEditor->getHeight());
     }
 
     auto sessionData = core.buildSessionData();

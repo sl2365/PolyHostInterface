@@ -1086,6 +1086,22 @@ bool PluginCore::hasRoutingViewSize() const
     return routingViewSizeValid;
 }
 
+void PluginCore::setMacroMappingsViewHeight(int height)
+{
+    macroMappingsViewHeight = juce::jmax(100, height);
+    macroMappingsViewHeightValid = true;
+}
+
+int PluginCore::getMacroMappingsViewHeight() const
+{
+    return macroMappingsViewHeight;
+}
+
+bool PluginCore::hasMacroMappingsViewHeight() const
+{
+    return macroMappingsViewHeightValid;
+}
+
 SlotModel& PluginCore::getMainSlot()
 {
     auto* tab = getSelectedHostedTab();
@@ -1465,6 +1481,8 @@ SessionTabData PluginCore::buildSessionTabData(int tabIndex) const
     tabData.hasSavedWindowBounds = routingViewSizeValid;
     tabData.savedWindowWidth = routingViewWidth;
     tabData.savedWindowHeight = routingViewHeight;
+    tabData.hasSavedMacroMappingsHeight = macroMappingsViewHeightValid;
+    tabData.savedMacroMappingsHeight = macroMappingsViewHeight;
     tabData.pointerLaneTolerance = 30.0f;
     tabData.pointerAdjustMethodOverride = 0;
     tabData.hasPlugin = false;
@@ -1578,6 +1596,13 @@ bool PluginCore::restoreTabFromSessionData(int tabIndex,
         routingViewSizeValid = true;
     }
 
+    if (tabData.hasSavedMacroMappingsHeight
+        && tabData.savedMacroMappingsHeight > 0)
+    {
+        macroMappingsViewHeight = tabData.savedMacroMappingsHeight;
+        macroMappingsViewHeightValid = true;
+    }
+
     unloadMainSlotPlugin();
 
     if (! tabData.hasPlugin)
@@ -1678,6 +1703,8 @@ bool PluginCore::restoreSessionData(const SessionData& sessionData,
     routingViewWidth = 800;
     routingViewHeight = 500;
     routingViewSizeValid = false;
+    macroMappingsViewHeight = 500;
+    macroMappingsViewHeightValid = false;
     macroMappings.clear();
     lastTouchedParameter = {};
     macroCurrentValues.fill(0.0f);

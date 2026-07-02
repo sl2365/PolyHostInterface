@@ -43,6 +43,8 @@ std::unique_ptr<juce::XmlElement> SessionManager::createXmlFromSessionData(const
         tabXml->setAttribute("hasSavedWindowBounds", tab.hasSavedWindowBounds);
         tabXml->setAttribute("savedWindowWidth", tab.savedWindowWidth);
         tabXml->setAttribute("savedWindowHeight", tab.savedWindowHeight);
+        tabXml->setAttribute("hasSavedMacroMappingsHeight", tab.hasSavedMacroMappingsHeight);
+        tabXml->setAttribute("savedMacroMappingsHeight", tab.savedMacroMappingsHeight);
         tabXml->setAttribute("pointerLaneTolerance", tab.pointerLaneTolerance);
         tabXml->setAttribute("pointerAdjustSensitivity", tab.pointerAdjustSensitivity);
         tabXml->setAttribute("pointerAdjustMethodOverride", tab.pointerAdjustMethodOverride);
@@ -137,6 +139,8 @@ bool SessionManager::restoreSessionDataFromXml(const juce::XmlElement& xml,
         tab.hasSavedWindowBounds = tabXml->getBoolAttribute("hasSavedWindowBounds", false);
         tab.savedWindowWidth = tabXml->getIntAttribute("savedWindowWidth", 0);
         tab.savedWindowHeight = tabXml->getIntAttribute("savedWindowHeight", 0);
+        tab.hasSavedMacroMappingsHeight = tabXml->getBoolAttribute("hasSavedMacroMappingsHeight", false);
+        tab.savedMacroMappingsHeight = tabXml->getIntAttribute("savedMacroMappingsHeight", 0);
         tab.pointerLaneTolerance = (float) tabXml->getDoubleAttribute("pointerLaneTolerance", 30.0);
         tab.pointerAdjustSensitivity = juce::jlimit(1, 20,
             tabXml->getIntAttribute("pointerAdjustSensitivity", 1));
