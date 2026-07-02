@@ -22,7 +22,7 @@ namespace
             versionLabel.setColour(juce::Label::textColourId, juce::Colours::lightgrey);
             addAndMakeVisible(versionLabel);
 
-            infoLabel.setText("A lightweight tabbed plugin host for:\nVST3.\nBuilt with JUCE.\n\nCLAP and VST2 64/32-bit bridging planned.\n\n- sl23 -",
+            infoLabel.setText("A lightweight tabbed plugin host for:\nVST3.\n\nCLAP 64 and VST2 32-bit bridging planned.\n\nBuilt with JUCE.\n\n- sl23 -",
                               juce::dontSendNotification);
             infoLabel.setJustificationType(juce::Justification::centred);
             infoLabel.setColour(juce::Label::textColourId, juce::Colours::lightgrey);
@@ -105,10 +105,155 @@ namespace
 
             snapXEnabled = owner.getAppSettings().getPointerControlSnapXEnabled();
             snapYEnabled = owner.getAppSettings().getPointerControlSnapYEnabled();
+
+            addAndMakeVisible(saveGlobalButton);
+            addAndMakeVisible(savePresetButton);
+            addAndMakeVisible(clearPresetButton);
+            addAndMakeVisible(useGlobalToggle);
+
+            saveGlobalButton.setTooltip("Save current pointer map as a global plugin map");
+            savePresetButton.setTooltip("Save current pointer map to the current preset");
+            clearPresetButton.setTooltip("Clear preset pointer map so global fallback can be used");
+
+            saveGlobalButton.onHoverStart = [this]
+            {
+                owner.showTemporaryStatusMessage("Save current pointer map as the global plugin map");
+            };
+
+            savePresetButton.onHoverStart = [this]
+            {
+                owner.showTemporaryStatusMessage("Save current pointer map into the current preset");
+            };
+
+            clearPresetButton.onHoverStart = [this]
+            {
+                owner.showTemporaryStatusMessage("Clear preset pointer map so global fallback can be used");
+            };
+
+            saveGlobalButton.onHoverEnd = [] {};
+            savePresetButton.onHoverEnd = [] {};
+            clearPresetButton.onHoverEnd = [] {};
+
+            useGlobalToggle.setButtonText("Use Global");
+            useGlobalToggle.setColour(juce::ToggleButton::textColourId, juce::Colours::white);
+            useGlobalToggle.setTooltip("Ignore preset point data and use the global point map instead");
+
+            useGlobalToggle.onStateChange = [this]
+            {
+                if (useGlobalToggle.isMouseOver(true))
+                {
+                    owner.showTemporaryStatusMessage(
+                        "Ignore preset point data and use the global point map instead");
+                }
+            };
+
+            useGlobalToggle.onClick = [this]
+            {
+                auto& core = owner.getProcessor().getCore();
+                const int tabIndex = core.getSelectedTabIndex();
+
+                if (! juce::isPositiveAndBelow(tabIndex, core.getNumTabs()))
+                    return;
+
+                core.setTabPreferGlobalPointerMap(tabIndex, useGlobalToggle.getToggleState());
+
+                owner.showTemporaryStatusMessage(useGlobalToggle.getToggleState()
+                    ? "Using global pointer map"
+                    : "Using preset/global automatic pointer map selection");
+
+                repaint();
+            };
+
+            saveGlobalButton.onClick = [this]
+            {
+                auto& core = owner.getProcessor().getCore();
+                const int tabIndex = core.getSelectedTabIndex();
+
+                if (core.saveCurrentPointerMapToGlobalFile(tabIndex))
+                    owner.showTemporaryStatusMessage("Global pointer map saved");
+                else
+                    owner.showTemporaryStatusMessage("Failed to save global pointer map");
+
+                repaint();
+            };
+
+            savePresetButton.onClick = [this]
+            {
+                auto& core = owner.getProcessor().getCore();
+                const int tabIndex = core.getSelectedTabIndex();
+
+                if (! juce::isPositiveAndBelow(tabIndex, core.getNumTabs()))
+                    return;
+
+                core.saveCurrentPointerMapToPreset(tabIndex);
+
+                if (owner.saveCurrentTabPointerMapToCurrentPresetFile())
+                    owner.showTemporaryStatusMessage("Pointer map saved to current preset");
+                else
+                    owner.showTemporaryStatusMessage("No preset file exists. Save a preset first.");
+
+                repaint();
+            };
+
+            clearPresetButton.onClick = [this]
+            {
+                auto& core = owner.getProcessor().getCore();
+                const int tabIndex = core.getSelectedTabIndex();
+
+                if (! juce::isPositiveAndBelow(tabIndex, core.getNumTabs()))
+                    return;
+
+                const bool hasGlobalFallback = core.tabHasGlobalPointerMap(tabIndex);
+
+                juce::String message =
+                    "Clear the preset pointer map for this tab?\n\n"
+                    "This removes the preset-specific point map.";
+
+                if (hasGlobalFallback)
+                    message += "\n\nAfter clearing, the global point map will be used.";
+                else
+                    message += "\n\nAfter clearing, no point map will remain active.";
+
+                const bool confirmed = juce::AlertWindow::showOkCancelBox(
+                    juce::AlertWindow::WarningIcon,
+                    "Clear Preset Pointer Map",
+                    message,
+                    "Clear Preset",
+                    "Cancel");
+
+                if (! confirmed)
+                    return;
+
+                core.clearCurrentPresetPointerMap(tabIndex);
+                owner.showTemporaryStatusMessage("Preset pointer map cleared");
+                repaint();
+            };
+        }
+
+        void resized() override
+        {
+            saveGlobalButton.setBounds(getSaveGlobalButtonBounds());
+            savePresetButton.setBounds(getSavePresetButtonBounds());
+            clearPresetButton.setBounds(getClearPresetButtonBounds());
+            useGlobalToggle.setBounds(getUseGlobalToggleBounds());
         }
 
         void paint(juce::Graphics& g) override
         {
+            saveGlobalButton.setBounds(getSaveGlobalButtonBounds());
+            savePresetButton.setBounds(getSavePresetButtonBounds());
+            clearPresetButton.setBounds(getClearPresetButtonBounds());
+            useGlobalToggle.setBounds(getUseGlobalToggleBounds());
+
+            auto& core = owner.getProcessor().getCore();
+            const int tabIndex = core.getSelectedTabIndex();
+
+            saveGlobalButton.setActiveState(core.tabHasGlobalPointerMap(tabIndex));
+            savePresetButton.setActiveState(core.tabHasCustomPointerMap(tabIndex));
+
+            useGlobalToggle.setToggleState(core.getTabPreferGlobalPointerMap(tabIndex),
+                                           juce::dontSendNotification);
+
             const auto overlayAlpha = (juce::uint8) juce::jlimit(0, 150,
                 owner.getAppSettings().getPointerControlOverlayTransparency());
 
@@ -122,7 +267,7 @@ namespace
 
             g.setColour(juce::Colours::white);
             g.setFont(juce::Font(juce::FontOptions(14.0f, juce::Font::bold)));
-            g.drawText("Pointer Control Edit Mode Enabled",
+            g.drawText("Pointer Control Edit Mode",
                        banner.reduced(8, 0),
                        juce::Justification::centred);
 
@@ -137,9 +282,6 @@ namespace
                 g.fillRect(0, crossY, getWidth(), 1);
                 g.fillRect(crossX, 0, 1, getHeight());
             }
-
-            auto& core = owner.getProcessor().getCore();
-            const int tabIndex = core.getSelectedTabIndex();
 
             if (juce::isPositiveAndBelow(tabIndex, core.getNumTabs()))
             {
@@ -185,27 +327,77 @@ namespace
             drawSnapButton(g, getSnapXButtonBounds(), "Snap X", snapXEnabled);
             drawSnapButton(g, getSnapYButtonBounds(), "Snap Y", snapYEnabled);
 
+            const int selectedTabIndex = tabIndex;
+            float currentTolerance = 30.0f;
+
+            if (juce::isPositiveAndBelow(selectedTabIndex, core.getNumTabs()))
+                currentTolerance = core.getTabPointerLaneTolerance(selectedTabIndex);
+
             g.setColour(juce::Colours::white.withAlpha(0.85f));
             g.setFont(juce::Font(juce::FontOptions(12.0f, juce::Font::plain)));
-            g.drawText("Placement: " + getSnapModeText(),
-                       bottomBar.removeFromRight(160),
-                       juce::Justification::centredRight);
+
+            const juce::String infoText =
+                "Map: " + core.getActivePointerMapSourceText(selectedTabIndex)
+                + "  |  Placement: " + getSnapModeText()
+                + "  |  Tol (CC"
+                + juce::String(owner.getAppSettings().getPointerControlToleranceCcNumber())
+                + "): " + juce::String(currentTolerance, 1);
+
+            auto textLayoutBar = bottomBar.reduced(8, 0);
+            auto infoArea = textLayoutBar.removeFromRight(360);
+
+            g.drawText(infoText,
+                       infoArea,
+                       juce::Justification::centredRight,
+                       true);
         }
 
         void mouseMove(const juce::MouseEvent& event) override
         {
             hoverPosition = event.position;
             hasHoverPosition = true;
-            owner.showTemporaryStatusMessage("Position: X="
-                                             + juce::String((int) std::round(event.position.x))
-                                             + " Y="
-                                             + juce::String((int) std::round(event.position.y)));
+
+            const auto mousePos = event.position.toInt();
+            const bool overSnapX = getSnapXButtonBounds().contains(mousePos);
+            const bool overSnapY = getSnapYButtonBounds().contains(mousePos);
+
+            if (overSnapX)
+            {
+                if (! hoverShowingSnapXHelp)
+                {
+                    owner.showTemporaryStatusMessage("Snap X: align new points to the X positions of nearby saved points");
+                    hoverShowingSnapXHelp = true;
+                    hoverShowingSnapYHelp = false;
+                }
+            }
+            else if (overSnapY)
+            {
+                if (! hoverShowingSnapYHelp)
+                {
+                    owner.showTemporaryStatusMessage("Snap Y: align new points to the Y positions of nearby saved points");
+                    hoverShowingSnapYHelp = true;
+                    hoverShowingSnapXHelp = false;
+                }
+            }
+            else
+            {
+                hoverShowingSnapXHelp = false;
+                hoverShowingSnapYHelp = false;
+
+                owner.showTemporaryStatusMessage("Position: X="
+                                                 + juce::String((int) std::round(event.position.x))
+                                                 + " Y="
+                                                 + juce::String((int) std::round(event.position.y)));
+            }
+
             repaint();
         }
 
         void mouseExit(const juce::MouseEvent&) override
         {
             hasHoverPosition = false;
+            hoverShowingSnapXHelp = false;
+            hoverShowingSnapYHelp = false;
             repaint();
         }
 
@@ -316,23 +508,159 @@ namespace
         }
 
     private:
+        class OverlayActionButton final : public juce::Button
+        {
+        public:
+            OverlayActionButton(const juce::String& buttonName,
+                                const juce::String& glyphText,
+                                const juce::String& labelText,
+                                bool destructiveIn = false)
+                : juce::Button(buttonName),
+                  glyph(glyphText),
+                  label(labelText),
+                  destructive(destructiveIn)
+            {
+            }
+
+            void setActiveState(bool shouldBeActive)
+            {
+                if (active != shouldBeActive)
+                {
+                    active = shouldBeActive;
+                    repaint();
+                }
+            }
+
+            std::function<void()> onHoverStart;
+            std::function<void()> onHoverEnd;
+
+            void mouseEnter(const juce::MouseEvent& event) override
+            {
+                juce::Button::mouseEnter(event);
+
+                if (onHoverStart)
+                    onHoverStart();
+            }
+
+            void mouseExit(const juce::MouseEvent& event) override
+            {
+                juce::Button::mouseExit(event);
+
+                if (onHoverEnd)
+                    onHoverEnd();
+            }
+
+            void paintButton(juce::Graphics& g,
+                             bool isMouseOverButton,
+                             bool isButtonDown) override
+            {
+                auto bounds = getLocalBounds().toFloat();
+
+                auto fill = destructive ? juce::Colour(0xFF6A2E2E)
+                                        : (active ? juce::Colour(0xFF2E7D32)
+                                                  : juce::Colour(0xFF2A2A2A));
+
+                if (isButtonDown)
+                    fill = fill.brighter(0.15f);
+                else if (isMouseOverButton)
+                    fill = fill.brighter(0.08f);
+
+                g.setColour(fill);
+                g.fillRoundedRectangle(bounds, 6.0f);
+
+                g.setColour(fill.brighter(0.25f).withAlpha(0.65f));
+                g.drawRoundedRectangle(bounds.reduced(0.5f), 6.0f, 1.0f);
+
+                g.setColour(juce::Colours::white);
+                g.setFont(juce::Font(juce::FontOptions("Segoe Fluent Icons", 14.0f, juce::Font::plain)));
+
+                if (label.isEmpty())
+                {
+                    g.drawText(glyph,
+                               getLocalBounds().translated(1, 1),
+                               juce::Justification::centred,
+                               false);
+                }
+                else
+                {
+                    auto textArea = getLocalBounds().reduced(8, 0);
+                    auto glyphArea = textArea.removeFromLeft(18);
+                    auto labelArea = textArea;
+
+                    g.drawText(glyph,
+                               glyphArea,
+                               juce::Justification::centredLeft,
+                               false);
+
+                    g.setFont(juce::Font(juce::FontOptions(12.0f, juce::Font::bold)));
+                    g.drawText(label,
+                               labelArea,
+                               juce::Justification::centredLeft,
+                               false);
+                }
+            }
+
+        private:
+            juce::String glyph;
+            juce::String label;
+            bool destructive = false;
+            bool active = false;
+        };
+
         juce::Rectangle<int> getBottomBarBounds() const
         {
             auto area = getLocalBounds();
-            return area.removeFromBottom(34).reduced(8, 4);
+            auto bottom = area.removeFromBottom(34);
+            bottom.reduce(0, 4);
+            return bottom;
         }
 
         juce::Rectangle<int> getSnapXButtonBounds() const
         {
             auto bar = getBottomBarBounds();
-            return bar.removeFromLeft(90);
+            bar.removeFromLeft(5);
+            auto bounds = bar.removeFromLeft(66);
+            return bounds.reduced(0, 3);
         }
 
         juce::Rectangle<int> getSnapYButtonBounds() const
         {
             auto bar = getBottomBarBounds();
-            bar.removeFromLeft(98);
-            return bar.removeFromLeft(90);
+            bar.removeFromLeft(76);
+            auto bounds = bar.removeFromLeft(66);
+            return bounds.reduced(0, 3);
+        }
+
+        juce::Rectangle<int> getSaveGlobalButtonBounds() const
+        {
+            auto bar = getBottomBarBounds();
+            bar.removeFromLeft(152);
+            auto bounds = bar.removeFromLeft(76);
+            return bounds.reduced(0, 2);
+        }
+
+        juce::Rectangle<int> getSavePresetButtonBounds() const
+        {
+            auto bar = getBottomBarBounds();
+            bar.removeFromLeft(233);
+            auto bounds = bar.removeFromLeft(76);
+            return bounds.reduced(0, 2);
+        }
+
+        juce::Rectangle<int> getClearPresetButtonBounds() const
+        {
+            auto bar = getBottomBarBounds();
+            bar.removeFromLeft(314);
+            auto bounds = bar.removeFromLeft(24);
+            return bounds.reduced(0, 2);
+        }
+
+        juce::Rectangle<int> getUseGlobalToggleBounds() const
+        {
+            auto bar = getBottomBarBounds();
+            bar.removeFromLeft(343);
+            auto bounds = bar.removeFromLeft(92);
+            return bounds.reduced(0, 2);
         }
 
         juce::String getSnapModeText() const
@@ -454,6 +782,17 @@ namespace
         }
 
         MainView& owner;
+        OverlayActionButton saveGlobalButton { "SaveGlobal",
+                                               ButtonStyling::Glyphs::save(),
+                                               "Global" };
+        OverlayActionButton savePresetButton { "SavePreset",
+                                               ButtonStyling::Glyphs::save(),
+                                               "Preset" };
+        OverlayActionButton clearPresetButton { "ClearPreset",
+                                                ButtonStyling::Glyphs::close(),
+                                                "",
+                                                true };
+        juce::ToggleButton useGlobalToggle;
         juce::Point<float> hoverPosition;
         juce::Point<float> previewPosition;
         bool hasHoverPosition = false;
@@ -461,42 +800,128 @@ namespace
         int pendingDeletePointIndex = -1;
         bool snapXEnabled = false;
         bool snapYEnabled = false;
+        bool hoverShowingSnapXHelp = false;
+        bool hoverShowingSnapYHelp = false;
     };
 }
 
-class MainView::PointerEditOverlayWindow final : public juce::DocumentWindow
+class MainView::StatusMetersComponent final : public juce::Component,
+                                              private juce::Timer
 {
 public:
-    explicit PointerEditOverlayWindow(MainView& ownerIn)
-        : juce::DocumentWindow("PointerEditOverlay",
-                               juce::Colours::transparentBlack,
-                               0),
-          owner(ownerIn)
+    explicit StatusMetersComponent(MainView& ownerIn)
+        : owner(ownerIn)
     {
-        setUsingNativeTitleBar(false);
-        setOpaque(false);
-        setResizable(false, false);
-        setAlwaysOnTop(false);
-        setWantsKeyboardFocus(false);
-        setMouseClickGrabsKeyboardFocus(false);
-        setTitleBarHeight(0);
-        setContentOwned(new PointerEditOverlayContent(owner), true);
+        startTimerHz(24);
     }
 
-    void closeButtonPressed() override
+    void paint(juce::Graphics& g) override
     {
-        owner.setPointerControlEditMode(false);
+        g.fillAll(juce::Colour(0xFF0F3460));
+
+        auto area = getLocalBounds().reduced(4, 4);
+
+        constexpr int rowHeight = 7;
+        constexpr int rowGap = 3;
+
+        auto& core = owner.getProcessor().getCore();
+
+        drawMeterRow(g, area.removeFromTop(rowHeight), "IN",
+                     juce::jmax(core.getInputMeterLevelL(), core.getInputMeterLevelR()));
+
+        area.removeFromTop(rowGap);
+
+        drawMeterRow(g, area.removeFromTop(rowHeight), "OUT",
+                     juce::jmax(core.getOutputMeterLevelL(), core.getOutputMeterLevelR()));
+    }
+
+private:
+    void timerCallback() override
+    {
+        repaint();
+    }
+
+    void drawMeterRow(juce::Graphics& g,
+                      juce::Rectangle<int> row,
+                      const juce::String& label,
+                      float level)
+    {
+        auto labelArea = row.removeFromLeft(24);
+
+        auto meterArea = row;
+        const int meterHeight = 6;
+        meterArea = meterArea.withSizeKeepingCentre(meterArea.getWidth(), meterHeight);
+
+        g.setColour(juce::Colours::lightgrey.withAlpha(0.85f));
+        g.setFont(juce::Font(juce::FontOptions(10.0f, juce::Font::plain)));
+        g.drawText(label, labelArea, juce::Justification::centredLeft);
+
+        g.setColour(juce::Colour(0xFF0F3460).darker(0.35f));
+        g.fillRect(meterArea);
+
+        const auto innerMeterArea = meterArea.reduced(1, 1);
+
+        const float clamped = juce::jlimit(0.0f, 1.0f, level);
+        auto fillWidth = (int) std::round((float) innerMeterArea.getWidth() * clamped);
+
+        if (fillWidth > 0)
+        {
+            auto fill = innerMeterArea.withWidth(fillWidth);
+
+            juce::ColourGradient meterGradient(
+                juce::Colour(0xFF42D96B), (float) innerMeterArea.getX(),     (float) innerMeterArea.getCentreY(),
+                juce::Colour(0xFFFF4545), (float) innerMeterArea.getRight(), (float) innerMeterArea.getCentreY(),
+                false);
+
+            meterGradient.clearColours();
+            meterGradient.addColour(0.00, juce::Colour(0xFF42D96B));
+            meterGradient.addColour(0.55, juce::Colour(0xFF42D96B));
+            meterGradient.addColour(0.72, juce::Colour(0xFFE6E64A));
+            meterGradient.addColour(0.84, juce::Colour(0xFFFFB347));
+            meterGradient.addColour(0.92, juce::Colour(0xFFFF7A3A));
+            meterGradient.addColour(0.97, juce::Colour(0xFFFF4A3A));
+            meterGradient.addColour(1.00, juce::Colour(0xFFFF3B3B));
+
+            g.setGradientFill(meterGradient);
+            g.fillRect(fill);
+        }
+
+        g.setColour(juce::Colours::white.withAlpha(0.18f));
+        g.drawRect(meterArea, 1);
+    }
+
+    MainView& owner;
+};
+
+class MainView::PointerEditOverlayHost final : public juce::Component
+{
+public:
+    explicit PointerEditOverlayHost(MainView& ownerIn)
+        : owner(ownerIn), content(ownerIn)
+    {
+        setOpaque(false);
+        setWantsKeyboardFocus(false);
+        setMouseClickGrabsKeyboardFocus(false);
+        addAndMakeVisible(content);
+    }
+
+    void resized() override
+    {
+        content.setBounds(getLocalBounds());
+    }
+
+    void paint(juce::Graphics&) override
+    {
     }
 
     void refresh()
     {
-        if (auto* content = getContentComponent())
-            content->repaint();
+        content.repaint();
     }
 
 private:
-
     MainView& owner;
+    PointerEditOverlayContent content;
 };
 
 MainView::MidiAssignmentsPopup::MidiAssignmentsPopup(MainView& ownerIn,
@@ -649,6 +1074,10 @@ MainView::MainView(PolyHostPluginProcessor& processorIn)
     menuBar->setColour(juce::PopupMenu::backgroundColourId, juce::Colour(0xFF1E2430));
     addAndMakeVisible(*menuBar);
 
+    setWantsKeyboardFocus(true);
+
+    tooltipWindow.setOpaque(false);
+
     toolbar.addDefaultItems(toolbarFactory);
     toolbar.setColour(juce::Toolbar::backgroundColourId, juce::Colour(0xFF1D2230));
     addAndMakeVisible(toolbar);
@@ -656,6 +1085,29 @@ MainView::MainView(PolyHostPluginProcessor& processorIn)
     addAndMakeVisible(presetDropdown);
     presetDropdown.setTextWhenNothingSelected("Untitled");
     presetDropdown.onChange = [this] { handlePresetSelection(); };
+
+    tabButtonsViewport.setViewedComponent(&tabButtonsContainer, false);
+    tabButtonsViewport.setScrollBarsShown(false, false);
+    tabButtonsViewport.setWantsKeyboardFocus(false);
+    addAndMakeVisible(tabButtonsViewport);
+
+    addAndMakeVisible(scrollTabsLeftButton);
+    scrollTabsLeftButton.setButtonText("<");
+    scrollTabsLeftButton.onClick = [this]
+    {
+        auto pos = tabButtonsViewport.getViewPosition();
+        tabButtonsViewport.setViewPosition(juce::jmax(0, pos.getX() - 120), pos.getY());
+        updateTabScrollButtonState();
+    };
+
+    addAndMakeVisible(scrollTabsRightButton);
+    scrollTabsRightButton.setButtonText(">");
+    scrollTabsRightButton.onClick = [this]
+    {
+        auto pos = tabButtonsViewport.getViewPosition();
+        tabButtonsViewport.setViewPosition(pos.getX() + 120, pos.getY());
+        updateTabScrollButtonState();
+    };
 
     addAndMakeVisible(addTabButton);
     addTabButton.setButtonText("+");
@@ -672,11 +1124,17 @@ MainView::MainView(PolyHostPluginProcessor& processorIn)
     addAndMakeVisible(routingView);
     routingView.setVisible(false);
 
+    addAndMakeVisible(macroMappingsView);
+    macroMappingsView.setVisible(false);
+
     addAndMakeVisible(contentPlaceholder);
     contentPlaceholder.setJustificationType(juce::Justification::centred);
     contentPlaceholder.setColour(juce::Label::textColourId, juce::Colours::lightgrey);
     contentPlaceholder.setFont(juce::Font(juce::FontOptions(18.0f, juce::Font::bold)));
     contentPlaceholder.setInterceptsMouseClicks(false, false);
+
+    statusMeters = std::make_unique<StatusMetersComponent>(*this);
+    addAndMakeVisible(*statusMeters);
 
     routingView.onSelectTab = [this](int tabIndex)
     {
@@ -717,9 +1175,22 @@ MainView::MainView(PolyHostPluginProcessor& processorIn)
     routingView.onToggleBypass = [this](int tabIndex)
     {
         auto& core = processor.getCore();
-        core.setTabBypassed(tabIndex, ! core.isTabBypassed(tabIndex));
+
+        while (manualBypassStates.size() < core.getNumTabs())
+            manualBypassStates.add(false);
+
+        if (! juce::isPositiveAndBelow(tabIndex, manualBypassStates.size()))
+            return;
+
+        manualBypassStates.set(tabIndex, ! manualBypassStates[tabIndex]);
+        applyEffectiveBypassStates();
         refreshFromCore();
         repaint();
+    };
+
+    routingView.onToggleSolo = [this](int tabIndex)
+    {
+        handleToggleSolo(tabIndex);
     };
 
     routingView.onShowMidiAssignments = [this](int tabIndex, juce::Component* anchorComponent)
@@ -741,6 +1212,112 @@ MainView::MainView(PolyHostPluginProcessor& processorIn)
         repaint();
     };
 
+    macroMappingsView.onDeleteMapping = [this](int macroIndex)
+    {
+        auto& core = processor.getCore();
+
+        if (core.clearMacroMapping(macroIndex))
+        {
+            showTemporaryStatusMessage("Deleted Macro "
+                                       + juce::String(macroIndex + 1).paddedLeft('0', 3));
+            refreshFromCore();
+            repaint();
+        }
+    };
+
+    macroMappingsView.onMoveMappingUp = [this](int macroIndex)
+    {
+        auto& core = processor.getCore();
+
+        if (core.moveMacroMappingUp(macroIndex))
+        {
+            showTemporaryStatusMessage("Moved Macro "
+                                       + juce::String(macroIndex + 1).paddedLeft('0', 3)
+                                       + " up");
+            refreshFromCore();
+            repaint();
+        }
+    };
+
+    macroMappingsView.onMoveMappingDown = [this](int macroIndex)
+    {
+        auto& core = processor.getCore();
+
+        if (core.moveMacroMappingDown(macroIndex))
+        {
+            showTemporaryStatusMessage("Moved Macro "
+                                       + juce::String(macroIndex + 1).paddedLeft('0', 3)
+                                       + " down");
+            refreshFromCore();
+            repaint();
+        }
+    };
+
+    macroMappingsView.onReplaceMapping = [this](int macroIndex)
+    {
+        auto& core = processor.getCore();
+
+        if (! core.hasLastTouchedParameter())
+        {
+            showTemporaryStatusMessage("No last touched parameter detected");
+            refreshDirtyUiOnly();
+            repaint();
+            return;
+        }
+
+        const auto description = core.getLastTouchedParameterDescription();
+
+        if (core.replaceMacroMappingFromLastTouched(macroIndex))
+        {
+            showTemporaryStatusMessage("Replaced Macro "
+                                       + juce::String(macroIndex + 1).paddedLeft('0', 3)
+                                       + " with "
+                                       + description);
+            refreshFromCore();
+            repaint();
+            return;
+        }
+
+        showTemporaryStatusMessage("That parameter is already mapped for this tab");
+        refreshDirtyUiOnly();
+        repaint();
+    };
+
+    macroMappingsView.onUndoLastEdit = [this]
+    {
+        auto& core = processor.getCore();
+
+        if (core.undoLastMacroMappingsEdit())
+        {
+            showTemporaryStatusMessage("Restored previous macro mappings");
+            refreshFromCore();
+            repaint();
+        }
+    };
+
+    macroMappingsView.onClearAllMappings = [this]
+    {
+        auto& core = processor.getCore();
+
+        if (core.getMacroMappings().isEmpty())
+            return;
+
+        const bool confirmed = juce::AlertWindow::showOkCancelBox(
+            juce::AlertWindow::WarningIcon,
+            "Clear All Macro Mappings",
+            "Delete all macro mappings?",
+            "Clear All",
+            "Cancel");
+
+        if (! confirmed)
+            return;
+
+        core.clearAllMacroMappings();
+        showTemporaryStatusMessage("Cleared all macro mappings");
+        refreshFromCore();
+        repaint();
+    };
+
     lastKnownDirtyState = processor.getCore().isDirty();
     lastKnownShowingState = isShowing();
 
@@ -750,17 +1327,35 @@ MainView::MainView(PolyHostPluginProcessor& processorIn)
 
     startTimer(60);
     refreshFromCore();
+    syncManualBypassStatesFromCore();
+    updateSaveButtonColours();
+
+    // Prompt for missing plugins that were detected during state restore
+    // (happens when host loads preset before editor is opened)
+    if (! processor.getCore().getMissingPlugins().isEmpty())
+    {
+        pendingMissingPluginPrompt = true;
+        pendingMissingPluginPromptDelayTicks = 0;
+    }
 }
 
 MainView::~MainView()
 {
+    DebugLog::write("[MainView] destructor | shutting down");
+
     stopTimer();
 
     if (menuBar != nullptr)
         menuBar->setModel(nullptr);
 
+    hidePointerEditOverlay();
     clearHostedEditor();
-    pointerEditOverlayWindow.reset();
+    pointerEditOverlayHost.reset();
+
+    savePresetToolbarButton = nullptr;
+    savePresetAsToolbarButton = nullptr;
+
+    DebugLog::write("[MainView] destructor complete");
 }
 
 juce::Point<int> MainView::getHostedEditorLocalPointFromScreen(juce::Point<int> screenPoint) const
@@ -810,7 +1405,7 @@ juce::PopupMenu MainView::getMenuForIndex(int topLevelMenuIndex,
             menu.addItem(commandSavePresetAs, "Save Preset As...");
             menu.addItem(commandLoadPreset, "Load Preset...");
             menu.addSubMenu("Recent Presets", recentMenu);
-            menu.addItem(commandLocateMissingPlugins, "Locate Missing Plugins...", false, false);
+            menu.addItem(commandLocateMissingPluginsNow, "Locate Missing Plugins...");
             menu.addItem(commandDeleteCurrentPreset,
                          "Delete Current Preset",
                          presetController.hasCurrentFile());
@@ -820,12 +1415,32 @@ juce::PopupMenu MainView::getMenuForIndex(int topLevelMenuIndex,
         }
 
         case 1:
-            menu.addItem(9002, "MIDI Settings...", false, false);
+            menu.addItem(commandMidiMonitor, "MIDI Monitor");
+            menu.addItem(commandRefreshMidiDevices, "Refresh MIDI Devices");
+            menu.addSeparator();
+            menu.addItem(commandMidiPanic, "Panic!   \t(Ctrl+Shift+P)");
             break;
 
         case 2:
         {
             menu.addItem(commandPointerControlSettings, "Pointer Control Settings...");
+            menu.addSeparator();
+
+            juce::PopupMenu pluginRepairsMenu;
+            pluginRepairsMenu.addItem(commandAutoSaveAfterPluginRepair,
+                                      "Auto-Save Preset After Plugin Repair",
+                                      true,
+                                      appSettings.getAutoSaveAfterPluginRepair());
+            pluginRepairsMenu.addSeparator();
+            pluginRepairsMenu.addItem(commandAddPluginScanFolder,
+                                      "Add Plugin Scan Folder...");
+            pluginRepairsMenu.addItem(commandShowPluginScanFolders,
+                                      "Show Plugin Scan Folders");
+            pluginRepairsMenu.addItem(commandClearPluginScanFolders,
+                                      "Clear Plugin Scan Folders",
+                                      appSettings.getPluginScanFolders().size() > 0);
+
+            menu.addSubMenu("Plugin Repairs", pluginRepairsMenu);
             menu.addSeparator();
 
             juce::PopupMenu debugMenu;
@@ -898,6 +1513,24 @@ void MainView::menuItemSelected(int menuItemID,
                 loadPresetFromFile();
             break;
 
+        case commandMidiMonitor:
+            if (midiMonitorWindow == nullptr)
+                midiMonitorWindow = std::make_unique<VstMidiMonitorWindow>(processor);
+
+            midiMonitorWindow->setVisible(true);
+            midiMonitorWindow->toFront(true);
+            break;
+
+        case commandRefreshMidiDevices:
+            processor.getCore().refreshAvailableMidiInputs();
+            refreshFromCore();
+            repaint();
+            break;
+
+        case commandMidiPanic:
+            sendMidiPanic();
+            break;
+
         case commandDeleteCurrentPreset:
             deleteCurrentPreset();
             break;
@@ -916,6 +1549,26 @@ void MainView::menuItemSelected(int menuItemID,
 
         case commandPointerControlSettings:
             showPointerControlSettingsDialog();
+            break;
+
+        case commandAutoSaveAfterPluginRepair:
+            appSettings.setAutoSaveAfterPluginRepair(! appSettings.getAutoSaveAfterPluginRepair());
+            break;
+
+        case commandAddPluginScanFolder:
+            addPluginScanFolder();
+            break;
+
+        case commandShowPluginScanFolders:
+            showPluginScanFolders();
+            break;
+
+        case commandClearPluginScanFolders:
+            clearPluginScanFolders();
+            break;
+
+        case commandLocateMissingPluginsNow:
+            locateMissingPluginsNow();
             break;
 
         case commandEnableDebugLogging:
@@ -976,6 +1629,20 @@ void MainView::menuItemSelected(int menuItemID,
     }
 }
 
+bool MainView::keyPressed(const juce::KeyPress& key)
+{
+    if (key == juce::KeyPress('P',
+                              juce::ModifierKeys::ctrlModifier
+                                  | juce::ModifierKeys::shiftModifier,
+                              0))
+    {
+        sendMidiPanic();
+        return true;
+    }
+
+    return false;
+}
+
 void MainView::timerCallback()
 {
     processPendingPointerMidi();
@@ -989,6 +1656,9 @@ void MainView::timerCallback()
 
     if (currentDirtyState != lastKnownDirtyState)
     {
+        DebugLog::writeAdvanced("[MainView] timerCallback | dirty state changed | dirty="
+                                + juce::String(currentDirtyState ? "true" : "false"));
+
         lastKnownDirtyState = currentDirtyState;
         refreshDirtyUiOnly();
     }
@@ -1002,10 +1672,61 @@ void MainView::timerCallback()
         repaint();
     }
 
+    if (pendingMissingPluginPrompt && isShowing())
+    {
+        // Wait ~2 seconds (timer fires at ~60ms, so 33 ticks ≈ 2 seconds)
+        // This gives the host's context menu time to appear and be dismissed
+        if (pendingMissingPluginPromptDelayTicks < 33)
+        {
+            ++pendingMissingPluginPromptDelayTicks;
+        }
+        else
+        {
+            pendingMissingPluginPrompt = false;
+            pendingMissingPluginPromptDelayTicks = 0;
+
+            auto& missing = processor.getCore().getMissingPlugins();
+
+            if (! missing.isEmpty())
+            {
+                juce::String message;
+                message << missing.size() << " plugin(s) could not be found:\n\n";
+
+                for (int i = 0; i < missing.size(); ++i)
+                    message << "  - " << missing.getReference(i).pluginName << "\n";
+
+                message << "\nWould you like to locate them now?";
+
+                const bool locate = juce::AlertWindow::showOkCancelBox(
+                    juce::AlertWindow::WarningIcon,
+                    "Missing Plugins",
+                    message,
+                    "Locate Now",
+                    "Later");
+
+                if (locate)
+                {
+                    locateMissingPluginsNow();
+                }
+                else
+                {
+                    // User chose Later — do not prompt again this session.
+                    // The missing plugins list is preserved so File > Locate
+                    // Missing Plugins... still works, but the auto-prompt
+                    // will not reappear until the preset is reloaded.
+                    processor.getCore().clearMissingPlugins();
+                }
+            }
+        }
+    }
+
     const bool currentShowingState = isShowing();
 
     if (currentShowingState != lastKnownShowingState)
     {
+        DebugLog::write("[Window] timerCallback | visibility changed | isShowing="
+                        + juce::String(currentShowingState ? "true" : "false"));
+
         lastKnownShowingState = currentShowingState;
 
         if (currentShowingState)
@@ -1071,6 +1792,8 @@ void MainView::createNewPreset()
     DebugLog::write("[Preset] createNewPreset requested");
 
     clearHostedEditor();
+    soloedTabIndices.clear();
+    manualBypassStates.clear();
 
     auto& core = processor.getCore();
     core.resetForNewPreset();
@@ -1083,6 +1806,7 @@ void MainView::createNewPreset()
 
     refreshFromCore();
     repaint();
+    syncManualBypassStatesFromCore();
 }
 
 void MainView::rebuildPresetDropdown()
@@ -1188,12 +1912,15 @@ void MainView::handlePresetSelection()
 
 void MainView::reloadCurrentPreset()
 {
+    DebugLog::write("[Preset] reloadCurrentPreset requested");
+
     dismissMidiAssignmentsPopup();
 
     auto currentFile = presetController.getCurrentFile();
 
     if (! currentFile.existsAsFile())
     {
+        DebugLog::write("[Preset] reloadCurrentPreset | no saved preset file exists");
         processor.getCore().setStatusText("No saved preset to reload");
         refreshDirtyUiOnly();
         repaint();
@@ -1210,13 +1937,21 @@ void MainView::reloadCurrentPreset()
     alert.addButton("Cancel", 0, juce::KeyPress(juce::KeyPress::escapeKey));
 
     if (alert.runModalLoop() != 1)
+    {
+        DebugLog::write("[Preset] reloadCurrentPreset | user cancelled");
         return;
+    }
+
+    DebugLog::write("[Preset] reloadCurrentPreset | user confirmed | file="
+                    + currentFile.getFullPathName());
 
     loadSessionFromFile(currentFile);
 }
 
 void MainView::sendMidiPanic()
 {
+    DebugLog::write("[MIDI] sendMidiPanic requested");
+
     dismissMidiAssignmentsPopup();
     processor.getCore().sendMidiPanic();
     refreshDirtyUiOnly();
@@ -1226,7 +1961,7 @@ void MainView::sendMidiPanic()
 void MainView::showTemporaryStatusMessage(const juce::String& text)
 {
     temporaryStatusMessage = text;
-    temporaryStatusExpiryMs = juce::Time::getMillisecondCounter() + 1800;
+    temporaryStatusExpiryMs = juce::Time::getMillisecondCounter() + 5000;
     repaint();
 }
 
@@ -1248,8 +1983,8 @@ void MainView::togglePointerControlEditMode()
 
 void MainView::hidePointerEditOverlay()
 {
-    if (pointerEditOverlayWindow != nullptr)
-        pointerEditOverlayWindow->setVisible(false);
+    if (pointerEditOverlayHost != nullptr)
+        pointerEditOverlayHost->setVisible(false);
 }
 
 void MainView::updatePointerEditOverlay()
@@ -1260,13 +1995,13 @@ void MainView::updatePointerEditOverlay()
         return;
     }
 
-    if (showingRoutingView || hostedEditor == nullptr || ! hostedEditor->isShowing())
+    if (showingRoutingView || showingMacroMappingsView || hostedEditor == nullptr || ! hostedEditor->isShowing())
     {
         hidePointerEditOverlay();
         return;
     }
 
-    auto screenBounds = editorHolder.getScreenBounds();
+    auto screenBounds = hostedEditor->getScreenBounds();
 
     if (screenBounds.isEmpty())
     {
@@ -1274,13 +2009,17 @@ void MainView::updatePointerEditOverlay()
         return;
     }
 
-    if (pointerEditOverlayWindow == nullptr)
-        pointerEditOverlayWindow = std::make_unique<PointerEditOverlayWindow>(*this);
+    if (pointerEditOverlayHost == nullptr)
+    {
+        pointerEditOverlayHost = std::make_unique<PointerEditOverlayHost>(*this);
+        pointerEditOverlayHost->addToDesktop(juce::ComponentPeer::windowIsTemporary
+                                             | juce::ComponentPeer::windowIgnoresKeyPresses);
+    }
 
-    pointerEditOverlayWindow->setBounds(screenBounds);
-    pointerEditOverlayWindow->setVisible(true);
-    pointerEditOverlayWindow->toFront(false);
-    pointerEditOverlayWindow->refresh();
+    pointerEditOverlayHost->setBounds(screenBounds);
+    pointerEditOverlayHost->setVisible(true);
+    pointerEditOverlayHost->toFront(false);
+    pointerEditOverlayHost->refresh();
 }
 
 void MainView::refreshPointerControlTarget()
@@ -1293,6 +2032,7 @@ void MainView::refreshPointerControlTarget()
         lastPointerJumpPointCount = -1;
         lastPointerXccValue = -1;
         lastPointerYccValue = -1;
+        DebugLog::writeAdvanced("[PointerControl] refreshPointerControlTarget | skipped, showing routing view");
         return;
     }
 
@@ -1304,6 +2044,7 @@ void MainView::refreshPointerControlTarget()
         lastPointerJumpPointCount = -1;
         lastPointerXccValue = -1;
         lastPointerYccValue = -1;
+        DebugLog::writeAdvanced("[PointerControl] refreshPointerControlTarget | skipped, no hosted editor");
         return;
     }
 
@@ -1317,6 +2058,7 @@ void MainView::refreshPointerControlTarget()
         lastPointerJumpPointCount = -1;
         lastPointerXccValue = -1;
         lastPointerYccValue = -1;
+        DebugLog::writeAdvanced("[PointerControl] refreshPointerControlTarget | skipped, empty bounds");
         return;
     }
 
@@ -1331,6 +2073,7 @@ void MainView::refreshPointerControlTarget()
         lastPointerJumpPointCount = -1;
         lastPointerXccValue = -1;
         lastPointerYccValue = -1;
+        DebugLog::writeAdvanced("[PointerControl] refreshPointerControlTarget | skipped, invalid tab index");
         return;
     }
 
@@ -1345,6 +2088,13 @@ void MainView::refreshPointerControlTarget()
 
     if (boundsChanged)
     {
+        DebugLog::writeAdvanced("[PointerControl] refreshPointerControlTarget | bounds changed | tabIndex="
+                                + juce::String(tabIndex)
+                                + " | bounds="
+                                + targetBounds.toString()
+                                + " | points="
+                                + juce::String(storedPoints.size()));
+
         pointerControl.setTargetScreenBounds(targetBounds);
         lastPointerTargetBounds = targetBounds;
     }
@@ -1400,11 +2150,19 @@ void MainView::processPendingPointerMidi()
 
         if (cc == pointerXcc)
         {
+            DebugLog::writeAdvanced("[PointerControl] MIDI X | cc="
+                                    + juce::String(cc)
+                                    + " | value="
+                                    + juce::String(value));
             pointerControl.panX(value);
             lastPointerXccValue = value;
         }
         else if (cc == pointerYcc)
         {
+            DebugLog::writeAdvanced("[PointerControl] MIDI Y | cc="
+                                    + juce::String(cc)
+                                    + " | value="
+                                    + juce::String(value));
             pointerControl.panY(value);
             lastPointerYccValue = value;
         }
@@ -1466,7 +2224,10 @@ void MainView::processPendingPointerMidi()
                         adjustMethod = 2;
                 }
 
-                const int sensitivity = appSettings.getPointerControlAdjustSensitivity();
+                int sensitivity = 1;
+
+                if (juce::isPositiveAndBelow(tabIndex, core.getNumTabs()))
+                    sensitivity = core.getTabPointerAdjustSensitivity(tabIndex);
                 const int direction = (delta > 0 ? 1 : -1);
                 const int repeatCount = std::abs(delta) * sensitivity;
 
@@ -1486,6 +2247,12 @@ void MainView::processPendingPointerMidi()
         }
         else if (cc == pointerToleranceCc)
         {
+            if (! pointerControlEditModeEnabled)
+            {
+                lastPointerToleranceCcValue = value;
+                continue;
+            }
+
             if (lastPointerToleranceCcValue >= 0)
             {
                 int delta = value - lastPointerToleranceCcValue;
@@ -1502,14 +2269,21 @@ void MainView::processPendingPointerMidi()
 
                     if (juce::isPositiveAndBelow(tabIndex, core.getNumTabs()))
                     {
-                        auto tabData = core.buildMainTabSessionData();
-                        float tolerance = tabData.pointerLaneTolerance + (float) delta;
+                        float tolerance = core.getTabPointerLaneTolerance(tabIndex) + (float) delta;
                         tolerance = juce::jlimit(1.0f, 128.0f, tolerance);
+
+                        DebugLog::writeAdvanced("[PointerControl] tolerance changed | delta="
+                                                + juce::String(delta)
+                                                + " | newTolerance="
+                                                + juce::String(tolerance, 1));
 
                         pointerControl.setLaneTolerance(tolerance);
                         core.setTabPointerLaneTolerance(tabIndex, tolerance);
                         core.setStatusText("Pointer tolerance: " + juce::String(tolerance, 1));
                         showTemporaryStatusMessage("Pointer tolerance: " + juce::String(tolerance, 1));
+
+                        if (pointerEditOverlayHost != nullptr)
+                            pointerEditOverlayHost->refresh();
                     }
                 }
             }
@@ -1519,8 +2293,21 @@ void MainView::processPendingPointerMidi()
         else if (cc == pointerSensitivityCc)
         {
             const int mappedSensitivity = juce::jlimit(1, 20, 1 + (value * 19) / 127);
-            appSettings.setPointerControlAdjustSensitivity(mappedSensitivity);
-            showTemporaryStatusMessage("Adjust sensitivity: " + juce::String(mappedSensitivity));
+
+            DebugLog::writeAdvanced("[PointerControl] sensitivity changed | ccValue="
+                                    + juce::String(value)
+                                    + " | mappedSensitivity="
+                                    + juce::String(mappedSensitivity));
+
+            auto& core = processor.getCore();
+            const int tabIndex = core.getSelectedTabIndex();
+
+            if (juce::isPositiveAndBelow(tabIndex, core.getNumTabs()))
+            {
+                core.setTabPointerAdjustSensitivity(tabIndex, mappedSensitivity);
+                core.setStatusText("Adjust sensitivity: " + juce::String(mappedSensitivity));
+                showTemporaryStatusMessage("Adjust sensitivity: " + juce::String(mappedSensitivity));
+            }
         }
     }
 }
@@ -1554,10 +2341,206 @@ void MainView::rebuildTabButtons()
             selectTab(i);
         };
 
-        addAndMakeVisible(button);
+        tabButtonsContainer.addAndMakeVisible(button);
     }
 
+    addAndMakeVisible(tabButtonsViewport);
+    addAndMakeVisible(scrollTabsLeftButton);
+    addAndMakeVisible(scrollTabsRightButton);
     addAndMakeVisible(addTabButton);
+
+    auto& core = processor.getCore();
+    const int selectedTab = core.getSelectedTabIndex();
+
+    if (juce::isPositiveAndBelow(selectedTab, tabButtons.size()))
+    {
+        if (auto* selectedButton = tabButtons[selectedTab])
+        {
+            auto viewPos = tabButtonsViewport.getViewPosition();
+            auto viewArea = tabButtonsViewport.getViewArea();
+            auto buttonBounds = selectedButton->getBounds();
+
+            if (buttonBounds.getX() < viewArea.getX())
+            {
+                tabButtonsViewport.setViewPosition(buttonBounds.getX(), viewPos.getY());
+            }
+            else if (buttonBounds.getRight() > viewArea.getRight())
+            {
+                tabButtonsViewport.setViewPosition(buttonBounds.getRight() - viewArea.getWidth(),
+                                                   viewPos.getY());
+            }
+        }
+    }
+
+    updateTabScrollButtonState();
+}
+
+void MainView::handleToggleSolo(int tabIndex)
+{
+    auto& core = processor.getCore();
+
+    if (! juce::isPositiveAndBelow(tabIndex, core.getNumTabs()))
+        return;
+
+    if (soloedTabIndices.contains(tabIndex))
+        soloedTabIndices.removeFirstMatchingValue(tabIndex);
+    else
+        soloedTabIndices.addIfNotAlreadyThere(tabIndex);
+
+    applyEffectiveBypassStates();
+    refreshFromCore();
+    toolbar.repaint();
+    repaint();
+}
+
+void MainView::clearAllSolos()
+{
+    if (soloedTabIndices.isEmpty())
+        return;
+
+    soloedTabIndices.clear();
+    applyEffectiveBypassStates();
+    refreshFromCore();
+    toolbar.repaint();
+    repaint();
+}
+
+void MainView::mapLastTouchedParameterToMacro()
+{
+    auto& core = processor.getCore();
+
+    if (! core.hasLastTouchedParameter())
+    {
+        showTemporaryStatusMessage("No last touched parameter detected");
+        refreshDirtyUiOnly();
+        updateSaveButtonColours();
+        repaint();
+        return;
+    }
+
+    const int nextFreeMacro = core.getNextFreeMacroIndex();
+
+    if (nextFreeMacro < 0)
+    {
+        showTemporaryStatusMessage("No free macro slots available");
+        refreshDirtyUiOnly();
+        repaint();
+        return;
+    }
+
+    const auto description = core.getLastTouchedParameterDescription();
+
+    if (core.assignLastTouchedToNextFreeMacro())
+    {
+        showTemporaryStatusMessage("Mapped " + description
+                                   + " to Macro "
+                                   + juce::String(nextFreeMacro + 1).paddedLeft('0', 3));
+        refreshDirtyUiOnly();
+        repaint();
+        return;
+    }
+
+    showTemporaryStatusMessage("That parameter is already mapped for this tab");
+    refreshDirtyUiOnly();
+    repaint();
+}
+
+void MainView::showMacroMappingsView()
+{
+    dismissMidiAssignmentsPopup();
+
+    if (showingMacroMappingsView)
+    {
+        showingMacroMappingsView = false;
+        refreshFromCore();
+        repaint();
+        resizeParentEditorToFitHostedPlugin();
+        updatePointerEditOverlay();
+        return;
+    }
+
+    showingRoutingView = false;
+    showingMacroMappingsView = true;
+    refreshFromCore();
+    repaint();
+
+    if (auto* parentEditor = findParentComponentOfClass<PolyHostPluginEditor>())
+        parentEditor->resizeToRoutingView();
+
+    updatePointerEditOverlay();
+}
+
+void MainView::syncManualBypassStatesFromCore()
+{
+    auto& core = processor.getCore();
+    manualBypassStates.clearQuick();
+
+    for (int i = 0; i < core.getNumTabs(); ++i)
+        manualBypassStates.add(core.isTabBypassed(i));
+}
+
+void MainView::applyEffectiveBypassStates()
+{
+    auto& core = processor.getCore();
+
+    while (manualBypassStates.size() < core.getNumTabs())
+        manualBypassStates.add(false);
+
+    if (soloedTabIndices.isEmpty())
+    {
+        for (int i = 0; i < core.getNumTabs(); ++i)
+            core.setTabBypassed(i, manualBypassStates[i]);
+    }
+    else
+    {
+        for (int i = 0; i < core.getNumTabs(); ++i)
+        {
+            const bool isSoloed = soloedTabIndices.contains(i);
+
+            // During solo:
+            // - soloed tabs are always audible
+            // - non-soloed tabs are always bypassed
+            const bool effectiveBypassed = ! isSoloed;
+            core.setTabBypassed(i, effectiveBypassed);
+        }
+    }
+}
+
+void MainView::mouseDown(const juce::MouseEvent& event)
+{
+    juce::ignoreUnused(event);
+    grabKeyboardFocus();
+}
+
+void MainView::mouseWheelMove(const juce::MouseEvent& event,
+                              const juce::MouseWheelDetails& wheel)
+{
+    if (tabButtonsViewport.getBounds().contains(event.position.toInt()))
+    {
+        auto pos = tabButtonsViewport.getViewPosition();
+        const int delta = (int) std::round((wheel.deltaX != 0.0f ? wheel.deltaX : wheel.deltaY) * 80.0f);
+        tabButtonsViewport.setViewPosition(juce::jmax(0, pos.getX() - delta), pos.getY());
+        updateTabScrollButtonState();
+        return;
+    }
+
+    juce::Component::mouseWheelMove(event, wheel);
+}
+
+void MainView::updateTabScrollButtonState()
+{
+    const int viewX = tabButtonsViewport.getViewPositionX();
+    const int viewWidth = tabButtonsViewport.getViewWidth();
+    const int contentWidth = tabButtonsContainer.getWidth();
+
+    const bool canScrollLeft = viewX > 0;
+    const bool canScrollRight = (viewX + viewWidth) < contentWidth;
+
+    scrollTabsLeftButton.setEnabled(canScrollLeft);
+    scrollTabsRightButton.setEnabled(canScrollRight);
+
+    scrollTabsLeftButton.repaint();
+    scrollTabsRightButton.repaint();
 }
 
 void MainView::toggleRoutingView()
@@ -1567,6 +2550,9 @@ void MainView::toggleRoutingView()
 
     dismissMidiAssignmentsPopup();
     showingRoutingView = ! showingRoutingView;
+
+    if (showingRoutingView)
+        showingMacroMappingsView = false;
 
     DebugLog::write("[Routing] toggleRoutingView new state="
                     + juce::String(showingRoutingView ? "true" : "false"));
@@ -1600,6 +2586,9 @@ void MainView::rebuildRoutingView()
     auto& core = processor.getCore();
     auto& tabModel = core.getTabModel();
 
+    DebugLog::writeAdvanced("[Routing] rebuildRoutingView | tabCount="
+                            + juce::String(tabModel.getNumTabs()));
+
     for (int i = 0; i < tabModel.getNumTabs(); ++i)
     {
         const auto& tab = tabModel.getTab(i);
@@ -1608,7 +2597,14 @@ void MainView::rebuildRoutingView()
         entry.tabIndex = i;
         entry.name = tab.name;
         entry.type = tab.type;
-        entry.isBypassed = core.isTabBypassed(i);
+        const bool isSoloed = soloedTabIndices.contains(i);
+        const bool manualBypassed = juce::isPositiveAndBelow(i, manualBypassStates.size())
+                                        ? manualBypassStates[i]
+                                        : core.isTabBypassed(i);
+
+        entry.isBypassed = manualBypassed;
+        entry.isSoloed = isSoloed;
+        entry.isMutedBySolo = (! soloedTabIndices.isEmpty() && ! isSoloed && ! manualBypassed);
         entry.canMoveUp = core.canMoveTabUp(i);
         entry.canMoveDown = core.canMoveTabDown(i);
         entry.midiAssignmentCount = core.getTabMidiAssignmentCount(i);
@@ -1634,16 +2630,25 @@ void MainView::selectTab(int tabIndex)
     if (showingRoutingView)
         showingRoutingView = false;
 
+    if (showingMacroMappingsView)
+        showingMacroMappingsView = false;
+
     core.setSelectedTabIndex(tabIndex);
     core.getTabModel().selectTab(tabIndex);
 
     refreshFromCore();
+
+    showTemporaryStatusMessage("Adjust sensitivity: "
+                               + juce::String(core.getTabPointerAdjustSensitivity(tabIndex)));
+
     repaint();
     updatePointerEditOverlay();
 }
 
 void MainView::showTabContextMenuAsync(int tabIndex, juce::Component* anchor)
 {
+    DebugLog::write("[Tabs] showTabContextMenuAsync | tabIndex=" + juce::String(tabIndex));
+
     auto& core = processor.getCore();
     const bool canCloseTab = core.getNumTabs() > 1;
     const bool canReloadPlugin = juce::isPositiveAndBelow(tabIndex, core.getNumTabs())
@@ -1721,6 +2726,12 @@ void MainView::handleTabContextCommand(int commandId, int tabIndex)
             DebugLog::write("[Tabs] context clear tab | tabIndex=" + juce::String(tabIndex));
             clearHostedEditor();
             core.clearTab(tabIndex);
+            soloedTabIndices.removeFirstMatchingValue(tabIndex);
+
+            if (juce::isPositiveAndBelow(tabIndex, manualBypassStates.size()))
+                manualBypassStates.set(tabIndex, false);
+
+            applyEffectiveBypassStates();
             core.getTabModel().selectTab(core.getSelectedTabIndex());
             refreshFromCore();
             repaint();
@@ -1735,6 +2746,27 @@ void MainView::handleTabContextCommand(int commandId, int tabIndex)
             clearHostedEditor();
             if (core.closeSelectedTab())
             {
+                juce::Array<int> updatedSoloIndices;
+
+                for (int i = 0; i < soloedTabIndices.size(); ++i)
+                {
+                    const int soloIndex = soloedTabIndices.getReference(i);
+
+                    if (soloIndex == tabIndex)
+                        continue;
+
+                    if (soloIndex > tabIndex)
+                        updatedSoloIndices.add(soloIndex - 1);
+                    else
+                        updatedSoloIndices.add(soloIndex);
+                }
+
+                soloedTabIndices = updatedSoloIndices;
+
+                if (juce::isPositiveAndBelow(tabIndex, manualBypassStates.size()))
+                    manualBypassStates.remove(tabIndex);
+
+                applyEffectiveBypassStates();
                 core.getTabModel().selectTab(core.getSelectedTabIndex());
                 refreshFromCore();
                 repaint();
@@ -1757,6 +2789,12 @@ void MainView::clearTab(int tabIndex)
         return;
 
     core.clearTab(tabIndex);
+    soloedTabIndices.removeFirstMatchingValue(tabIndex);
+
+    if (juce::isPositiveAndBelow(tabIndex, manualBypassStates.size()))
+        manualBypassStates.set(tabIndex, false);
+
+    applyEffectiveBypassStates();
 
     if (tabIndex == core.getSelectedTabIndex())
         clearHostedEditor();
@@ -1780,6 +2818,27 @@ void MainView::closeTab(int tabIndex)
 
     if (core.closeSelectedTab())
     {
+        juce::Array<int> updatedSoloIndices;
+
+        for (int i = 0; i < soloedTabIndices.size(); ++i)
+        {
+            const int soloIndex = soloedTabIndices.getReference(i);
+
+            if (soloIndex == tabIndex)
+                continue;
+
+            if (soloIndex > tabIndex)
+                updatedSoloIndices.add(soloIndex - 1);
+            else
+                updatedSoloIndices.add(soloIndex);
+        }
+
+        soloedTabIndices = updatedSoloIndices;
+
+        if (juce::isPositiveAndBelow(tabIndex, manualBypassStates.size()))
+            manualBypassStates.remove(tabIndex);
+
+        applyEffectiveBypassStates();
         core.getTabModel().selectTab(core.getSelectedTabIndex());
         clearHostedEditor();
         refreshFromCore();
@@ -1795,6 +2854,8 @@ void MainView::newTab()
     core.addTab();
     core.getTabModel().selectTab(core.getSelectedTabIndex());
 
+    manualBypassStates.add(false);
+    applyEffectiveBypassStates();
     refreshFromCore();
     repaint();
 }
@@ -1817,9 +2878,15 @@ void MainView::loadPluginIntoMainSlot()
 {
     DebugLog::write("[Plugin] loadPluginIntoMainSlot opened chooser");
 
+    juce::String fileFilter = "*.vst3";
+
+   #if JUCE_PLUGINHOST_VST
+    fileFilter += ";*.dll";
+   #endif
+
     juce::FileChooser chooser("Select a plugin to associate with the current tab",
                               {},
-                              "*.vst3");
+                              fileFilter);
 
     if (chooser.browseForFileToOpen())
     {
@@ -1860,6 +2927,8 @@ void MainView::newPlugin()
     core.addTab();
     core.getTabModel().selectTab(core.getSelectedTabIndex());
 
+    manualBypassStates.add(false);
+    applyEffectiveBypassStates();
     refreshFromCore();
     repaint();
 
@@ -1958,6 +3027,21 @@ void MainView::savePresetAs()
     }
 }
 
+void MainView::updateSaveButtonColours()
+{
+    const auto colour = processor.getCore().isDirty()
+                            ? juce::Colour(0xFF3A7BD5)
+                            : ButtonStyling::defaultBackground();
+
+    if (savePresetToolbarButton != nullptr)
+        savePresetToolbarButton->setBackgroundColour(colour);
+
+    if (savePresetAsToolbarButton != nullptr)
+        savePresetAsToolbarButton->setBackgroundColour(colour);
+
+    toolbar.repaint();
+}
+
 void MainView::loadPresetFromFile()
 {
     DebugLog::write("[Preset] loadPresetFromFile chooser opened");
@@ -1985,6 +3069,60 @@ void MainView::loadRecentPreset(int menuItemID)
         DebugLog::write("[Preset] loadRecentPreset | file=" + file.getFullPathName());
         loadSessionFromFile(file);
     }
+}
+
+bool MainView::saveCurrentTabPointerMapToCurrentPresetFile()
+{
+    auto currentFile = presetController.getCurrentFile();
+
+    if (! currentFile.existsAsFile())
+        return false;
+
+    auto xml = juce::XmlDocument::parse(currentFile);
+
+    if (xml == nullptr || ! xml->hasTagName("PolyHostPreset"))
+        return false;
+
+    auto& core = processor.getCore();
+    const int tabIndex = core.getSelectedTabIndex();
+
+    if (! juce::isPositiveAndBelow(tabIndex, core.getNumTabs()))
+        return false;
+
+    auto tabData = core.buildMainTabSessionData();
+
+    int currentTabCounter = 0;
+
+    for (auto* tabXml : xml->getChildIterator())
+    {
+        if (! tabXml->hasTagName("Tab"))
+            continue;
+
+        if (currentTabCounter != tabIndex)
+        {
+            ++currentTabCounter;
+            continue;
+        }
+
+        tabXml->removeChildElement(tabXml->getChildByName("PointerJumpPoints"), true);
+        tabXml->setAttribute("preferGlobalPointerMap", tabData.preferGlobalPointerMap);
+
+        if (tabData.hasCustomPointerMap)
+        {
+            auto* pointerPointsXml = tabXml->createNewChildElement("PointerJumpPoints");
+
+            for (auto& point : tabData.pointerJumpPoints)
+            {
+                auto* pointXml = pointerPointsXml->createNewChildElement("Point");
+                pointXml->setAttribute("x", point.x);
+                pointXml->setAttribute("y", point.y);
+            }
+        }
+
+        break;
+    }
+
+    return xml->writeTo(currentFile, {});
 }
 
 bool MainView::saveSessionToFile(const juce::File& file)
@@ -2041,12 +3179,16 @@ bool MainView::loadSessionFromFile(const juce::File& file)
     dismissMidiAssignmentsPopup();
     clearHostedEditor();
     showingRoutingView = false;
+    showingMacroMappingsView = false;
+    soloedTabIndices.clear();
+    manualBypassStates.clear();
 
     emptyLoadPluginButton.setVisible(false);
     contentPlaceholder.setText("Loading Preset...\n\nPlease wait...", juce::dontSendNotification);
     contentPlaceholder.setVisible(true);
     editorHolder.setVisible(true);
     routingView.setVisible(false);
+    macroMappingsView.setVisible(false);
     resized();
     repaint();
     juce::MessageManager::getInstance()->runDispatchLoopUntil(10);
@@ -2068,6 +3210,15 @@ bool MainView::loadSessionFromFile(const juce::File& file)
         lastKnownDirtyState = processor.getCore().isDirty();
         refreshFromCore();
         repaint();
+        syncManualBypassStatesFromCore();
+
+        // Flag for timer to pick up — deferred so MuLab's init thread doesn't block it
+        if (! processor.getCore().getMissingPlugins().isEmpty())
+        {
+            pendingMissingPluginPrompt = true;
+            pendingMissingPluginPromptDelayTicks = 0;
+        }
+
         return true;
     }
 
@@ -2095,7 +3246,10 @@ void MainView::refreshDirtyUiOnly()
     if (core.isDirty())
         displayName += " *";
 
+    presetDropdown.setSelectedId(0, juce::dontSendNotification);
     presetDropdown.setText(displayName, juce::dontSendNotification);
+
+    updateSaveButtonColours();
     repaint();
 }
 
@@ -2108,6 +3262,7 @@ void MainView::resizeParentEditorToFitHostedPlugin()
 
     if (hostedEditor == nullptr)
     {
+        DebugLog::writeAdvanced("[HostedEditor] resizeParentEditorToFitHostedPlugin | no hosted editor, using default 800x500");
         parentEditor->setSize(800, 500);
         return;
     }
@@ -2120,6 +3275,11 @@ void MainView::resizeParentEditorToFitHostedPlugin()
 
     if (editorHeight <= 0)
         editorHeight = 500;
+
+    DebugLog::writeAdvanced("[HostedEditor] resizeParentEditorToFitHostedPlugin | size="
+                            + juce::String(editorWidth)
+                            + "x"
+                            + juce::String(editorHeight));
 
     parentEditor->resizeToFitContent(editorWidth, editorHeight);
 }
@@ -2288,7 +3448,29 @@ void MainView::refreshFromCore()
     rebuildTabButtons();
     rebuildRoutingView();
 
-    if (! showingRoutingView)
+    juce::Array<MacroMappingsView::MappingEntry> mappingEntries;
+    for (auto& mapping : core.getMacroMappings())
+    {
+        MacroMappingsView::MappingEntry entry;
+        entry.macroIndex = mapping.macroIndex;
+        entry.label = mapping.label;
+        entry.tabIndex = mapping.tabIndex;
+        entry.pluginName = mapping.pluginName;
+        entry.parameterIndex = mapping.parameterIndex;
+        entry.parameterName = mapping.parameterName;
+        entry.enabled = mapping.enabled;
+        entry.canMoveUp = core.isMacroMapped(mapping.macroIndex - 1);
+        entry.canMoveDown = core.isMacroMapped(mapping.macroIndex + 1);
+        mappingEntries.add(entry);
+    }
+
+    macroMappingsView.setMappings(mappingEntries);
+    macroMappingsView.setUndoAvailable(core.hasMacroMappingsUndoState());
+
+    while (manualBypassStates.size() < core.getNumTabs())
+        manualBypassStates.add(false);
+
+    if (! showingRoutingView && ! showingMacroMappingsView)
         refreshHostedEditor();
     else
         clearHostedEditor();
@@ -2297,7 +3479,7 @@ void MainView::refreshFromCore()
 
     juce::String contentText;
 
-    if (showingRoutingView)
+    if (showingRoutingView || showingMacroMappingsView)
     {
         emptyLoadPluginButton.setVisible(false);
         contentText.clear();
@@ -2328,7 +3510,8 @@ void MainView::refreshFromCore()
     contentPlaceholder.setText(contentText, juce::dontSendNotification);
 
     routingView.setVisible(showingRoutingView);
-    editorHolder.setVisible(! showingRoutingView);
+    macroMappingsView.setVisible(showingMacroMappingsView);
+    editorHolder.setVisible(! showingRoutingView && ! showingMacroMappingsView);
 
     refreshDirtyUiOnly();
     resized();
@@ -2354,6 +3537,8 @@ void MainView::paint(juce::Graphics& g)
     auto statusArea = bounds.removeFromBottom(24);
     g.setColour(juce::Colour(0xFF0F3460));
     g.fillRect(statusArea);
+
+    statusArea.removeFromRight(150);
 
     auto& core = processor.getCore();
     juce::String statusSource = temporaryStatusMessage.isNotEmpty() ? temporaryStatusMessage
@@ -2408,29 +3593,66 @@ void MainView::resized()
 
     toolbar.setBounds(topRow);
 
-    area.removeFromBottom(24);
+    auto statusArea = area.removeFromBottom(24);
+    auto metersArea = statusArea.removeFromRight(150);
+
+    if (statusMeters != nullptr)
+        statusMeters->setBounds(metersArea);
 
     auto contentOuter = area.reduced(12, 8);
 
     auto tabBarArea = contentOuter.removeFromTop(30);
 
-    int x = tabBarArea.getX() + 4;
-    int y = tabBarArea.getY() - 2;
-    int h = 24;
+    const int buttonHeight = 24;
+    const int buttonY = tabBarArea.getY() - 2;
+    const int arrowButtonWidth = 24;
+    const int plusButtonWidth = 24;
+    const int controlsGap = 2;
+    const int tabGap = 2;
+
+    auto rightControlsArea = tabBarArea.removeFromRight((arrowButtonWidth * 2)
+                                                        + plusButtonWidth
+                                                        + (controlsGap * 2)
+                                                        + 6);
+
+    auto leftArrowBounds = rightControlsArea.removeFromLeft(arrowButtonWidth);
+    leftArrowBounds.setY(buttonY);
+    leftArrowBounds.setHeight(buttonHeight);
+    scrollTabsLeftButton.setBounds(leftArrowBounds);
+    rightControlsArea.removeFromLeft(controlsGap);
+
+    auto rightArrowBounds = rightControlsArea.removeFromLeft(arrowButtonWidth);
+    rightArrowBounds.setY(buttonY);
+    rightArrowBounds.setHeight(buttonHeight);
+    scrollTabsRightButton.setBounds(rightArrowBounds);
+    rightControlsArea.removeFromLeft(controlsGap);
+
+    auto addButtonBounds = rightControlsArea.removeFromLeft(plusButtonWidth);
+    addButtonBounds.setY(buttonY);
+    addButtonBounds.setHeight(buttonHeight);
+    addTabButton.setBounds(addButtonBounds);
+
+    auto viewportBounds = tabBarArea.reduced(4, 0);
+    tabButtonsViewport.setBounds(viewportBounds);
+
+    int x = 0;
+    int h = buttonHeight;
 
     for (int i = 0; i < tabButtons.size(); ++i)
     {
         auto* button = tabButtons[i];
         int w = juce::jlimit(58, 230, 22 + button->getName().length() * 8);
-        button->setBounds(x, y, w, h);
-        x += w + 2;
+        button->setBounds(x, 0, w, h);
+        x += w + tabGap;
     }
 
-    addTabButton.setBounds(tabBarArea.getRight() - 30, y, 24, h);
+    tabButtonsContainer.setSize(juce::jmax(viewportBounds.getWidth(), x), h);
+    updateTabScrollButtonState();
 
     auto contentBounds = contentOuter.reduced(8);
     editorHolder.setBounds(contentBounds);
     routingView.setBounds(contentBounds);
+    macroMappingsView.setBounds(contentBounds);
 
     auto emptyTextBounds = juce::Rectangle<int>(contentBounds.getX(),
                                                 contentBounds.getY() + contentBounds.getHeight() / 2 - 90,
@@ -2449,7 +3671,10 @@ void MainView::resized()
 void MainView::dismissMidiAssignmentsPopup()
 {
     if (midiAssignmentsCallout != nullptr)
+    {
+        DebugLog::writeAdvanced("[MIDI] dismissMidiAssignmentsPopup | dismissing open callout");
         midiAssignmentsCallout->dismiss();
+    }
 
     midiAssignmentsCallout = nullptr;
     midiAssignmentsAnchor = nullptr;
@@ -2458,6 +3683,8 @@ void MainView::dismissMidiAssignmentsPopup()
 
 void MainView::showMidiAssignmentsPopup(int tabIndex, juce::Component* anchorComponent)
 {
+    DebugLog::write("[MIDI] showMidiAssignmentsPopup | tabIndex=" + juce::String(tabIndex));
+
     auto previousAnchor = midiAssignmentsAnchor;
     auto previousTabIndex = midiAssignmentsTabIndex;
     const bool wasOpen = (midiAssignmentsCallout != nullptr);
@@ -2466,12 +3693,18 @@ void MainView::showMidiAssignmentsPopup(int tabIndex, juce::Component* anchorCom
         dismissMidiAssignmentsPopup();
 
     if (wasOpen && previousAnchor == anchorComponent && previousTabIndex == tabIndex)
+    {
+        DebugLog::writeAdvanced("[MIDI] showMidiAssignmentsPopup | dismissed same popup, not reopening");
         return;
+    }
 
     auto& core = processor.getCore();
 
     if (! juce::isPositiveAndBelow(tabIndex, core.getNumTabs()))
+    {
+        DebugLog::write("[MIDI] showMidiAssignmentsPopup | invalid tabIndex, aborting");
         return;
+    }
 
     core.refreshAvailableMidiInputs();
 
@@ -2481,6 +3714,9 @@ void MainView::showMidiAssignmentsPopup(int tabIndex, juce::Component* anchorCom
     const int numInputs = core.getAvailableMidiInputNames().size();
     const int popupHeight = 24 + (numInputs * 23) + 8 + 28 + 12;
     popup->setSize(popupWidth, popupHeight);
+
+    DebugLog::writeAdvanced("[MIDI] showMidiAssignmentsPopup | availableInputs="
+                            + juce::String(numInputs));
 
     juce::Rectangle<int> anchorArea;
 
@@ -2501,6 +3737,8 @@ void MainView::showMidiAssignmentsPopup(int tabIndex, juce::Component* anchorCom
 
 void MainView::showAboutDialog()
 {
+    DebugLog::write("[UI] showAboutDialog requested");
+
     auto content = std::make_unique<AboutDialogContent>();
     const int dialogWidth = content->getWidth();
     const int dialogHeight = content->getHeight();
@@ -2532,6 +3770,14 @@ bool MainView::isInterestedInFileDrag(const juce::StringArray& files)
             DebugLog::write("[DragDrop] accepted .vst3 file");
             return true;
         }
+
+       #if JUCE_PLUGINHOST_VST
+        if (file.hasFileExtension(".dll"))
+        {
+            DebugLog::write("[DragDrop] accepted .dll file");
+            return true;
+        }
+       #endif
     }
 
     DebugLog::writeAdvanced("[DragDrop] no accepted files");
@@ -2607,6 +3853,8 @@ bool MainView::loadDroppedPluginInNewTab(const juce::File& file)
     core.addTab();
     core.getTabModel().selectTab(core.getSelectedTabIndex());
 
+    manualBypassStates.add(false);
+    applyEffectiveBypassStates();
     refreshFromCore();
     repaint();
 
@@ -2628,9 +3876,15 @@ bool MainView::loadDroppedPluginInNewTab(const juce::File& file)
 
 bool MainView::handleDroppedPluginFile(const juce::File& file, int targetTabIndex)
 {
-    if (! file.hasFileExtension(".vst3"))
+    const bool isAcceptedFormat = file.hasFileExtension(".vst3")
+                               #if JUCE_PLUGINHOST_VST
+                                || file.hasFileExtension(".dll")
+                               #endif
+                                ;
+
+    if (! isAcceptedFormat)
     {
-        DebugLog::writeAdvanced("[DragDrop] rejected non-vst3 file: " + file.getFullPathName());
+        DebugLog::writeAdvanced("[DragDrop] rejected unsupported file: " + file.getFullPathName());
         return false;
     }
 
@@ -2707,6 +3961,272 @@ bool MainView::handleDroppedPluginFile(const juce::File& file, int targetTabInde
 
     DebugLog::write("[DragDrop] user cancelled drop action");
     return false;
+}
+
+void MainView::addPluginScanFolder()
+{
+    juce::FileChooser chooser("Select Plugin Scan Folder",
+                              juce::File::getSpecialLocation(juce::File::userHomeDirectory),
+                              "*");
+
+    if (! chooser.browseForDirectory())
+        return;
+
+    auto folder = chooser.getResult();
+
+    if (! folder.isDirectory())
+        return;
+
+    appSettings.addPluginScanFolder(folder.getFullPathName());
+
+    juce::AlertWindow::showMessageBoxAsync(
+        juce::AlertWindow::InfoIcon,
+        "Plugin Scan Folder Added",
+        "Added:\n" + folder.getFullPathName());
+}
+
+void MainView::showPluginScanFolders()
+{
+    auto folders = appSettings.getPluginScanFolders();
+
+    if (folders.isEmpty())
+    {
+        juce::AlertWindow::showMessageBoxAsync(
+            juce::AlertWindow::InfoIcon,
+            "Plugin Scan Folders",
+            "No plugin scan folders have been configured.");
+        return;
+    }
+
+    juce::String message = "Configured plugin scan folders:\n\n";
+
+    for (int i = 0; i < folders.size(); ++i)
+        message += folders[i] + "\n";
+
+    juce::AlertWindow::showMessageBoxAsync(
+        juce::AlertWindow::InfoIcon,
+        "Plugin Scan Folders",
+        message.trimEnd());
+}
+
+void MainView::clearPluginScanFolders()
+{
+    if (appSettings.getPluginScanFolders().isEmpty())
+        return;
+
+    const bool confirmed = juce::AlertWindow::showOkCancelBox(
+        juce::AlertWindow::WarningIcon,
+        "Clear Plugin Scan Folders",
+        "Remove all configured plugin scan folders?",
+        "Clear All",
+        "Cancel");
+
+    if (! confirmed)
+        return;
+
+    appSettings.setPluginScanFolders({});
+
+    juce::AlertWindow::showMessageBoxAsync(
+        juce::AlertWindow::InfoIcon,
+        "Plugin Scan Folders",
+        "All plugin scan folders have been cleared.");
+}
+
+bool MainView::tryRepairMissingPlugin(int tabIndex,
+                                      const juce::String& pluginName,
+                                      const juce::String& pluginStateBase64)
+{
+    auto& core = processor.getCore();
+
+    // Build start directory from scan folders or app directory
+    juce::File startDir = AppSettings::getAppDirectory();
+    auto scanFolders = appSettings.getPluginScanFolders();
+
+    if (! scanFolders.isEmpty())
+        startDir = juce::File(scanFolders[0]);
+
+    // Let user browse for the replacement file
+    juce::FileChooser chooser("Locate Plugin: " + pluginName,
+                              startDir,
+                              "*.vst3;*.dll");
+
+    if (! chooser.browseForFileToOpen())
+        return false;
+
+    auto replacementFile = chooser.getResult();
+
+    if (! replacementFile.existsAsFile())
+        return false;
+
+    // Confirm with user
+    const bool confirmed = juce::AlertWindow::showOkCancelBox(
+        juce::AlertWindow::QuestionIcon,
+        "Confirm Replacement Plugin",
+        "Use this file as the replacement for:\n"
+            + pluginName
+            + "\n\nSelected:\n"
+            + replacementFile.getFullPathName(),
+        "Use Replacement",
+        "Cancel");
+
+    if (! confirmed)
+        return false;
+
+    // Switch to the affected tab and load the replacement
+    auto previousSelected = core.getSelectedTabIndex();
+    core.setSelectedTabIndex(tabIndex);
+    core.getTabModel().selectTab(tabIndex);
+
+    clearHostedEditor();
+
+    if (! core.loadMainSlotPluginFromPath(replacementFile.getFullPathName()))
+    {
+        core.setSelectedTabIndex(previousSelected);
+        core.getTabModel().selectTab(previousSelected);
+        return false;
+    }
+
+    // Restore plugin state if available
+    if (pluginStateBase64.isNotEmpty())
+    {
+        juce::MemoryBlock state;
+        if (state.fromBase64Encoding(pluginStateBase64))
+            core.setMainSlotPluginState(state.getData(), static_cast<int>(state.getSize()));
+    }
+
+    core.refreshTabModel();
+    core.getTabModel().selectTab(core.getSelectedTabIndex());
+    refreshFromCore();
+    repaint();
+
+    return true;
+}
+
+void MainView::locateMissingPluginsNow()
+{
+    auto& core = processor.getCore();
+    const auto& missing = core.getMissingPlugins();
+
+    if (missing.isEmpty())
+    {
+        juce::AlertWindow::showMessageBoxAsync(
+            juce::AlertWindow::InfoIcon,
+            "Locate Missing Plugins",
+            "There are no unresolved missing plugins.");
+        return;
+    }
+
+    juce::StringArray restored;
+    juce::StringArray skipped;
+
+    // Work on a copy so we can modify the live list as we go
+    auto missingCopy = missing;
+
+    for (int i = 0; i < missingCopy.size(); ++i)
+    {
+        const auto& entry = missingCopy.getReference(i);
+
+        juce::String message;
+        message << "Missing plugin " << (i + 1) << " of " << missingCopy.size() << ":\n\n";
+        message << "Name: " << entry.pluginName << "\n";
+
+        if (entry.pluginManufacturer.isNotEmpty())
+            message << "Manufacturer: " << entry.pluginManufacturer << "\n";
+
+        if (entry.pluginFormatName.isNotEmpty())
+            message << "Format: " << entry.pluginFormatName << "\n";
+
+        message << "\nWould you like to locate this plugin now?";
+
+        const int action = juce::AlertWindow::showYesNoCancelBox(
+            juce::AlertWindow::WarningIcon,
+            "Repair Missing Plugin",
+            message,
+            "Locate",
+            "Skip",
+            "Cancel");
+
+        if (action == 0) // Cancel
+        {
+            skipped.add(entry.pluginName + " (cancelled)");
+            break;
+        }
+
+        if (action == 2) // Skip
+        {
+            skipped.add(entry.pluginName);
+            continue;
+        }
+
+        // Locate
+        if (tryRepairMissingPlugin(entry.tabIndex,
+                                   entry.pluginName,
+                                   entry.pluginStateBase64))
+        {
+            restored.add(entry.pluginName);
+            core.clearMissingPlugins(); // rebuilt on next load
+        }
+        else
+        {
+            skipped.add(entry.pluginName + " (not located)");
+        }
+    }
+
+    if (restored.isEmpty() && skipped.isEmpty())
+        return;
+
+    // Build summary
+    juce::String summary;
+
+    if (! restored.isEmpty())
+    {
+        summary += "Restored:\n";
+        for (auto& name : restored)
+            summary += "  - " + name + "\n";
+        summary += "\n";
+    }
+
+    if (! skipped.isEmpty())
+    {
+        summary += "Not repaired:\n";
+        for (auto& name : skipped)
+            summary += "  - " + name + "\n";
+        summary += "\n";
+    }
+
+    if (! restored.isEmpty())
+    {
+        if (appSettings.getAutoSaveAfterPluginRepair())
+        {
+            summary += "Preset was saved automatically.";
+            savePreset();
+
+            juce::AlertWindow::showMessageBoxAsync(
+                juce::AlertWindow::InfoIcon,
+                "Plugin Repair Complete",
+                summary.trimEnd());
+            return;
+        }
+
+        summary += "Save the preset now to store the repaired plugin paths.";
+
+        const bool saveNow = juce::AlertWindow::showOkCancelBox(
+            juce::AlertWindow::InfoIcon,
+            "Plugin Repair Complete",
+            summary.trimEnd(),
+            "Save Now",
+            "Later");
+
+        if (saveNow)
+            savePreset();
+
+        return;
+    }
+
+    juce::AlertWindow::showMessageBoxAsync(
+        juce::AlertWindow::InfoIcon,
+        "Plugin Repair Complete",
+        summary.trimEnd());
 }
 
 void MainView::showPointerControlSettingsDialog()

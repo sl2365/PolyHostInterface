@@ -12,6 +12,8 @@ public:
         juce::String name;
         PluginSlotType type = PluginSlotType::Empty;
         bool isBypassed = false;
+        bool isSoloed = false;
+        bool isMutedBySolo = false;
         bool canMoveUp = false;
         bool canMoveDown = false;
         int midiAssignmentCount = 0;
@@ -26,6 +28,7 @@ public:
     std::function<void(int tabIndex)> onMoveUp;
     std::function<void(int tabIndex)> onMoveDown;
     std::function<void(int tabIndex)> onToggleBypass;
+    std::function<void(int tabIndex)> onToggleSolo;
     std::function<void(int tabIndex)> onSelectTab;
     std::function<void(int tabIndex)> onCloseTab;
     std::function<void(int tabIndex, juce::Component* anchorComponent)> onShowMidiAssignments;
@@ -47,6 +50,7 @@ private:
         std::function<void(int tabIndex)> onMoveUp;
         std::function<void(int tabIndex)> onMoveDown;
         std::function<void(int tabIndex)> onToggleBypass;
+        std::function<void(int tabIndex)> onToggleSolo;
         std::function<void(int tabIndex)> onSelectTab;
         std::function<void(int tabIndex)> onCloseTab;
         std::function<void(int tabIndex, juce::Component* anchorComponent)> onShowMidiAssignments;
@@ -126,6 +130,13 @@ private:
             ButtonStyling::Glyphs::bypassCross(),
             ButtonStyling::bypassActiveBackground(),
             ButtonStyling::bypassInactiveBackground()
+        };
+        ButtonStyling::StatusIconButton soloButton
+        {
+            ButtonStyling::Glyphs::solo(),
+            ButtonStyling::Glyphs::solo(),
+            juce::Colour(0xFFB8860B),
+            ButtonStyling::defaultBackground()
         };
         ButtonStyling::SmallIconButton upButton { ButtonStyling::Glyphs::arrowUp() };
         ButtonStyling::SmallIconButton downButton { ButtonStyling::Glyphs::arrowDown() };

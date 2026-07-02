@@ -23,6 +23,11 @@ namespace ButtonStyling
         juce::String bypassCross()     { return juce::String::charToString((juce_wchar) 0xf140); }
         juce::String info()            { return juce::String::charToString((juce_wchar) 0xe946); }
         juce::String pointerControl()  { return juce::String::charToString((juce_wchar) 0xe7c9); }
+        juce::String solo()            { return "S"; }
+        juce::String clearSolo()       { return "CS"; }
+        juce::String mapLastTouched()  { return juce::String::charToString((juce_wchar) 0xf826); }
+        juce::String mappings()        { return juce::String::charToString((juce_wchar) 0xe8a6); }
+        juce::String replace()         { return juce::String::charToString((juce_wchar) 0xe895); }
     }
 
     namespace Tooltips
@@ -44,10 +49,14 @@ namespace ButtonStyling
         juce::String viewTab()          { return "View Tab"; }
         juce::String midiAssignments()  { return "MIDI Assignments"; }
         juce::String toggleBypass()     { return "Toggle Bypass"; }
+        juce::String toggleSolo()       { return "Solo this tab (mutes all others)"; }
         juce::String moveUp()           { return "Move Up"; }
         juce::String moveDown()         { return "Move Down"; }
         juce::String routingInfo()      { return "Routing Info"; }
         juce::String pointerControlEditMode() { return "Pointer Control Edit Mode"; }
+        juce::String clearSolos()       { return "Clear all solo states"; }
+        juce::String mapLastTouched()   { return "Map Last Touched Parameter to Next Free Macro"; }
+        juce::String macroMappings()    { return "Show Macro Mappings"; }
     }
 
     namespace Labels

@@ -5,7 +5,9 @@
 #include "SessionManager.h"
 #include "AppSettings.h"
 #include "RoutingView.h"
+#include "MacroMappingsView.h"
 #include "PointerControl.h"
+#include "MidiMonitorWindow.h"
 
 class PolyHostPluginProcessor;
 
@@ -28,13 +30,19 @@ public:
 
     void paint(juce::Graphics& g) override;
     void resized() override;
+    bool keyPressed(const juce::KeyPress& key) override;
+    void mouseDown(const juce::MouseEvent& event) override;
     void refreshHostedEditorForWindowReopen();
     void clearHostedEditorForWindowClose();
     void recoverCurrentTabAfterWindowReopen();
     void showTemporaryStatusMessage(const juce::String& text);
+    bool saveCurrentTabPointerMapToCurrentPresetFile();
+    void mouseWheelMove(const juce::MouseEvent& event,
+                        const juce::MouseWheelDetails& wheel) override;
 
 private:
-    class PointerEditOverlayWindow;
+    class PointerEditOverlayHost;
+    class StatusMetersComponent;
 
     class TabButton final : public juce::Button
     {
@@ -132,7 +140,9 @@ private:
 
             auto fill = juce::Colour(0xFF50545C);
 
-            if (isButtonDown)
+            if (! isEnabled())
+                fill = fill.darker(0.35f);
+            else if (isButtonDown)
                 fill = fill.brighter(0.15f);
             else if (isMouseOverButton)
                 fill = fill.brighter(0.08f);
@@ -154,9 +164,10 @@ private:
             g.setColour(fill.darker(0.35f));
             g.strokePath(tabShape, juce::PathStrokeType(1.0f));
 
-            g.setColour(juce::Colours::white);
+            g.setColour(isEnabled() ? juce::Colours::white
+                                    : juce::Colours::lightgrey.withAlpha(0.45f));
             g.setFont(juce::Font(juce::FontOptions(14.0f, juce::Font::bold)));
-            g.drawFittedText("+",
+            g.drawFittedText(getButtonText(),
                              getLocalBounds(),
                              juce::Justification::centred,
                              1);
@@ -205,10 +216,13 @@ private:
             routingToggle = 10001,
             spacer = 10002,
             pointerControlEdit = 10003,
-            savePreset = 10004,
-            savePresetAs = 10005,
-            revertPreset = 10006,
-            midiPanic = 10007
+            clearSolos = 10004,
+            savePreset = 10005,
+            savePresetAs = 10006,
+            revertPreset = 10007,
+            midiPanic = 10008,
+            mapLastTouched = 10009,
+            showMacroMappings = 10010,
         };
 
         void getAllToolbarItemIds(juce::Array<int>& ids) override
@@ -216,6 +230,11 @@ private:
             ids.add(routingToggle);
             ids.add(spacer);
             ids.add(pointerControlEdit);
+            ids.add(spacer);
+            ids.add(mapLastTouched);
+            ids.add(showMacroMappings);
+            ids.add(spacer);
+            ids.add(clearSolos);
             ids.add(spacer);
             ids.add(savePreset);
             ids.add(savePresetAs);
@@ -248,7 +267,7 @@ private:
             {
                 auto* button = new ButtonStyling::ToolbarIconButton(
                     itemId,
-                    "Pointer Control Edit Mode",
+                    ButtonStyling::Tooltips::pointerControlEditMode(),
                     ButtonStyling::Glyphs::pointerControl(),
                     ButtonStyling::ToolbarIconButton::ContentType::IconGlyph,
                     ButtonStyling::defaultButtonWidth(),
@@ -267,6 +286,50 @@ private:
                 return button;
             }
 
+            if (itemId == mapLastTouched)
+            {
+                auto* button = new ButtonStyling::ToolbarIconButton(
+                    itemId,
+                    ButtonStyling::Tooltips::mapLastTouched(),
+                    ButtonStyling::Glyphs::mapLastTouched(),
+                    ButtonStyling::ToolbarIconButton::ContentType::IconGlyph,
+                    ButtonStyling::defaultButtonWidth());
+
+                button->onClick = [this] { owner.mapLastTouchedParameterToMacro(); };
+                return button;
+            }
+
+            if (itemId == showMacroMappings)
+            {
+                auto* button = new ButtonStyling::ToolbarIconButton(
+                    itemId,
+                    ButtonStyling::Tooltips::macroMappings(),
+                    ButtonStyling::Glyphs::mappings(),
+                    ButtonStyling::ToolbarIconButton::ContentType::IconGlyph,
+                    ButtonStyling::defaultButtonWidth());
+
+                button->onClick = [this] { owner.showMacroMappingsView(); };
+                return button;
+            }
+
+            if (itemId == clearSolos)
+            {
+                auto* button = new ButtonStyling::ToolbarIconButton(
+                    itemId,
+                    ButtonStyling::Tooltips::clearSolos(),
+                    ButtonStyling::Glyphs::clearSolo(),
+                    ButtonStyling::ToolbarIconButton::ContentType::TextLabel,
+                    ButtonStyling::defaultButtonWidth(),
+                    [this] { return ! owner.soloedTabIndices.isEmpty(); });
+
+                button->onClick = [this]
+                {
+                    owner.clearAllSolos();
+                };
+
+                return button;
+            }
+
             if (itemId == savePreset)
             {
                 auto* button = new ButtonStyling::ToolbarIconButton(
@@ -276,6 +339,7 @@ private:
                     ButtonStyling::ToolbarIconButton::ContentType::IconGlyph,
                     ButtonStyling::defaultButtonWidth());
 
+                owner.savePresetToolbarButton = button;
                 button->onClick = [this] { owner.savePreset(); };
                 return button;
             }
@@ -289,6 +353,7 @@ private:
                     ButtonStyling::ToolbarIconButton::ContentType::IconGlyph,
                     ButtonStyling::defaultButtonWidth());
 
+                owner.savePresetAsToolbarButton = button;
                 button->onClick = [this] { owner.savePresetAs(); };
                 return button;
             }
@@ -362,6 +427,9 @@ private:
         commandSavePreset = 2004,
         commandSavePresetAs = 2005,
         commandLoadPreset = 2006,
+        commandRefreshMidiDevices = 2007,
+        commandMidiPanic = 2008,
+        commandMidiMonitor = 2009,
         commandRecentPresetBase = 2100,
         commandDeleteCurrentPreset = 2200,
         commandOpenPresetsFolder = 2201,
@@ -377,7 +445,13 @@ private:
         commandEnableDebugLogging = 2500,
         commandEnableAdvancedDebugLogging = 2501,
         commandClearDebugLogOnStartup = 2502,
-        commandClearDebugLogNow = 2503
+        commandClearDebugLogNow = 2503,
+
+        commandAutoSaveAfterPluginRepair = 2600,
+        commandAddPluginScanFolder = 2601,
+        commandShowPluginScanFolders = 2602,
+        commandClearPluginScanFolders = 2603,
+        commandLocateMissingPluginsNow = 2604
     };
 
     juce::StringArray getMenuBarNames() override;
@@ -397,6 +471,7 @@ private:
     void rebuildPresetDropdown();
     void rebuildTabButtons();
     void rebuildRoutingView();
+    void updateTabScrollButtonState();
     void selectTab(int tabIndex);
     void clearTab(int tabIndex);
     void closeTab(int tabIndex);
@@ -405,6 +480,13 @@ private:
     void showMidiAssignmentsPopup(int tabIndex, juce::Component* anchorComponent);
     void dismissMidiAssignmentsPopup();
     void toggleRoutingView();
+    void handleToggleSolo(int tabIndex);
+    void clearAllSolos();
+    void mapLastTouchedParameterToMacro();
+    void showMacroMappingsView();
+    void updateSaveButtonColours();
+    void syncManualBypassStatesFromCore();
+    void applyEffectiveBypassStates();
 
     void processPendingPointerMidi();
     void refreshPointerControlTarget();
@@ -435,6 +517,14 @@ private:
     void newTab();
     void closeCurrentTab();
 
+    void addPluginScanFolder();
+    void showPluginScanFolders();
+    void clearPluginScanFolders();
+    void locateMissingPluginsNow();
+    bool tryRepairMissingPlugin(int tabIndex,
+                                const juce::String& pluginName,
+                                const juce::String& pluginStateBase64);
+
     PolyHostPluginProcessor& processor;
 
     AppSettings appSettings;
@@ -444,11 +534,19 @@ private:
     UnsavedChangesHelper unsavedChangesHelper;
     ToolbarFactory toolbarFactory;
 
+    std::unique_ptr<StatusMetersComponent> statusMeters;
     std::unique_ptr<juce::MenuBarComponent> menuBar;
+    juce::TooltipWindow tooltipWindow { this };
     juce::Toolbar toolbar;
+    ButtonStyling::ToolbarIconButton* savePresetToolbarButton = nullptr;
+    ButtonStyling::ToolbarIconButton* savePresetAsToolbarButton = nullptr;
 
     juce::ComboBox presetDropdown;
     juce::OwnedArray<TabButton> tabButtons;
+    juce::Component tabButtonsContainer;
+    juce::Viewport tabButtonsViewport;
+    AddTabButton scrollTabsLeftButton;
+    AddTabButton scrollTabsRightButton;
     AddTabButton addTabButton;
     juce::TextButton emptyLoadPluginButton;
 
@@ -456,10 +554,15 @@ private:
     std::unique_ptr<juce::AudioProcessorEditor> hostedEditor;
     juce::Label contentPlaceholder;
     RoutingView routingView;
+    MacroMappingsView macroMappingsView;
     juce::Component::SafePointer<juce::CallOutBox> midiAssignmentsCallout;
     juce::Component::SafePointer<juce::Component> midiAssignmentsAnchor;
     int midiAssignmentsTabIndex = -1;
+    std::unique_ptr<VstMidiMonitorWindow> midiMonitorWindow;
     bool showingRoutingView = false;
+    bool showingMacroMappingsView = false;
+    juce::Array<int> soloedTabIndices;
+    juce::Array<bool> manualBypassStates;
 
     PointerControl pointerControl;
     juce::Rectangle<int> lastPointerTargetBounds;
@@ -473,7 +576,7 @@ private:
     juce::uint32 temporaryStatusExpiryMs = 0;
 
     bool pointerControlEditModeEnabled = false;
-    std::unique_ptr<PointerEditOverlayWindow> pointerEditOverlayWindow;
+    std::unique_ptr<PointerEditOverlayHost> pointerEditOverlayHost;
 
     bool handleDroppedPluginFile(const juce::File& file, int targetTabIndex);
     bool loadDroppedPluginInNewTab(const juce::File& file);
@@ -481,4 +584,6 @@ private:
 
     bool lastKnownDirtyState = false;
     bool lastKnownShowingState = true;
+    bool pendingMissingPluginPrompt = false;
+    int pendingMissingPluginPromptDelayTicks = 0;
 };

@@ -33,6 +33,7 @@ RoutingView::ModuleRow::ModuleRow()
 
     addAndMakeVisible(midiButton);
     addAndMakeVisible(bypassButton);
+    addAndMakeVisible(soloButton);
     addAndMakeVisible(upButton);
     addAndMakeVisible(downButton);
     addAndMakeVisible(infoButton);
@@ -46,6 +47,7 @@ RoutingView::ModuleRow::ModuleRow()
     closeButton.setTooltip(ButtonStyling::Tooltips::closeTab());
     midiButton.setTooltip(ButtonStyling::Tooltips::midiAssignments());
     bypassButton.setTooltip(ButtonStyling::Tooltips::toggleBypass());
+    soloButton.setTooltip(ButtonStyling::Tooltips::toggleSolo());
     upButton.setTooltip(ButtonStyling::Tooltips::moveUp());
     downButton.setTooltip(ButtonStyling::Tooltips::moveDown());
     infoButton.setTooltip(ButtonStyling::Tooltips::routingInfo());
@@ -60,6 +62,12 @@ RoutingView::ModuleRow::ModuleRow()
     {
         if (onToggleBypass)
             onToggleBypass(entry.tabIndex);
+    };
+
+    soloButton.onClick = [this]
+    {
+        if (onToggleSolo)
+            onToggleSolo(entry.tabIndex);
     };
 
     upButton.onClick = [this]
@@ -90,9 +98,21 @@ void RoutingView::ModuleRow::setModule(const ModuleEntry& newEntry)
     entry = newEntry;
 
     nameLabel.setText(entry.name, juce::dontSendNotification);
+
+    const bool isInactive = entry.isMutedBySolo || (entry.isBypassed && ! entry.isSoloed);
+
+    nameLabel.setColour(juce::Label::textColourId,
+                        isInactive ? juce::Colours::lightgrey.withAlpha(0.65f)
+                                   : juce::Colours::white);
     adjustMethodEditor.setMethodOverride(entry.pointerAdjustMethodOverride);
-    infoButton.setTooltip(entry.routingTooltip.isNotEmpty() ? entry.routingTooltip
-                                                            : ButtonStyling::Tooltips::routingInfo());
+    juce::String infoTooltip = entry.routingTooltip.isNotEmpty()
+                                   ? entry.routingTooltip
+                                   : ButtonStyling::Tooltips::routingInfo();
+
+    if (entry.isMutedBySolo)
+        infoTooltip << "\n\nMuted by Solo";
+
+    infoButton.setTooltip(infoTooltip);
     infoButton.setVisible(entry.routingTooltip.isNotEmpty());
     infoButton.setEnabled(entry.routingTooltip.isNotEmpty());
 
@@ -118,6 +138,7 @@ void RoutingView::ModuleRow::setModule(const ModuleEntry& newEntry)
         midiButton.setButtonText(ButtonStyling::Labels::midi());
 
     bypassButton.setVisualState(! entry.isBypassed);
+    soloButton.setVisualState(entry.isSoloed);
     upButton.setEnabled(entry.canMoveUp);
     downButton.setEnabled(entry.canMoveDown);
 
@@ -128,10 +149,21 @@ void RoutingView::ModuleRow::paint(juce::Graphics& g)
 {
     auto area = getLocalBounds().toFloat();
 
-    g.setColour(juce::Colour(0xFF243B55));
+    auto fill = juce::Colour(0xFF243B55);
+    auto outline = juce::Colour(0xFF3A506B);
+
+    const bool isInactive = entry.isMutedBySolo || (entry.isBypassed && ! entry.isSoloed);
+
+    if (isInactive)
+    {
+        fill = fill.darker(0.35f);
+        outline = outline.withAlpha(0.55f);
+    }
+
+    g.setColour(fill);
     g.fillRoundedRectangle(area.reduced(1.0f), 8.0f);
 
-    g.setColour(juce::Colour(0xFF3A506B));
+    g.setColour(outline);
     g.drawRoundedRectangle(area.reduced(1.0f), 8.0f, 1.2f);
 }
 
@@ -161,6 +193,11 @@ void RoutingView::ModuleRow::resized()
     auto upBounds = area.removeFromRight(ButtonStyling::defaultButtonWidth());
     upBounds = upBounds.withSizeKeepingCentre(upBounds.getWidth(), buttonHeight);
     upButton.setBounds(upBounds);
+    area.removeFromRight(8);
+
+    auto soloBounds = area.removeFromRight(ButtonStyling::defaultButtonWidth());
+    soloBounds = soloBounds.withSizeKeepingCentre(soloBounds.getWidth(), ButtonStyling::defaultButtonHeight());
+    soloButton.setBounds(soloBounds);
     area.removeFromRight(8);
 
     auto bypassBounds = area.removeFromRight(ButtonStyling::defaultButtonWidth());
@@ -257,6 +294,12 @@ void RoutingView::rebuildModuleRows()
         {
             if (onToggleBypass)
                 onToggleBypass(tabIndex);
+        };
+
+        row->onToggleSolo = [this](int tabIndex)
+        {
+            if (onToggleSolo)
+                onToggleSolo(tabIndex);
         };
 
         row->onSelectTab = [this](int tabIndex)

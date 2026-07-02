@@ -20,15 +20,22 @@ void PointerControl::setTargetScreenBounds(juce::Rectangle<int> bounds)
     {
         if (!hadTarget)
         {
-            currentX = targetScreenBounds.getCentreX();
-            currentY = targetScreenBounds.getCentreY();
+            syncToPhysicalCursorPosition();
+
+            currentX = juce::jlimit(targetScreenBounds.getX(),
+                                    targetScreenBounds.getRight(),
+                                    currentX);
+
+            currentY = juce::jlimit(targetScreenBounds.getY(),
+                                    targetScreenBounds.getBottom(),
+                                    currentY);
+
             virtualX = (float) currentX;
             virtualY = (float) currentY;
             hasLockedLaneX = true;
             hasLockedLaneY = true;
             lockedLaneX = (float) currentX;
             lockedLaneY = (float) currentY;
-            moveCursorToCurrentPosition();
         }
         else
         {

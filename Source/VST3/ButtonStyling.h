@@ -31,6 +31,11 @@ namespace ButtonStyling
         juce::String bypassCross();
         juce::String info();
         juce::String pointerControl();
+        juce::String solo();
+        juce::String clearSolo();
+        juce::String mapLastTouched();
+        juce::String mappings();
+        juce::String replace();
     }
 
     namespace Tooltips
@@ -52,10 +57,14 @@ namespace ButtonStyling
         juce::String viewTab();
         juce::String midiAssignments();
         juce::String toggleBypass();
+        juce::String toggleSolo();
         juce::String moveUp();
         juce::String moveDown();
         juce::String routingInfo();
         juce::String pointerControlEditMode();
+        juce::String clearSolos();
+        juce::String mapLastTouched();
+        juce::String macroMappings();
     }
 
     namespace Labels
@@ -140,6 +149,12 @@ namespace ButtonStyling
                           std::function<juce::Colour()> baseColourProviderIn = {});
 
         bool isVisuallyActive() const;
+
+        void setBackgroundColour(juce::Colour newColour)
+        {
+            baseColour = newColour;
+            repaint();
+        }
 
         bool getToolbarItemSizes(int toolbarDepth, bool isVertical,
                                  int& preferredSizeOut, int& minSize, int& maxSize) override;

@@ -15,16 +15,42 @@ namespace
 
         return block.toBase64Encoding();
     }
+
+    juce::String sanitisePointerMapToken(juce::String text)
+    {
+        text = text.trim();
+
+        if (text.isEmpty())
+            text = "Unknown";
+
+        text = text.replaceCharacter(':', '_')
+                   .replaceCharacter('/', '_')
+                   .replaceCharacter('\\', '_')
+                   .replaceCharacter('*', '_')
+                   .replaceCharacter('?', '_')
+                   .replaceCharacter('"', '_')
+                   .replaceCharacter('<', '_')
+                   .replaceCharacter('>', '_')
+                   .replaceCharacter('|', '_');
+
+        return text;
+    }
 }
 
 PluginCore::PluginCore()
 {
+    macroCurrentValues.fill(0.0f);
+
     sessionDocument.clear();
     statusText = "Ready";
     refreshAvailableMidiInputs();
 
    #if JUCE_PLUGINHOST_VST3
     formatManager.addFormat(std::make_unique<juce::VST3PluginFormat>());
+   #endif
+
+   #if JUCE_PLUGINHOST_VST
+    formatManager.addFormat(std::make_unique<juce::VSTPluginFormat>());
    #endif
 
     addTab("Empty");
@@ -67,19 +93,16 @@ void PluginCore::processBlock(juce::AudioBuffer<float>& buffer,
                               juce::MidiBuffer& midiMessages)
 {
     if (hostedTabs.isEmpty())
-    {
-        buffer.clear();
         return;
-    }
 
     const int numSamples = buffer.getNumSamples();
     const int hostChannels = buffer.getNumChannels();
 
     if (numSamples <= 0 || hostChannels <= 0)
-    {
-        buffer.clear();
         return;
-    }
+
+    juce::AudioBuffer<float> hostInput(hostChannels, numSamples);
+    hostInput.makeCopyOf(buffer, true);
 
     juce::AudioBuffer<float> finalOutput(hostChannels, numSamples);
     finalOutput.clear();
@@ -110,6 +133,25 @@ void PluginCore::processBlock(juce::AudioBuffer<float>& buffer,
 
         return -1;
     };
+
+    const int firstActiveFxTab = findNextActiveFxTab(-1);
+
+    if (firstActiveFxTab >= 0)
+    {
+        const int firstFxBufferIndex = getFxBufferIndexForTab(firstActiveFxTab);
+
+        if (juce::isPositiveAndBelow(firstFxBufferIndex, fxInputBuffers.size()))
+        {
+            auto& firstFxBuffer = fxInputBuffers.getReference(firstFxBufferIndex);
+
+            for (int ch = 0; ch < hostChannels; ++ch)
+                firstFxBuffer.addFrom(ch, 0, hostInput, ch, 0, numSamples);
+        }
+    }
+    else
+    {
+        finalOutput.makeCopyOf(hostInput, true);
+    }
 
     for (int i = 0; i < hostedTabs.size(); ++i)
     {
@@ -207,6 +249,121 @@ void PluginCore::processBlock(juce::AudioBuffer<float>& buffer,
     }
 
     buffer.makeCopyOf(finalOutput, true);
+    updateMeterLevels(hostInput, finalOutput);
+}
+
+float PluginCore::computePeakLevel(const float* samples, int numSamples)
+{
+    if (samples == nullptr || numSamples <= 0)
+        return 0.0f;
+
+    float peak = 0.0f;
+
+    for (int i = 0; i < numSamples; ++i)
+        peak = juce::jmax(peak, std::abs(samples[i]));
+
+    return peak;
+}
+
+float PluginCore::smoothMeterLevel(float current, float target)
+{
+    constexpr float attackCoeff = 0.6f;
+    constexpr float releaseCoeff = 0.08f;
+
+    const float coeff = target > current ? attackCoeff : releaseCoeff;
+    return current + (target - current) * coeff;
+}
+
+juce::File PluginCore::getPointerMapsDirectory()
+{
+    auto dir = AppSettings::getAppDirectory().getChildFile("PointerMaps");
+    dir.createDirectory();
+    return dir;
+}
+
+juce::String PluginCore::makeSafePointerMapFileName(const juce::String& pluginName,
+                                                    const juce::String& manufacturer)
+{
+    auto safePlugin = sanitisePointerMapToken(pluginName);
+    auto safeManufacturer = sanitisePointerMapToken(manufacturer);
+
+    return safeManufacturer + " - " + safePlugin;
+}
+
+juce::File PluginCore::getGlobalPointerMapFileForTab(int tabIndex) const
+{
+    if (! juce::isPositiveAndBelow(tabIndex, hostedTabs.size()))
+        return {};
+
+    const auto* hostedTab = hostedTabs[tabIndex];
+
+    if (hostedTab == nullptr || hostedTab->pluginInstance == nullptr)
+        return {};
+
+    juce::PluginDescription description;
+    hostedTab->pluginInstance->fillInPluginDescription(description);
+
+    return getPointerMapsDirectory()
+        .getChildFile(makeSafePointerMapFileName(description.name,
+                                                 description.manufacturerName))
+        .withFileExtension(".xml");
+}
+
+void PluginCore::updateMeterLevels(const juce::AudioBuffer<float>& inputBuffer,
+                                   const juce::AudioBuffer<float>& outputBuffer)
+{
+    const int inputSamples = inputBuffer.getNumSamples();
+    const int outputSamples = outputBuffer.getNumSamples();
+
+    float inL = 0.0f;
+    float inR = 0.0f;
+    float outL = 0.0f;
+    float outR = 0.0f;
+
+    if (inputBuffer.getNumChannels() > 0)
+        inL = computePeakLevel(inputBuffer.getReadPointer(0), inputSamples);
+
+    if (inputBuffer.getNumChannels() > 1)
+        inR = computePeakLevel(inputBuffer.getReadPointer(1), inputSamples);
+    else
+        inR = inL;
+
+    if (outputBuffer.getNumChannels() > 0)
+        outL = computePeakLevel(outputBuffer.getReadPointer(0), outputSamples);
+
+    if (outputBuffer.getNumChannels() > 1)
+        outR = computePeakLevel(outputBuffer.getReadPointer(1), outputSamples);
+    else
+        outR = outL;
+
+    inputMeterLevelL.store(smoothMeterLevel(inputMeterLevelL.load(std::memory_order_relaxed), inL),
+                           std::memory_order_relaxed);
+    inputMeterLevelR.store(smoothMeterLevel(inputMeterLevelR.load(std::memory_order_relaxed), inR),
+                           std::memory_order_relaxed);
+    outputMeterLevelL.store(smoothMeterLevel(outputMeterLevelL.load(std::memory_order_relaxed), outL),
+                            std::memory_order_relaxed);
+    outputMeterLevelR.store(smoothMeterLevel(outputMeterLevelR.load(std::memory_order_relaxed), outR),
+                            std::memory_order_relaxed);
+}
+
+float PluginCore::getInputMeterLevelL() const
+{
+    return inputMeterLevelL.load(std::memory_order_relaxed);
+}
+
+float PluginCore::getInputMeterLevelR() const
+{
+    return inputMeterLevelR.load(std::memory_order_relaxed);
+}
+
+float PluginCore::getOutputMeterLevelL() const
+{
+    return outputMeterLevelL.load(std::memory_order_relaxed);
+}
+
+float PluginCore::getOutputMeterLevelR() const
+{
+    return outputMeterLevelR.load(std::memory_order_relaxed);
 }
 
 const juce::String PluginCore::getSessionName() const
@@ -282,7 +439,10 @@ bool PluginCore::addTab(const juce::String& tabName)
     tab->tabName = tabName.isNotEmpty() ? tabName
                                         : "Empty";
     tab->midiAssignedDeviceIdentifiers.addIfNotAlreadyThere("MIDI Ch: All");
+    tab->hasCustomPointerMap = false;
+    tab->preferGlobalPointerMap = false;
     tab->pointerLaneTolerance = 30.0f;
+    tab->pointerAdjustSensitivity = 1;
 
     hostedTabs.add(tab);
     selectedTabIndex = hostedTabs.size() - 1;
@@ -341,8 +501,12 @@ bool PluginCore::clearTab(int tabIndex)
     selectedTab->tabName = "Empty";
     selectedTab->bypassed = false;
     selectedTab->pointerAdjustMethodOverride = 0;
+    selectedTab->hasCustomPointerMap = false;
+    selectedTab->preferGlobalPointerMap = false;
     selectedTab->pointerJumpPoints.clear();
+    selectedTab->presetPointerJumpPoints.clear();
     selectedTab->pointerLaneTolerance = 30.0f;
+    selectedTab->pointerAdjustSensitivity = 1;
     selectedTab->midiAssignedDeviceIdentifiers.clear();
     selectedTab->midiAssignedDeviceIdentifiers.addIfNotAlreadyThere("MIDI Ch: All");
 
@@ -389,6 +553,11 @@ bool PluginCore::reloadTabPlugin(int tabIndex)
     const auto tabName = selectedTab->tabName;
     const auto bypassed = selectedTab->bypassed;
     const auto pointerAdjustMethodOverride = selectedTab->pointerAdjustMethodOverride;
+    const auto pointerAdjustSensitivity = selectedTab->pointerAdjustSensitivity;
+    const auto hasCustomPointerMap = selectedTab->hasCustomPointerMap;
+    const auto preferGlobalPointerMap = selectedTab->preferGlobalPointerMap;
+    const auto pointerJumpPoints = selectedTab->pointerJumpPoints;
+    const auto presetPointerJumpPoints = selectedTab->presetPointerJumpPoints;
     const auto midiAssignments = selectedTab->midiAssignedDeviceIdentifiers;
 
     unloadMainSlotPlugin();
@@ -398,6 +567,11 @@ bool PluginCore::reloadTabPlugin(int tabIndex)
         selectedTab->tabName = tabName;
         selectedTab->bypassed = bypassed;
         selectedTab->pointerAdjustMethodOverride = pointerAdjustMethodOverride;
+        selectedTab->pointerAdjustSensitivity = pointerAdjustSensitivity;
+        selectedTab->hasCustomPointerMap = hasCustomPointerMap;
+        selectedTab->preferGlobalPointerMap = preferGlobalPointerMap;
+        selectedTab->pointerJumpPoints = pointerJumpPoints;
+        selectedTab->presetPointerJumpPoints = presetPointerJumpPoints;
         selectedTab->midiAssignedDeviceIdentifiers = midiAssignments;
 
         selectedTabIndex = previousSelected;
@@ -412,6 +586,11 @@ bool PluginCore::reloadTabPlugin(int tabIndex)
     selectedTab->tabName = tabName;
     selectedTab->bypassed = bypassed;
     selectedTab->pointerAdjustMethodOverride = pointerAdjustMethodOverride;
+    selectedTab->pointerAdjustSensitivity = pointerAdjustSensitivity;
+    selectedTab->hasCustomPointerMap = hasCustomPointerMap;
+    selectedTab->preferGlobalPointerMap = preferGlobalPointerMap;
+    selectedTab->pointerJumpPoints = pointerJumpPoints;
+    selectedTab->presetPointerJumpPoints = presetPointerJumpPoints;
     selectedTab->midiAssignedDeviceIdentifiers = midiAssignments;
 
     selectedTabIndex = previousSelected;
@@ -536,6 +715,173 @@ void PluginCore::setTabPointerLaneTolerance(int tabIndex, float tolerance)
         return;
 
     hostedTabs[tabIndex]->pointerLaneTolerance = juce::jlimit(1.0f, 128.0f, tolerance);
+    markDirty();
+}
+
+int PluginCore::getTabPointerAdjustSensitivity(int tabIndex) const
+{
+    if (! juce::isPositiveAndBelow(tabIndex, hostedTabs.size()))
+        return 1;
+
+    return hostedTabs[tabIndex]->pointerAdjustSensitivity;
+}
+
+bool PluginCore::tabHasCustomPointerMap(int tabIndex) const
+{
+    if (! juce::isPositiveAndBelow(tabIndex, hostedTabs.size()))
+        return false;
+
+    return hostedTabs[tabIndex]->hasCustomPointerMap;
+}
+
+bool PluginCore::tabHasGlobalPointerMap(int tabIndex) const
+{
+    auto file = getGlobalPointerMapFileForTab(tabIndex);
+    return file.existsAsFile();
+}
+
+bool PluginCore::getTabPreferGlobalPointerMap(int tabIndex) const
+{
+    if (! juce::isPositiveAndBelow(tabIndex, hostedTabs.size()))
+        return false;
+
+    return hostedTabs[tabIndex]->preferGlobalPointerMap;
+}
+
+void PluginCore::setTabPreferGlobalPointerMap(int tabIndex, bool shouldPreferGlobal)
+{
+    if (! juce::isPositiveAndBelow(tabIndex, hostedTabs.size()))
+        return;
+
+    auto* tab = hostedTabs[tabIndex];
+    tab->preferGlobalPointerMap = shouldPreferGlobal;
+
+    tab->pointerJumpPoints.clear();
+
+    if (shouldPreferGlobal)
+    {
+        loadGlobalPointerMapForTab(tabIndex);
+    }
+    else if (tab->hasCustomPointerMap)
+    {
+        tab->pointerJumpPoints = tab->presetPointerJumpPoints;
+    }
+    else
+    {
+        loadGlobalPointerMapForTab(tabIndex);
+    }
+
+    markDirty();
+}
+
+bool PluginCore::loadGlobalPointerMapForTab(int tabIndex)
+{
+    if (! juce::isPositiveAndBelow(tabIndex, hostedTabs.size()))
+        return false;
+
+    auto file = getGlobalPointerMapFileForTab(tabIndex);
+
+    if (! file.existsAsFile())
+        return false;
+
+    std::unique_ptr<juce::XmlElement> xml(juce::XmlDocument::parse(file));
+
+    if (xml == nullptr || ! xml->hasTagName("PointerMap"))
+        return false;
+
+    juce::Array<SessionTabData::PointerJumpPoint> points;
+
+    for (auto* pointXml : xml->getChildIterator())
+    {
+        if (! pointXml->hasTagName("Point"))
+            continue;
+
+        SessionTabData::PointerJumpPoint point;
+        point.x = (float) pointXml->getDoubleAttribute("x", 0.0);
+        point.y = (float) pointXml->getDoubleAttribute("y", 0.0);
+        points.add(point);
+    }
+
+    hostedTabs[tabIndex]->pointerJumpPoints = points;
+    return true;
+}
+
+bool PluginCore::saveCurrentPointerMapToGlobalFile(int tabIndex)
+{
+    if (! juce::isPositiveAndBelow(tabIndex, hostedTabs.size()))
+        return false;
+
+    auto file = getGlobalPointerMapFileForTab(tabIndex);
+
+    if (file == juce::File())
+        return false;
+
+    juce::XmlElement xml("PointerMap");
+
+    for (auto& point : hostedTabs[tabIndex]->pointerJumpPoints)
+    {
+        auto* pointXml = xml.createNewChildElement("Point");
+        pointXml->setAttribute("x", point.x);
+        pointXml->setAttribute("y", point.y);
+    }
+
+    return xml.writeTo(file, {});
+}
+
+juce::String PluginCore::getActivePointerMapSourceText(int tabIndex) const
+{
+    if (! juce::isPositiveAndBelow(tabIndex, hostedTabs.size()))
+        return "None";
+
+    const auto* tab = hostedTabs[tabIndex];
+
+    if (tab->preferGlobalPointerMap)
+        return tabHasGlobalPointerMap(tabIndex) ? "Global" : "None";
+
+    if (tab->hasCustomPointerMap)
+        return "Preset";
+
+    if (tabHasGlobalPointerMap(tabIndex))
+        return "Global";
+
+    return "None";
+}
+
+void PluginCore::saveCurrentPointerMapToPreset(int tabIndex)
+{
+    if (! juce::isPositiveAndBelow(tabIndex, hostedTabs.size()))
+        return;
+
+    auto* tab = hostedTabs[tabIndex];
+    tab->hasCustomPointerMap = true;
+    tab->presetPointerJumpPoints = tab->pointerJumpPoints;
+
+    if (! tab->preferGlobalPointerMap)
+        tab->pointerJumpPoints = tab->presetPointerJumpPoints;
+
+    markDirty();
+}
+
+void PluginCore::clearCurrentPresetPointerMap(int tabIndex)
+{
+    if (! juce::isPositiveAndBelow(tabIndex, hostedTabs.size()))
+        return;
+
+    auto* tab = hostedTabs[tabIndex];
+    tab->hasCustomPointerMap = false;
+    tab->presetPointerJumpPoints.clear();
+    tab->pointerJumpPoints.clear();
+
+    loadGlobalPointerMapForTab(tabIndex);
+    markDirty();
+}
+
+void PluginCore::setTabPointerAdjustSensitivity(int tabIndex, int sensitivity)
+{
+    if (! juce::isPositiveAndBelow(tabIndex, hostedTabs.size()))
+        return;
+
+    hostedTabs[tabIndex]->pointerAdjustSensitivity = juce::jlimit(1, 20, sensitivity);
     markDirty();
 }
 
@@ -782,6 +1128,93 @@ const PluginCore::HostedTabState* PluginCore::getSelectedHostedTab() const
     return hostedTabs[selectedTabIndex];
 }
 
+int PluginCore::findHostedTabIndexForProcessor(const juce::AudioProcessor* processor) const
+{
+    if (processor == nullptr)
+        return -1;
+
+    for (int i = 0; i < hostedTabs.size(); ++i)
+    {
+        const auto* tab = hostedTabs[i];
+
+        if (tab != nullptr && tab->pluginInstance.get() == processor)
+            return i;
+    }
+
+    return -1;
+}
+
+juce::String PluginCore::getHostedPluginDisplayName(int tabIndex) const
+{
+    if (! juce::isPositiveAndBelow(tabIndex, hostedTabs.size()))
+        return {};
+
+    const auto* tab = hostedTabs[tabIndex];
+
+    if (tab == nullptr)
+        return {};
+
+    if (tab->pluginInstance != nullptr)
+    {
+        juce::PluginDescription description;
+        tab->pluginInstance->fillInPluginDescription(description);
+
+        if (description.name.isNotEmpty())
+            return description.name;
+    }
+
+    if (tab->slot != nullptr)
+    {
+        auto loadedName = tab->slot->getLoadedPluginName().trim();
+
+        if (loadedName.isNotEmpty())
+            return loadedName;
+    }
+
+    return tab->tabName;
+}
+
+int PluginCore::findMacroMappingIndexByMacroSlot(int macroIndex) const
+{
+    for (int i = 0; i < macroMappings.size(); ++i)
+    {
+        if (macroMappings.getReference(i).macroIndex == macroIndex)
+            return i;
+    }
+
+    return -1;
+}
+
+void PluginCore::captureLastTouchedParameter(juce::AudioProcessor* processor,
+                                             int parameterIndex,
+                                             float newValue)
+{
+    const int tabIndex = findHostedTabIndexForProcessor(processor);
+
+    if (! juce::isPositiveAndBelow(tabIndex, hostedTabs.size()))
+        return;
+
+    auto* tab = hostedTabs[tabIndex];
+
+    if (tab == nullptr || tab->pluginInstance == nullptr)
+        return;
+
+    if (! juce::isPositiveAndBelow(parameterIndex, tab->pluginInstance->getParameters().size()))
+        return;
+
+    auto* parameter = tab->pluginInstance->getParameters()[parameterIndex];
+
+    if (parameter == nullptr)
+        return;
+
+    lastTouchedParameter.tabIndex = tabIndex;
+    lastTouchedParameter.pluginName = getHostedPluginDisplayName(tabIndex);
+    lastTouchedParameter.parameterIndex = parameterIndex;
+    lastTouchedParameter.parameterName = parameter->getName(128);
+    lastTouchedParameter.lastValue = newValue;
+    lastTouchedParameter.valid = true;
+}
+
 bool PluginCore::loadMainSlotPluginFromPath(const juce::String& pluginPath)
 {
     auto* selectedTab = getSelectedHostedTab();
@@ -802,16 +1235,49 @@ bool PluginCore::loadMainSlotPluginFromPath(const juce::String& pluginPath)
         return false;
     }
 
+    // Determine which format to try based on file extension
+    const bool isVST3 = pluginFile.hasFileExtension(".vst3");
+    const bool isVST2 = pluginFile.hasFileExtension(".dll");
+
+    if (! isVST3 && ! isVST2)
+    {
+        selectedTab->slot->clearPlugin();
+        selectedTab->slot->setPluginPath(pluginPath);
+        selectedTab->slot->setLastError("Unsupported plugin format");
+        statusText = "Plugin load failed";
+        return false;
+    }
+
    #if ! JUCE_PLUGINHOST_VST3
-    selectedTab->slot->clearPlugin();
-    selectedTab->slot->setPluginPath(pluginPath);
-    selectedTab->slot->setLastError("VST3 hosting is not enabled");
-    statusText = "Plugin load failed";
-    return false;
-   #else
+    if (isVST3)
+    {
+        selectedTab->slot->clearPlugin();
+        selectedTab->slot->setPluginPath(pluginPath);
+        selectedTab->slot->setLastError("VST3 hosting is not enabled");
+        statusText = "Plugin load failed";
+        return false;
+    }
+   #endif
+
+   #if ! JUCE_PLUGINHOST_VST
+    if (isVST2)
+    {
+        selectedTab->slot->clearPlugin();
+        selectedTab->slot->setPluginPath(pluginPath);
+        selectedTab->slot->setLastError("VST2 hosting is not enabled");
+        statusText = "Plugin load failed";
+        return false;
+    }
+   #endif
+
     juce::OwnedArray<juce::PluginDescription> typesFound;
     juce::String errorMessage;
 
+    // Ensure safe fallback values if host hasn't called prepareToPlay yet
+    const double sampleRateToUse = (currentSampleRate > 0.0) ? currentSampleRate : 44100.0;
+    const int blockSizeToUse = (currentBlockSize > 0) ? currentBlockSize : 512;
+
+    // Find the right format and scan for types
     for (int i = 0; i < formatManager.getNumFormats(); ++i)
     {
         auto* format = formatManager.getFormat(i);
@@ -819,7 +1285,17 @@ bool PluginCore::loadMainSlotPluginFromPath(const juce::String& pluginPath)
         if (format == nullptr)
             continue;
 
-        if (format->getName().containsIgnoreCase("VST3"))
+        const bool formatIsVST3 = format->getName().containsIgnoreCase("VST3");
+        const bool formatIsVST2 = format->getName().containsIgnoreCase("VST")
+                                  && ! formatIsVST3;
+
+        if (isVST3 && formatIsVST3)
+        {
+            format->findAllTypesForFile(typesFound, pluginPath);
+            break;
+        }
+
+        if (isVST2 && formatIsVST2)
         {
             format->findAllTypesForFile(typesFound, pluginPath);
             break;
@@ -830,14 +1306,15 @@ bool PluginCore::loadMainSlotPluginFromPath(const juce::String& pluginPath)
     {
         selectedTab->slot->clearPlugin();
         selectedTab->slot->setPluginPath(pluginPath);
-        selectedTab->slot->setLastError("No VST3 plugin type found");
-        statusText = "Plugin load failed";
+        selectedTab->slot->setLastError("No plugin type found in file");
+        statusText = "Load failed: No plugin type found in file";
         return false;
     }
 
     auto description = *typesFound[0];
     std::unique_ptr<juce::AudioPluginInstance> instance;
 
+    // Instantiate using the right format
     for (int i = 0; i < formatManager.getNumFormats(); ++i)
     {
         auto* format = formatManager.getFormat(i);
@@ -845,12 +1322,19 @@ bool PluginCore::loadMainSlotPluginFromPath(const juce::String& pluginPath)
         if (format == nullptr)
             continue;
 
-        if (! format->getName().containsIgnoreCase("VST3"))
+        const bool formatIsVST3 = format->getName().containsIgnoreCase("VST3");
+        const bool formatIsVST2 = format->getName().containsIgnoreCase("VST")
+                                  && ! formatIsVST3;
+
+        if (isVST3 && ! formatIsVST3)
+            continue;
+
+        if (isVST2 && ! formatIsVST2)
             continue;
 
         instance = format->createInstanceFromDescription(description,
-                                                         currentSampleRate,
-                                                         currentBlockSize,
+                                                         sampleRateToUse,
+                                                         blockSizeToUse,
                                                          errorMessage);
 
         if (instance != nullptr)
@@ -859,11 +1343,12 @@ bool PluginCore::loadMainSlotPluginFromPath(const juce::String& pluginPath)
 
     if (instance == nullptr)
     {
+        juce::String fullError = errorMessage.isNotEmpty() ? errorMessage
+                                                           : "Unknown instantiation failure";
         selectedTab->slot->clearPlugin();
         selectedTab->slot->setPluginPath(pluginPath);
-        selectedTab->slot->setLastError(errorMessage.isNotEmpty() ? errorMessage
-                                                                  : "Unknown instantiation failure");
-        statusText = "Plugin load failed";
+        selectedTab->slot->setLastError(fullError);
+        statusText = "Load failed: " + fullError;
         return false;
     }
 
@@ -877,11 +1362,17 @@ bool PluginCore::loadMainSlotPluginFromPath(const juce::String& pluginPath)
     selectedTab->slot->setLoadedPluginName(description.name);
     selectedTab->slot->setPluginPath(pluginPath);
     selectedTab->slot->setLastError({});
+
+    if (! selectedTab->hasCustomPointerMap)
+    {
+        selectedTab->pointerJumpPoints.clear();
+        loadGlobalPointerMapForTab(selectedTabIndex);
+    }
+
     statusText = "Plugin instantiated";
     markDirty();
     suppressDirtyMarkingFor(1500);
     return true;
-   #endif
 }
 
 void PluginCore::unloadMainSlotPlugin()
@@ -913,6 +1404,9 @@ void PluginCore::resetForNewPreset()
 
     sessionDocument.clear();
     statusText = "Ready";
+    macroMappings.clear();
+    lastTouchedParameter = {};
+    macroCurrentValues.fill(0.0f);
     dirtyMarkingResumeTimeMs = 0;
     routingViewWidth = 800;
     routingViewHeight = 500;
@@ -983,7 +1477,11 @@ SessionTabData PluginCore::buildSessionTabData(int tabIndex) const
     tabData.bypassed = hostedTab->bypassed;
     tabData.pointerAdjustMethodOverride = hostedTab->pointerAdjustMethodOverride;
     tabData.pointerLaneTolerance = hostedTab->pointerLaneTolerance;
-    tabData.pointerJumpPoints = hostedTab->pointerJumpPoints;
+    tabData.pointerAdjustSensitivity = hostedTab->pointerAdjustSensitivity;
+    tabData.hasCustomPointerMap = hostedTab->hasCustomPointerMap;
+    tabData.preferGlobalPointerMap = hostedTab->preferGlobalPointerMap;
+    if (hostedTab->hasCustomPointerMap)
+        tabData.pointerJumpPoints = hostedTab->presetPointerJumpPoints;
     tabData.midiAssignedDeviceIdentifiers = hostedTab->midiAssignedDeviceIdentifiers;
 
     auto* instance = hostedTab->pluginInstance.get();
@@ -1047,7 +1545,25 @@ bool PluginCore::restoreTabFromSessionData(int tabIndex,
     selectedTab->bypassed = tabData.bypassed;
     selectedTab->pointerAdjustMethodOverride = tabData.pointerAdjustMethodOverride;
     selectedTab->pointerLaneTolerance = tabData.pointerLaneTolerance;
-    selectedTab->pointerJumpPoints = tabData.pointerJumpPoints;
+    selectedTab->pointerAdjustSensitivity = juce::jlimit(1, 20, tabData.pointerAdjustSensitivity);
+    selectedTab->hasCustomPointerMap = tabData.hasCustomPointerMap;
+    selectedTab->preferGlobalPointerMap = tabData.preferGlobalPointerMap;
+    selectedTab->presetPointerJumpPoints = tabData.pointerJumpPoints;
+    selectedTab->pointerJumpPoints.clear();
+
+    if (selectedTab->preferGlobalPointerMap)
+    {
+        loadGlobalPointerMapForTab(tabIndex);
+    }
+    else if (selectedTab->hasCustomPointerMap)
+    {
+        selectedTab->pointerJumpPoints = selectedTab->presetPointerJumpPoints;
+    }
+    else
+    {
+        loadGlobalPointerMapForTab(tabIndex);
+    }
+
     selectedTab->midiAssignedDeviceIdentifiers = tabData.midiAssignedDeviceIdentifiers;
 
     if (selectedTab->midiAssignedDeviceIdentifiers.isEmpty())
@@ -1080,6 +1596,20 @@ bool PluginCore::restoreTabFromSessionData(int tabIndex,
     {
         warnings.add("Could not locate plugin for tab: " + tabData.tabName);
         statusText = "Plugin file missing";
+
+        MissingPluginEntry entry;
+        entry.tabIndex = tabIndex;
+        entry.pluginName = tabData.plugin.pluginName;
+        entry.pluginPath = tabData.plugin.pluginPath;
+        entry.pluginPathRelative = tabData.plugin.pluginPathRelative;
+        entry.pluginPathDriveFlexible = tabData.plugin.pluginPathDriveFlexible;
+        entry.pluginStateBase64 = tabData.plugin.pluginStateBase64;
+        entry.pluginFormatName = tabData.plugin.pluginFormatName;
+        entry.isInstrument = tabData.plugin.isInstrument;
+        entry.pluginManufacturer = tabData.plugin.pluginManufacturer;
+        entry.pluginVersion = tabData.plugin.pluginVersion;
+        missingPlugins.add(entry);
+
         selectedTabIndex = previousSelected;
         return false;
     }
@@ -1125,10 +1655,12 @@ SessionData PluginCore::buildSessionData() const
     SessionData sessionData;
     sessionData.name = getSessionName();
     sessionData.hostTempoBpm = 120.0;
+    sessionData.selectedTabIndex = selectedTabIndex;
 
     for (int i = 0; i < hostedTabs.size(); ++i)
         sessionData.tabs.add(buildSessionTabData(i));
 
+    sessionData.macroMappings = macroMappings;
     return sessionData;
 }
 
@@ -1136,6 +1668,7 @@ bool PluginCore::restoreSessionData(const SessionData& sessionData,
                                     juce::StringArray& warnings)
 {
     warnings.clear();
+    missingPlugins.clear();
 
     for (auto* tab : hostedTabs)
         detachFromHostedPlugin(tab->pluginInstance.get());
@@ -1145,6 +1678,9 @@ bool PluginCore::restoreSessionData(const SessionData& sessionData,
     routingViewWidth = 800;
     routingViewHeight = 500;
     routingViewSizeValid = false;
+    macroMappings.clear();
+    lastTouchedParameter = {};
+    macroCurrentValues.fill(0.0f);
 
     if (sessionData.tabs.isEmpty())
     {
@@ -1170,7 +1706,13 @@ bool PluginCore::restoreSessionData(const SessionData& sessionData,
         warnings.addArray(tabWarnings);
     }
 
-    selectedTabIndex = 0;
+    selectedTabIndex = juce::jlimit(0,
+                                    juce::jmax(0, hostedTabs.size() - 1),
+                                    sessionData.selectedTabIndex);
+
+    macroMappings = sessionData.macroMappings;
+
+    rebuildTabModelFromHostedTabs();
     statusText = "Preset loaded";
     markClean();
     suppressDirtyMarkingFor(1500);
@@ -1244,15 +1786,301 @@ bool PluginCore::isDirtyMarkingSuppressed() const
         && juce::Time::getMillisecondCounter() < dirtyMarkingResumeTimeMs;
 }
 
+bool PluginCore::hasLastTouchedParameter() const
+{
+    return lastTouchedParameter.valid;
+}
+
+PluginCore::LastTouchedParameter PluginCore::getLastTouchedParameter() const
+{
+    return lastTouchedParameter;
+}
+
+juce::String PluginCore::getLastTouchedParameterDescription() const
+{
+    if (! lastTouchedParameter.valid)
+        return "None";
+
+    juce::String tabText = "Tab " + juce::String(lastTouchedParameter.tabIndex + 1);
+    juce::String pluginText = lastTouchedParameter.pluginName.isNotEmpty()
+                                ? lastTouchedParameter.pluginName
+                                : "Unknown Plugin";
+    juce::String parameterText = lastTouchedParameter.parameterName.isNotEmpty()
+                                ? lastTouchedParameter.parameterName
+                                : ("Parameter " + juce::String(lastTouchedParameter.parameterIndex));
+
+    return tabText + " / " + pluginText + " / " + parameterText;
+}
+
+const juce::Array<SessionData::MacroMapping>& PluginCore::getMacroMappings() const
+{
+    return macroMappings;
+}
+
+bool PluginCore::isMacroMapped(int macroIndex) const
+{
+    return findMacroMappingIndexByMacroSlot(macroIndex) >= 0;
+}
+
+int PluginCore::getNextFreeMacroIndex() const
+{
+    constexpr int maxMacroCount = 128;
+
+    for (int macroIndex = 0; macroIndex < maxMacroCount; ++macroIndex)
+    {
+        if (! isMacroMapped(macroIndex))
+            return macroIndex;
+    }
+
+    return -1;
+}
+
+bool PluginCore::assignLastTouchedToNextFreeMacro()
+{
+    if (! lastTouchedParameter.valid)
+        return false;
+
+    for (int i = 0; i < macroMappings.size(); ++i)
+    {
+        const auto& existing = macroMappings.getReference(i);
+
+        if (existing.tabIndex == lastTouchedParameter.tabIndex
+            && existing.parameterIndex == lastTouchedParameter.parameterIndex)
+        {
+            return false;
+        }
+    }
+
+    const int macroIndex = getNextFreeMacroIndex();
+
+    if (macroIndex < 0)
+        return false;
+
+    SessionData::MacroMapping mapping;
+    mapping.macroIndex = macroIndex;
+    mapping.tabIndex = lastTouchedParameter.tabIndex;
+    mapping.pluginName = lastTouchedParameter.pluginName;
+    mapping.parameterIndex = lastTouchedParameter.parameterIndex;
+    mapping.parameterName = lastTouchedParameter.parameterName;
+    mapping.enabled = true;
+
+    if (mapping.pluginName.isNotEmpty() && mapping.parameterName.isNotEmpty())
+        mapping.label = mapping.pluginName + " " + mapping.parameterName;
+    else if (mapping.parameterName.isNotEmpty())
+        mapping.label = mapping.parameterName;
+    else
+        mapping.label = "Macro " + juce::String(macroIndex + 1);
+
+    macroMappings.add(mapping);
+    markDirty();
+    return true;
+}
+
+bool PluginCore::replaceMacroMappingFromLastTouched(int macroIndex)
+{
+    if (! lastTouchedParameter.valid)
+        return false;
+
+    const int mappingIndex = findMacroMappingIndexByMacroSlot(macroIndex);
+
+    if (mappingIndex < 0)
+        return false;
+
+    for (int i = 0; i < macroMappings.size(); ++i)
+    {
+        if (i == mappingIndex)
+            continue;
+
+        const auto& existing = macroMappings.getReference(i);
+
+        if (existing.tabIndex == lastTouchedParameter.tabIndex
+            && existing.parameterIndex == lastTouchedParameter.parameterIndex)
+        {
+            return false;
+        }
+    }
+
+    auto mapping = macroMappings.getReference(mappingIndex);
+
+    if (mapping.tabIndex == lastTouchedParameter.tabIndex
+        && mapping.parameterIndex == lastTouchedParameter.parameterIndex)
+    {
+        return false;
+    }
+
+    storeMacroMappingsUndoState();
+
+    mapping.tabIndex = lastTouchedParameter.tabIndex;
+    mapping.pluginName = lastTouchedParameter.pluginName;
+    mapping.parameterIndex = lastTouchedParameter.parameterIndex;
+    mapping.parameterName = lastTouchedParameter.parameterName;
+    mapping.enabled = true;
+
+    if (mapping.pluginName.isNotEmpty() && mapping.parameterName.isNotEmpty())
+        mapping.label = mapping.pluginName + " " + mapping.parameterName;
+    else if (mapping.parameterName.isNotEmpty())
+        mapping.label = mapping.parameterName;
+    else
+        mapping.label = "Macro " + juce::String(macroIndex + 1);
+
+    macroMappings.set(mappingIndex, mapping);
+    markDirty();
+    return true;
+}
+
+bool PluginCore::clearMacroMapping(int macroIndex)
+{
+    const int mappingIndex = findMacroMappingIndexByMacroSlot(macroIndex);
+
+    if (mappingIndex < 0)
+        return false;
+
+    storeMacroMappingsUndoState();
+    macroMappings.remove(mappingIndex);
+    markDirty();
+    return true;
+}
+
+void PluginCore::storeMacroMappingsUndoState()
+{
+    macroMappingsUndoSnapshot = macroMappings;
+    hasMacroMappingsUndoSnapshot = true;
+}
+
+bool PluginCore::hasMacroMappingsUndoState() const
+{
+    return hasMacroMappingsUndoSnapshot;
+}
+
+bool PluginCore::undoLastMacroMappingsEdit()
+{
+    if (! hasMacroMappingsUndoSnapshot)
+        return false;
+
+    macroMappings = macroMappingsUndoSnapshot;
+    hasMacroMappingsUndoSnapshot = false;
+    markDirty();
+    return true;
+}
+
+void PluginCore::clearAllMacroMappings()
+{
+    if (macroMappings.isEmpty())
+        return;
+
+    storeMacroMappingsUndoState();
+    macroMappings.clear();
+    markDirty();
+}
+
+bool PluginCore::moveMacroMappingUp(int macroIndex)
+{
+    if (macroIndex <= 0)
+        return false;
+
+    const int currentIndex = findMacroMappingIndexByMacroSlot(macroIndex);
+    const int previousIndex = findMacroMappingIndexByMacroSlot(macroIndex - 1);
+
+    if (currentIndex < 0 || previousIndex < 0)
+        return false;
+
+    auto current = macroMappings.getReference(currentIndex);
+    auto previous = macroMappings.getReference(previousIndex);
+
+    const int currentMacroSlot = current.macroIndex;
+    const int previousMacroSlot = previous.macroIndex;
+
+    current.macroIndex = previousMacroSlot;
+    previous.macroIndex = currentMacroSlot;
+
+    macroMappings.set(currentIndex, previous);
+    macroMappings.set(previousIndex, current);
+
+    markDirty();
+    return true;
+}
+
+bool PluginCore::moveMacroMappingDown(int macroIndex)
+{
+    constexpr int maxMacroCount = 128;
+
+    if (macroIndex < 0 || macroIndex >= maxMacroCount - 1)
+        return false;
+
+    const int currentIndex = findMacroMappingIndexByMacroSlot(macroIndex);
+    const int nextIndex = findMacroMappingIndexByMacroSlot(macroIndex + 1);
+
+    if (currentIndex < 0 || nextIndex < 0)
+        return false;
+
+    auto current = macroMappings.getReference(currentIndex);
+    auto next = macroMappings.getReference(nextIndex);
+
+    const int currentMacroSlot = current.macroIndex;
+    const int nextMacroSlot = next.macroIndex;
+
+    current.macroIndex = nextMacroSlot;
+    next.macroIndex = currentMacroSlot;
+
+    macroMappings.set(currentIndex, next);
+    macroMappings.set(nextIndex, current);
+
+    markDirty();
+    return true;
+}
+
+float PluginCore::getMacroCurrentValue(int macroIndex) const
+{
+    if (macroIndex < 0 || macroIndex >= (int) macroCurrentValues.size())
+        return 0.0f;
+
+    return macroCurrentValues[(size_t) macroIndex];
+}
+
+void PluginCore::setMacroValueFromHost(int macroIndex, float normalizedValue)
+{
+    if (macroIndex < 0 || macroIndex >= (int) macroCurrentValues.size())
+        return;
+
+    normalizedValue = juce::jlimit(0.0f, 1.0f, normalizedValue);
+    macroCurrentValues[(size_t) macroIndex] = normalizedValue;
+
+    const int mappingIndex = findMacroMappingIndexByMacroSlot(macroIndex);
+
+    if (mappingIndex < 0)
+        return;
+
+    const auto& mapping = macroMappings.getReference(mappingIndex);
+
+    if (! mapping.enabled)
+        return;
+
+    if (! juce::isPositiveAndBelow(mapping.tabIndex, hostedTabs.size()))
+        return;
+
+    auto* tab = hostedTabs[mapping.tabIndex];
+
+    if (tab == nullptr || tab->pluginInstance == nullptr)
+        return;
+
+    auto& parameters = tab->pluginInstance->getParameters();
+
+    if (! juce::isPositiveAndBelow(mapping.parameterIndex, parameters.size()))
+        return;
+
+    if (auto* parameter = parameters[mapping.parameterIndex])
+        parameter->setValueNotifyingHost(normalizedValue);
+}
+
 void PluginCore::audioProcessorParameterChanged(juce::AudioProcessor* processor,
                                                 int parameterIndex,
                                                 float newValue)
 {
-    juce::ignoreUnused(parameterIndex, newValue);
+    captureLastTouchedParameter(processor, parameterIndex, newValue);
 
-    auto* selectedTab = getSelectedHostedTab();
+    const int tabIndex = findHostedTabIndexForProcessor(processor);
 
-    if (selectedTab == nullptr || processor != selectedTab->pluginInstance.get())
+    if (tabIndex < 0)
         return;
 
     if (isDirtyMarkingSuppressed())

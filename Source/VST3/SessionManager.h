@@ -42,7 +42,10 @@ struct SessionTabData
     int savedWindowHeight = 0;
     juce::StringArray midiAssignedDeviceIdentifiers;
     float pointerLaneTolerance = 30.0f;
+    int pointerAdjustSensitivity = 1;
     int pointerAdjustMethodOverride = 0;
+    bool hasCustomPointerMap = false;
+    bool preferGlobalPointerMap = false;
     juce::Array<PointerJumpPoint> pointerJumpPoints;
     bool hasPlugin = false;
     SessionPluginData plugin;
@@ -50,9 +53,22 @@ struct SessionTabData
 
 struct SessionData
 {
+    struct MacroMapping
+    {
+        int macroIndex = -1;
+        juce::String label;
+        int tabIndex = -1;
+        juce::String pluginName;
+        int parameterIndex = -1;
+        juce::String parameterName;
+        bool enabled = true;
+    };
+
     juce::String name;
     double hostTempoBpm = 120.0;
+    int selectedTabIndex = 0;
     juce::Array<SessionTabData> tabs;
+    juce::Array<MacroMapping> macroMappings;
 };
 
 class SessionDocument

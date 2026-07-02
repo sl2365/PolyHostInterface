@@ -6,6 +6,31 @@
 class PolyHostPluginProcessor : public juce::AudioProcessor
 {
 public:
+    class MacroParameter final : public juce::AudioProcessorParameter
+    {
+    public:
+        MacroParameter(PolyHostPluginProcessor& ownerIn, int macroIndexIn);
+
+        float getValue() const override;
+        void setValue(float newValue) override;
+        float getDefaultValue() const override;
+        juce::String getName(int maximumStringLength) const override;
+        juce::String getLabel() const override;
+        juce::String getText(float value, int maximumStringLength) const override;
+        float getValueForText(const juce::String& text) const override;
+        bool isAutomatable() const override;
+        bool isDiscrete() const override;
+        bool isBoolean() const override;
+        int getNumSteps() const override;
+        bool isOrientationInverted() const override;
+        bool isMetaParameter() const override;
+        juce::AudioProcessorParameter::Category getCategory() const override;
+
+    private:
+        PolyHostPluginProcessor& owner;
+        int macroIndex = -1;
+    };
+
     PolyHostPluginProcessor();
     ~PolyHostPluginProcessor() override;
 
@@ -40,16 +65,32 @@ public:
         bool valid = false;
     };
 
+    struct MidiMonitorEvent
+    {
+        juce::MidiMessage message;
+        juce::String sourceName;
+        bool valid = false;
+    };
+
     bool popNextPointerMidiEvent(PointerMidiEvent& dest);
     void pushPointerMidiEvent(int controllerNumber, int controllerValue);
+
+    juce::Array<MidiMonitorEvent> popPendingMidiMonitorEvents();
+    void pushMidiMonitorEvent(const juce::MidiMessage& message, const juce::String& sourceName);
 
     PluginCore& getCore();
 
 private:
+    void initialiseMacroParameters();
+
     PluginCore core;
+    std::vector<std::unique_ptr<MacroParameter>> macroParameters;
 
     static constexpr int pointerMidiQueueSize = 128;
     PointerMidiEvent pointerMidiQueue[pointerMidiQueueSize];
     std::atomic<int> pointerMidiWriteIndex { 0 };
     std::atomic<int> pointerMidiReadIndex { 0 };
+
+    juce::Array<MidiMonitorEvent> midiMonitorQueue;
+    juce::CriticalSection midiMonitorQueueLock;
 };

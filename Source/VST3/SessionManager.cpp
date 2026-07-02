@@ -31,6 +31,7 @@ std::unique_ptr<juce::XmlElement> SessionManager::createXmlFromSessionData(const
     auto presetXml = std::make_unique<juce::XmlElement>("PolyHostPreset");
     presetXml->setAttribute("name", session.name);
     presetXml->setAttribute("hostTempoBpm", session.hostTempoBpm);
+    presetXml->setAttribute("selectedTabIndex", session.selectedTabIndex);
 
     for (auto& tab : session.tabs)
     {
@@ -43,9 +44,11 @@ std::unique_ptr<juce::XmlElement> SessionManager::createXmlFromSessionData(const
         tabXml->setAttribute("savedWindowWidth", tab.savedWindowWidth);
         tabXml->setAttribute("savedWindowHeight", tab.savedWindowHeight);
         tabXml->setAttribute("pointerLaneTolerance", tab.pointerLaneTolerance);
+        tabXml->setAttribute("pointerAdjustSensitivity", tab.pointerAdjustSensitivity);
         tabXml->setAttribute("pointerAdjustMethodOverride", tab.pointerAdjustMethodOverride);
+        tabXml->setAttribute("preferGlobalPointerMap", tab.preferGlobalPointerMap);
 
-        if (! tab.pointerJumpPoints.isEmpty())
+        if (tab.hasCustomPointerMap)
         {
             auto* pointerPointsXml = tabXml->createNewChildElement("PointerJumpPoints");
 
@@ -87,6 +90,23 @@ std::unique_ptr<juce::XmlElement> SessionManager::createXmlFromSessionData(const
         presetXml->addChildElement(tabXml.release());
     }
 
+    if (! session.macroMappings.isEmpty())
+    {
+        auto* macroMappingsXml = presetXml->createNewChildElement("MacroMappings");
+
+        for (auto& mapping : session.macroMappings)
+        {
+            auto* mappingXml = macroMappingsXml->createNewChildElement("Macro");
+            mappingXml->setAttribute("macroIndex", mapping.macroIndex);
+            mappingXml->setAttribute("label", mapping.label);
+            mappingXml->setAttribute("tabIndex", mapping.tabIndex);
+            mappingXml->setAttribute("pluginName", mapping.pluginName);
+            mappingXml->setAttribute("parameterIndex", mapping.parameterIndex);
+            mappingXml->setAttribute("parameterName", mapping.parameterName);
+            mappingXml->setAttribute("enabled", mapping.enabled);
+        }
+    }
+
     return presetXml;
 }
 
@@ -102,6 +122,7 @@ bool SessionManager::restoreSessionDataFromXml(const juce::XmlElement& xml,
     session = {};
     session.name = xml.getStringAttribute("name", "Untitled");
     session.hostTempoBpm = xml.getDoubleAttribute("hostTempoBpm", 120.0);
+    session.selectedTabIndex = juce::jmax(0, xml.getIntAttribute("selectedTabIndex", 0));
 
     for (auto* tabXml : xml.getChildIterator())
     {
@@ -117,11 +138,16 @@ bool SessionManager::restoreSessionDataFromXml(const juce::XmlElement& xml,
         tab.savedWindowWidth = tabXml->getIntAttribute("savedWindowWidth", 0);
         tab.savedWindowHeight = tabXml->getIntAttribute("savedWindowHeight", 0);
         tab.pointerLaneTolerance = (float) tabXml->getDoubleAttribute("pointerLaneTolerance", 30.0);
+        tab.pointerAdjustSensitivity = juce::jlimit(1, 20,
+            tabXml->getIntAttribute("pointerAdjustSensitivity", 1));
         tab.pointerAdjustMethodOverride = juce::jlimit(0, 2,
             tabXml->getIntAttribute("pointerAdjustMethodOverride", 0));
+        tab.preferGlobalPointerMap = tabXml->getBoolAttribute("preferGlobalPointerMap", false);
 
         if (auto* pointerPointsXml = tabXml->getChildByName("PointerJumpPoints"))
         {
+            tab.hasCustomPointerMap = true;
+
             for (auto* pointXml : pointerPointsXml->getChildIterator())
             {
                 if (! pointXml->hasTagName("Point"))
@@ -166,6 +192,27 @@ bool SessionManager::restoreSessionDataFromXml(const juce::XmlElement& xml,
                      || tab.plugin.pluginPathDriveFlexible.isNotEmpty();
 
         session.tabs.add(tab);
+    }
+
+    if (auto* macroMappingsXml = xml.getChildByName("MacroMappings"))
+    {
+        for (auto* mappingXml : macroMappingsXml->getChildIterator())
+        {
+            if (! mappingXml->hasTagName("Macro"))
+                continue;
+
+            SessionData::MacroMapping mapping;
+            mapping.macroIndex = mappingXml->getIntAttribute("macroIndex", -1);
+            mapping.label = mappingXml->getStringAttribute("label");
+            mapping.tabIndex = mappingXml->getIntAttribute("tabIndex", -1);
+            mapping.pluginName = mappingXml->getStringAttribute("pluginName");
+            mapping.parameterIndex = mappingXml->getIntAttribute("parameterIndex", -1);
+            mapping.parameterName = mappingXml->getStringAttribute("parameterName");
+            mapping.enabled = mappingXml->getBoolAttribute("enabled", true);
+
+            if (mapping.macroIndex >= 0)
+                session.macroMappings.add(mapping);
+        }
     }
 
     return true;
