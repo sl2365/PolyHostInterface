@@ -6,7 +6,9 @@ Fully portable: stores all settings next to the exe, touches nothing else on the
 
 I always liked tools like TobyBear's MiniHost, SaviHost and Tone2's NanoHost. But wanted something that combines all of them. A quick jamming tool that can open multiple plugin formats. I aim to add support for more formats, but the main ones will most likely be tried first at least. This is a tool that doesn't yet exist elsewhere in a small package like this, at least not as one that you can use file-associations with.
 
-The VST3 plugin version has superceded the abilities of the standalone version. It is more robust, less glitchy and has more functions. Eventually, I will make the standalone version be a simpler host that can load the plugin, this makes it easier to maintain and then functionality/preset compatibility will remain consistent. 
+The VST3 plugin version has superceded the abilities of the standalone version. It is more robust, less glitchy and has more functions. Eventually, I will make the standalone version be a simpler host that can load the plugin, this makes it easier to maintain and then functionality/preset compatibility will remain consistent.
+
+There are a few pics and gifs at the bottom of the page...
 
 ## Feature Status
 
@@ -134,6 +136,8 @@ A global pointer map is saved per plugin and can be reused across presets. It sa
 Use this when:
 - the same plugin layout is used repeatedly
 - you want one reusable default map for a plugin
+
+NOTE: As global maps are saved to a separate dedicated file as XML, they are also shareable online! So if this becomes popular enough, you may find maps available online. But I will eventually upload all of my own maps here when done, making it easier to get started.
 
 #### Preset Pointer Maps
 A preset pointer map is stored inside the current preset file. Useful for plugins that have different ways of setting it up or different skins that rearrange a plugins layout.
@@ -292,3 +296,7 @@ MIDI always wired in parallel. Synth and FX audio routing is partially flexible,
 - The next two buttons are the Up/Down arrows and are used to adjust the position in the chain so you can set up different chains for the same plugins, thereby saving different presets with different chains for different situations.
 - The next button is an info button, used more as a tooltip than a clickable button. This just shows info about what FX a synth is outputting its audio to and which Synths an FX is receiving input from.
 - The last button is a Close Tab button to allow closing tabs from the routing view.
+
+# Demos
+
+![Screenshot Synth1 with ](screenshots/Synth1_shot.jpg)
