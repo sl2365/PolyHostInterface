@@ -299,4 +299,7 @@ MIDI always wired in parallel. Synth and FX audio routing is partially flexible,
 
 # Demos
 
-![Screenshot Synth1 with ](screenshots/Synth1_shot.jpg)
+![Screenshot Synth1](screenshots/Synth1_shot.jpg)
+![Screenshot Synth1](screenshots/Synth1_Gif.jpg)
+![Screenshot Diva](screenshots/Diva_shot.jpg)
+![Screenshot Diva](screenshots/Diva_Gif.jpg)
