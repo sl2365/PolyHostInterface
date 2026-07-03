@@ -297,9 +297,19 @@ MIDI always wired in parallel. Synth and FX audio routing is partially flexible,
 - The next button is an info button, used more as a tooltip than a clickable button. This just shows info about what FX a synth is outputting its audio to and which Synths an FX is receiving input from.
 - The last button is a Close Tab button to allow closing tabs from the routing view.
 
+## Credits
+
+Thanks to Stefan Matting and his [PointerCC](https://github.com/smatting/pointer-cc) app for the idea.
+
+
 # Demos
 
+These were made in [MuLab](https://www.mutools.com/index.html) DAW
+
 ![Screenshot Synth1](screenshots/Synth1_shot.jpg)
+
 ![Gif Synth1](screenshots/Synth1_Gif.gif)
+
 ![Screenshot Diva](screenshots/Diva_shot.jpg)
+
 ![Gif Diva](screenshots/Diva_Gif.gif)
