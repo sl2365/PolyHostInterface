@@ -304,12 +304,11 @@ Thanks to Stefan Matting and his [PointerCC](https://github.com/smatting/pointer
 
 # Demos
 
-These were made in [MuLab](https://www.mutools.com/index.html) DAW
-
-![Screenshot Synth1](screenshots/Synth1_shot.jpg)
+These were made in [MuLab](https://www.mutools.com/index.html) DAW.
+All cursor movements and parameter adjustments are made using Hardware MIDI controllers, not a real mouse.
 
 ![Gif Synth1](screenshots/Synth1_Gif.gif)
 
-![Screenshot Diva](screenshots/Diva_shot.jpg)
-
 ![Gif Diva](screenshots/Diva_Gif.gif)
+
+![Gif Warlock](screenshots/Warlock_Gif.gif)
