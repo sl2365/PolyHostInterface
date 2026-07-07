@@ -10,6 +10,20 @@ public:
         float y = 0.0f;
     };
 
+    enum class MouseButton
+    {
+        left,
+        middle,
+        right
+    };
+
+    enum class KeyboardKey
+    {
+        cursorUp,
+        cursorDown,
+        enter
+    };
+
     void setTargetScreenBounds(juce::Rectangle<int> bounds);
     void clearTarget();
 
@@ -27,6 +41,11 @@ public:
 
     void panX(int midiValue);
     void panY(int midiValue);
+    void panXRelative(int delta);
+    void panYRelative(int delta);
+
+    void setMouseButtonState(MouseButton button, bool shouldBeDown);
+    void setKeyboardKeyState(KeyboardKey key, bool shouldBeDown);
 
     void wheelAdjust(int delta);
     void dragAdjust(int delta);
@@ -47,6 +66,8 @@ private:
     void beginDrag();
     void moveDragBy(int deltaY);
     void restoreCursorIfHidden();
+    void releaseMouseButtons();
+    void releaseKeyboardKeys();
 
     enum class LastMoveAxis
     {
@@ -77,6 +98,14 @@ private:
     int dragStartX = 0;
     int dragStartY = 0;
     double lastDragAdjustTimeMs = 0.0;
+
+    bool leftMouseButtonDown = false;
+    bool middleMouseButtonDown = false;
+    bool rightMouseButtonDown = false;
+
+    bool cursorUpKeyDown = false;
+    bool cursorDownKeyDown = false;
+    bool enterKeyDown = false;
 
     bool suppressNextPhysicalMoveCheck = false;
     int lastProgrammaticCursorX = 0;

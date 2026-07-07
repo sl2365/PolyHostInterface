@@ -8,7 +8,7 @@ I always liked tools like TobyBear's MiniHost, SaviHost and Tone2's NanoHost. Bu
 
 The VST3 plugin version has superceded the abilities of the standalone version. It is more robust, less glitchy and has more functions. Eventually, I will make the standalone version be a simpler host that can load the plugin, this makes it easier to maintain and then functionality/preset compatibility will remain consistent.
 
-There are a few pics and gifs at the bottom of the page...
+See the demos at the bottom of the page for a better idea of what it does...
 
 ## Feature Status
 

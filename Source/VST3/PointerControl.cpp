@@ -71,6 +71,8 @@ void PointerControl::setTargetScreenBounds(juce::Rectangle<int> bounds)
 void PointerControl::clearTarget()
 {
     endDrag();
+    releaseMouseButtons();
+    releaseKeyboardKeys();
     restoreCursorIfHidden();
 
     targetScreenBounds = {};
@@ -176,6 +178,35 @@ void PointerControl::panX(int midiValue)
         moveCursorToCurrentPosition();
     }
 }
+
+void PointerControl::panXRelative(int delta)
+{
+    if (!hasTarget() || delta == 0)
+        return;
+
+    restoreCursorIfHidden();
+
+    const float pixelsPerStep = (float) targetScreenBounds.getWidth() / 127.0f;
+
+    virtualX = juce::jlimit((float) targetScreenBounds.getX(),
+                            (float) targetScreenBounds.getRight(),
+                            virtualX + ((float) delta * pixelsPerStep));
+
+    lockedLaneX = virtualX;
+    hasLockedLaneX = true;
+    lastMoveAxis = LastMoveAxis::x;
+
+    if (hasJumpPoints())
+    {
+        updateJumpSelection();
+        moveCursorToCurrentPosition();
+    }
+    else
+    {
+        currentX = (int) std::round(virtualX);
+        moveCursorToCurrentPosition();
+    }
+}
  
 void PointerControl::panY(int midiValue)
 {
@@ -186,6 +217,35 @@ void PointerControl::panY(int midiValue)
 
     auto norm = juce::jlimit(0.0f, 1.0f, (float) midiValue / 127.0f);
     virtualY = (float) targetScreenBounds.getY() + norm * (float) targetScreenBounds.getHeight();
+
+    lockedLaneY = virtualY;
+    hasLockedLaneY = true;
+    lastMoveAxis = LastMoveAxis::y;
+
+    if (hasJumpPoints())
+    {
+        updateJumpSelection();
+        moveCursorToCurrentPosition();
+    }
+    else
+    {
+        currentY = (int) std::round(virtualY);
+        moveCursorToCurrentPosition();
+    }
+}
+
+void PointerControl::panYRelative(int delta)
+{
+    if (!hasTarget() || delta == 0)
+        return;
+
+    restoreCursorIfHidden();
+
+    const float pixelsPerStep = (float) targetScreenBounds.getHeight() / 127.0f;
+
+    virtualY = juce::jlimit((float) targetScreenBounds.getY(),
+                            (float) targetScreenBounds.getBottom(),
+                            virtualY + ((float) delta * pixelsPerStep));
 
     lockedLaneY = virtualY;
     hasLockedLaneY = true;
@@ -354,6 +414,166 @@ int PointerControl::findNearestJumpPointInCurrentLane() const
     return bestIndex;
 }
 
+void PointerControl::setMouseButtonState(MouseButton button, bool shouldBeDown)
+{
+    bool* buttonState = nullptr;
+    juce::String buttonName;
+
+   #if JUCE_WINDOWS
+    DWORD downFlag = 0;
+    DWORD upFlag = 0;
+   #endif
+
+    switch (button)
+    {
+        case MouseButton::left:
+            buttonState = &leftMouseButtonDown;
+            buttonName = "left";
+           #if JUCE_WINDOWS
+            downFlag = MOUSEEVENTF_LEFTDOWN;
+            upFlag = MOUSEEVENTF_LEFTUP;
+           #endif
+            break;
+
+        case MouseButton::middle:
+            buttonState = &middleMouseButtonDown;
+            buttonName = "middle";
+           #if JUCE_WINDOWS
+            downFlag = MOUSEEVENTF_MIDDLEDOWN;
+            upFlag = MOUSEEVENTF_MIDDLEUP;
+           #endif
+            break;
+
+        case MouseButton::right:
+            buttonState = &rightMouseButtonDown;
+            buttonName = "right";
+           #if JUCE_WINDOWS
+            downFlag = MOUSEEVENTF_RIGHTDOWN;
+            upFlag = MOUSEEVENTF_RIGHTUP;
+           #endif
+            break;
+    }
+
+    if (buttonState == nullptr || *buttonState == shouldBeDown)
+        return;
+
+    if (shouldBeDown && !hasTarget())
+        return;
+
+    restoreCursorIfHidden();
+
+    int clickX = currentX;
+    int clickY = currentY;
+
+   #if JUCE_WINDOWS
+    POINT p {};
+    if (GetCursorPos(&p))
+    {
+        clickX = p.x;
+        clickY = p.y;
+
+        currentX = clickX;
+        currentY = clickY;
+        virtualX = (float) currentX;
+        virtualY = (float) currentY;
+
+        lastObservedPhysicalCursorX = clickX;
+        lastObservedPhysicalCursorY = clickY;
+        hasObservedPhysicalCursorPosition = true;
+    }
+
+    INPUT input {};
+    input.type = INPUT_MOUSE;
+    input.mi.dwFlags = shouldBeDown ? downFlag : upFlag;
+    SendInput(1, &input, sizeof(INPUT));
+   #endif
+
+    *buttonState = shouldBeDown;
+
+    DebugLog::writeAdvanced("[PointerControl] mouse button "
+                            + juce::String(shouldBeDown ? "down" : "up")
+                            + " | button="
+                            + buttonName
+                            + " | x="
+                            + juce::String(clickX)
+                            + " | y="
+                            + juce::String(clickY));
+}
+
+void PointerControl::releaseMouseButtons()
+{
+    setMouseButtonState(MouseButton::left, false);
+    setMouseButtonState(MouseButton::middle, false);
+    setMouseButtonState(MouseButton::right, false);
+}
+
+void PointerControl::setKeyboardKeyState(KeyboardKey key, bool shouldBeDown)
+{
+    bool* keyState = nullptr;
+    juce::String keyName;
+
+   #if JUCE_WINDOWS
+    WORD virtualKey = 0;
+   #endif
+
+    switch (key)
+    {
+        case KeyboardKey::cursorUp:
+            keyState = &cursorUpKeyDown;
+            keyName = "cursorUp";
+           #if JUCE_WINDOWS
+            virtualKey = VK_UP;
+           #endif
+            break;
+
+        case KeyboardKey::cursorDown:
+            keyState = &cursorDownKeyDown;
+            keyName = "cursorDown";
+           #if JUCE_WINDOWS
+            virtualKey = VK_DOWN;
+           #endif
+            break;
+
+        case KeyboardKey::enter:
+            keyState = &enterKeyDown;
+            keyName = "enter";
+           #if JUCE_WINDOWS
+            virtualKey = VK_RETURN;
+           #endif
+            break;
+    }
+
+    if (keyState == nullptr || *keyState == shouldBeDown)
+        return;
+
+    restoreCursorIfHidden();
+
+   #if JUCE_WINDOWS
+    INPUT input {};
+    input.type = INPUT_KEYBOARD;
+    input.ki.wVk = virtualKey;
+
+    if (! shouldBeDown)
+        input.ki.dwFlags = KEYEVENTF_KEYUP;
+
+    SendInput(1, &input, sizeof(INPUT));
+   #endif
+
+    *keyState = shouldBeDown;
+
+    DebugLog::writeAdvanced("[PointerControl] keyboard key "
+                            + juce::String(shouldBeDown ? "down" : "up")
+                            + " | key="
+                            + keyName);
+}
+
+void PointerControl::releaseKeyboardKeys()
+{
+    setKeyboardKeyState(KeyboardKey::cursorUp, false);
+    setKeyboardKeyState(KeyboardKey::cursorDown, false);
+    setKeyboardKeyState(KeyboardKey::enter, false);
+}
+
 void PointerControl::wheelAdjust(int delta)
 {
     if (!hasTarget() || delta == 0)
@@ -361,27 +581,33 @@ void PointerControl::wheelAdjust(int delta)
 
     restoreCursorIfHidden();
 
-    DebugLog::writeAdvanced("[PointerControl] wheelAdjust"
-                            " | delta=" + juce::String(delta)
-                            + " | currentX=" + juce::String(currentX)
-                            + " | currentY=" + juce::String(currentY));
+    int scrollX = currentX;
+    int scrollY = currentY;
 
    #if JUCE_WINDOWS
-    suppressNextPhysicalMoveCheck = true;
-    lastProgrammaticCursorX = currentX;
-    lastProgrammaticCursorY = currentY;
-    SetCursorPos(currentX, currentY);
-
-    POINT p { currentX, currentY };
-    HWND hwnd = WindowFromPoint(p);
-
-    if (hwnd != nullptr)
+    POINT p {};
+    if (GetCursorPos(&p))
     {
-        const WPARAM wParam = MAKEWPARAM(0, (short) (delta * WHEEL_DELTA));
-        const LPARAM lParam = MAKELPARAM(currentX, currentY);
-        SendMessage(hwnd, WM_MOUSEWHEEL, wParam, lParam);
-    }
+        scrollX = p.x;
+        scrollY = p.y;
 
+        currentX = scrollX;
+        currentY = scrollY;
+        virtualX = (float) currentX;
+        virtualY = (float) currentY;
+
+        lastObservedPhysicalCursorX = scrollX;
+        lastObservedPhysicalCursorY = scrollY;
+        hasObservedPhysicalCursorPosition = true;
+    }
+   #endif
+
+    DebugLog::writeAdvanced("[PointerControl] wheelAdjust"
+                            " | delta=" + juce::String(delta)
+                            + " | x=" + juce::String(scrollX)
+                            + " | y=" + juce::String(scrollY));
+
+   #if JUCE_WINDOWS
     INPUT input {};
     input.type = INPUT_MOUSE;
     input.mi.dwFlags = MOUSEEVENTF_WHEEL;

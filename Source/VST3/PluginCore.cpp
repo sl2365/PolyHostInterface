@@ -946,7 +946,7 @@ juce::String PluginCore::getRoutingTooltipForTab(int tabIndex) const
         for (int i = tabIndex + 1; i < hostedTabs.size(); ++i)
         {
             if (getHostedTabType(i) == PluginSlotType::FX)
-                return "Audio routes into downstream FX: " + tabModel.getTab(i).name;
+                return "Audio routes into downstream FX:\n" + tabModel.getTab(i).name;
         }
 
         return "Audio routes directly to output";
@@ -965,7 +965,7 @@ juce::String PluginCore::getRoutingTooltipForTab(int tabIndex) const
         if (synthNames.isEmpty())
             return "No synths currently route into this FX";
 
-        return "Receiving audio from: " + synthNames.joinIntoString(", ");
+        return "Receiving audio from:\n" + synthNames.joinIntoString(", ");
     }
 
     return "Empty tab";
@@ -1084,22 +1084,6 @@ int PluginCore::getRoutingViewHeight() const
 bool PluginCore::hasRoutingViewSize() const
 {
     return routingViewSizeValid;
-}
-
-void PluginCore::setMacroMappingsViewHeight(int height)
-{
-    macroMappingsViewHeight = juce::jmax(100, height);
-    macroMappingsViewHeightValid = true;
-}
-
-int PluginCore::getMacroMappingsViewHeight() const
-{
-    return macroMappingsViewHeight;
-}
-
-bool PluginCore::hasMacroMappingsViewHeight() const
-{
-    return macroMappingsViewHeightValid;
 }
 
 SlotModel& PluginCore::getMainSlot()
@@ -1481,8 +1465,6 @@ SessionTabData PluginCore::buildSessionTabData(int tabIndex) const
     tabData.hasSavedWindowBounds = routingViewSizeValid;
     tabData.savedWindowWidth = routingViewWidth;
     tabData.savedWindowHeight = routingViewHeight;
-    tabData.hasSavedMacroMappingsHeight = macroMappingsViewHeightValid;
-    tabData.savedMacroMappingsHeight = macroMappingsViewHeight;
     tabData.pointerLaneTolerance = 30.0f;
     tabData.pointerAdjustMethodOverride = 0;
     tabData.hasPlugin = false;
@@ -1596,13 +1578,6 @@ bool PluginCore::restoreTabFromSessionData(int tabIndex,
         routingViewSizeValid = true;
     }
 
-    if (tabData.hasSavedMacroMappingsHeight
-        && tabData.savedMacroMappingsHeight > 0)
-    {
-        macroMappingsViewHeight = tabData.savedMacroMappingsHeight;
-        macroMappingsViewHeightValid = true;
-    }
-
     unloadMainSlotPlugin();
 
     if (! tabData.hasPlugin)
@@ -1703,8 +1678,6 @@ bool PluginCore::restoreSessionData(const SessionData& sessionData,
     routingViewWidth = 800;
     routingViewHeight = 500;
     routingViewSizeValid = false;
-    macroMappingsViewHeight = 500;
-    macroMappingsViewHeightValid = false;
     macroMappings.clear();
     lastTouchedParameter = {};
     macroCurrentValues.fill(0.0f);

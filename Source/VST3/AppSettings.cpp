@@ -27,6 +27,14 @@ static constexpr auto kRoutingWindowHeight  = "routingWindowHeight";
 static constexpr auto kPointerControlXccNumber              = "pointerControlXccNumber";
 static constexpr auto kPointerControlYccNumber              = "pointerControlYccNumber";
 static constexpr auto kPointerControlAdjustCcNumberNew      = "pointerControlAdjustCcNumberNew";
+static constexpr auto kPointerControlTabCcNumber            = "pointerControlTabCcNumber";
+static constexpr auto kPointerControlTabSwitchCooldownMs    = "pointerControlTabSwitchCooldownMs";
+static constexpr auto kPointerControlLeftMouseCcNumber      = "pointerControlLeftMouseCcNumber";
+static constexpr auto kPointerControlMiddleMouseCcNumber    = "pointerControlMiddleMouseCcNumber";
+static constexpr auto kPointerControlRightMouseCcNumber     = "pointerControlRightMouseCcNumber";
+static constexpr auto kPointerControlCursorUpKeyCcNumber    = "pointerControlCursorUpKeyCcNumber";
+static constexpr auto kPointerControlCursorDownKeyCcNumber  = "pointerControlCursorDownKeyCcNumber";
+static constexpr auto kPointerControlEnterKeyCcNumber       = "pointerControlEnterKeyCcNumber";
 static constexpr auto kPointerControlXSnapWeight            = "pointerControlXSnapWeight";
 static constexpr auto kPointerControlYSnapWeight            = "pointerControlYSnapWeight";
 static constexpr auto kPointerControlOverlayTransparency    = "pointerControlOverlayTransparency";
@@ -519,6 +527,94 @@ int AppSettings::getPointerControlAdjustCcNumber() const
 void AppSettings::setPointerControlAdjustCcNumber(int ccNumber)
 {
     xml->setAttribute(kPointerControlAdjustCcNumberNew, juce::jlimit(0, 127, ccNumber));
+    save();
+}
+
+int AppSettings::getPointerControlTabCcNumber() const
+{
+    return juce::jlimit(0, 127, xml->getIntAttribute(kPointerControlTabCcNumber, 27));
+}
+
+void AppSettings::setPointerControlTabCcNumber(int ccNumber)
+{
+    xml->setAttribute(kPointerControlTabCcNumber, juce::jlimit(0, 127, ccNumber));
+    save();
+}
+
+int AppSettings::getPointerControlTabSwitchCooldownMs() const
+{
+    return juce::jlimit(0, 1000, xml->getIntAttribute(kPointerControlTabSwitchCooldownMs, 150));
+}
+
+void AppSettings::setPointerControlTabSwitchCooldownMs(int delayMs)
+{
+    xml->setAttribute(kPointerControlTabSwitchCooldownMs, juce::jlimit(0, 1000, delayMs));
+    save();
+}
+
+int AppSettings::getPointerControlLeftMouseCcNumber() const
+{
+    return juce::jlimit(0, 127, xml->getIntAttribute(kPointerControlLeftMouseCcNumber, 52));
+}
+
+void AppSettings::setPointerControlLeftMouseCcNumber(int ccNumber)
+{
+    xml->setAttribute(kPointerControlLeftMouseCcNumber, juce::jlimit(0, 127, ccNumber));
+    save();
+}
+
+int AppSettings::getPointerControlMiddleMouseCcNumber() const
+{
+    return juce::jlimit(0, 127, xml->getIntAttribute(kPointerControlMiddleMouseCcNumber, 53));
+}
+
+void AppSettings::setPointerControlMiddleMouseCcNumber(int ccNumber)
+{
+    xml->setAttribute(kPointerControlMiddleMouseCcNumber, juce::jlimit(0, 127, ccNumber));
+    save();
+}
+
+int AppSettings::getPointerControlRightMouseCcNumber() const
+{
+    return juce::jlimit(0, 127, xml->getIntAttribute(kPointerControlRightMouseCcNumber, 54));
+}
+
+void AppSettings::setPointerControlRightMouseCcNumber(int ccNumber)
+{
+    xml->setAttribute(kPointerControlRightMouseCcNumber, juce::jlimit(0, 127, ccNumber));
+    save();
+}
+
+int AppSettings::getPointerControlCursorUpKeyCcNumber() const
+{
+    return juce::jlimit(0, 127, xml->getIntAttribute(kPointerControlCursorUpKeyCcNumber, 55));
+}
+
+void AppSettings::setPointerControlCursorUpKeyCcNumber(int ccNumber)
+{
+    xml->setAttribute(kPointerControlCursorUpKeyCcNumber, juce::jlimit(0, 127, ccNumber));
+    save();
+}
+
+int AppSettings::getPointerControlCursorDownKeyCcNumber() const
+{
+    return juce::jlimit(0, 127, xml->getIntAttribute(kPointerControlCursorDownKeyCcNumber, 56));
+}
+
+void AppSettings::setPointerControlCursorDownKeyCcNumber(int ccNumber)
+{
+    xml->setAttribute(kPointerControlCursorDownKeyCcNumber, juce::jlimit(0, 127, ccNumber));
+    save();
+}
+
+int AppSettings::getPointerControlEnterKeyCcNumber() const
+{
+    return juce::jlimit(0, 127, xml->getIntAttribute(kPointerControlEnterKeyCcNumber, 57));
+}
+
+void AppSettings::setPointerControlEnterKeyCcNumber(int ccNumber)
+{
+    xml->setAttribute(kPointerControlEnterKeyCcNumber, juce::jlimit(0, 127, ccNumber));
     save();
 }
 

@@ -63,6 +63,8 @@ target_sources(PolyHostPlugin PRIVATE
     ButtonStyling.h
     PointerControl.cpp
     PointerControl.h
+    PointerSettingsDialogue.cpp
+    PointerSettingsDialogue.h
     RoutingView.cpp
     RoutingView.h
     MacroMappingsView.cpp

@@ -67,6 +67,30 @@ public:
     int getPointerControlAdjustCcNumber() const;
     void setPointerControlAdjustCcNumber(int ccNumber);
 
+    int getPointerControlTabCcNumber() const;
+    void setPointerControlTabCcNumber(int ccNumber);
+
+    int getPointerControlTabSwitchCooldownMs() const;
+    void setPointerControlTabSwitchCooldownMs(int delayMs);
+
+    int getPointerControlLeftMouseCcNumber() const;
+    void setPointerControlLeftMouseCcNumber(int ccNumber);
+
+    int getPointerControlMiddleMouseCcNumber() const;
+    void setPointerControlMiddleMouseCcNumber(int ccNumber);
+
+    int getPointerControlRightMouseCcNumber() const;
+    void setPointerControlRightMouseCcNumber(int ccNumber);
+
+    int getPointerControlCursorUpKeyCcNumber() const;
+    void setPointerControlCursorUpKeyCcNumber(int ccNumber);
+
+    int getPointerControlCursorDownKeyCcNumber() const;
+    void setPointerControlCursorDownKeyCcNumber(int ccNumber);
+
+    int getPointerControlEnterKeyCcNumber() const;
+    void setPointerControlEnterKeyCcNumber(int ccNumber);
+
     float getPointerControlXSnapWeight() const;
     void setPointerControlXSnapWeight(float weight);
 

@@ -41,7 +41,7 @@ set "APP_NAME=savihost3x64.exe"
 
 echo.
 echo ============================================================
-echo PolyHost VST3 Plugin Build Script
+echo PolyHost - VST3 Plugin Build Script
 echo ============================================================
 echo.
 

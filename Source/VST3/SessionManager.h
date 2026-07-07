@@ -40,8 +40,6 @@ struct SessionTabData
     bool hasSavedWindowBounds = false;
     int savedWindowWidth = 0;
     int savedWindowHeight = 0;
-    bool hasSavedMacroMappingsHeight = false;
-    int savedMacroMappingsHeight = 0;
     juce::StringArray midiAssignedDeviceIdentifiers;
     float pointerLaneTolerance = 30.0f;
     int pointerAdjustSensitivity = 1;

@@ -41,6 +41,9 @@ public:
     void mouseWheelMove(const juce::MouseEvent& event,
                         const juce::MouseWheelDetails& wheel) override;
 
+    void setPointerEditGestureActive(bool shouldBeActive);
+    bool isPointerEditGestureActive() const;
+
 private:
     class PointerEditOverlayHost;
     class StatusMetersComponent;
@@ -573,10 +576,12 @@ private:
     int lastPointerYccValue = -1;
     int lastPointerAdjustCcValue = -1;
     int lastPointerToleranceCcValue = -1;
+    double lastPointerTabSwitchTimeMs = 0.0;
     juce::String temporaryStatusMessage;
     juce::uint32 temporaryStatusExpiryMs = 0;
 
     bool pointerControlEditModeEnabled = false;
+    bool pointerEditGestureActive = false;
     std::unique_ptr<PointerEditOverlayHost> pointerEditOverlayHost;
 
     bool handleDroppedPluginFile(const juce::File& file, int targetTabIndex);
