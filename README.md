@@ -25,6 +25,8 @@ See the demos at the bottom of the page for a better idea of what it does...
 | Portable settings (no AppData/registry) | ✅ Working |
 | Audio / MIDI recording | 🔲 Planned for standalone |
 | Pointer Control functionality | ✅ Working - Absolute (1) and Relative (3) knob modes|
+| Mouse button emulation | ✅ Working * (Left, Middle, Right buttons) |
+| Keyboard emulation | ✅ Working * (Limited to: Up, Down, Enter) |
 | MIDI Macros | ✅ Working * |
 | Plugin Repair - locates missing plugins | ✅ Working |
 | Standalone App | ✅ Working |
@@ -103,6 +105,10 @@ This includes:
 - adjust sensitivity control
 - optional point snapping
 - editable jump-point maps per plugin tab
+
+ Further extended to include Left, Middle, Right mouse button emulation to reduce reliance on mouse when using MIDI hardware to control and edit plugins.
+ 
+ Also added simple Keyboard support for the same reason. Now you can use your MIDI device to control mouse position, mouse clicks and then select items from menus, etc.
 
 ### Pointer Edit Overlay
 Pointer Edit Mode displays an overlay over the hosted plugin editor so jump points can be created, previewed, removed, and visually aligned.
