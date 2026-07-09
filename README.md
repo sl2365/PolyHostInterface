@@ -126,7 +126,7 @@ The overlay supports:
 - allow using a preset map to be saved that overrides global one
 - right click and drag to set a rectangular area where snapping is disabled:
 
-- - Up to 8 pointer free zones per tab.
+ - Up to 8 pointer free zones per tab.
 - Right-drag adds a new rectangle.
 - Existing rectangles stay in place.
 - Overlapping rectangles are allowed.
