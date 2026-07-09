@@ -125,18 +125,17 @@ The overlay supports:
 - global/preset map source indication
 - allow using a preset map to be saved that overrides global one
 - right click and drag to set a rectangular area where snapping is disabled:
-
- - Up to 8 pointer free zones per tab.
-- Right-drag adds a new rectangle.
-- Existing rectangles stay in place.
-- Overlapping rectangles are allowed.
-- Right-click inside a rectangle removes one rectangle.
-- If rectangles overlap, deletion removes the smallest rectangle under the cursor.
-- If overlapping rectangles are the same size, deletion removes the newest one.
-- Bottom bar now shows: Free Zones: N
-- Preset and global pointer-map XML now save/load multiple zones.
-- Old single-zone XML is still loaded for compatibility.
-- Edge snapping/free movement now works against the list of zones.
+  - Up to 8 pointer free zones per tab.
+  - Right-drag adds a new rectangle.
+  - Existing rectangles stay in place.
+  - Overlapping rectangles are allowed.
+  - Right-click inside a rectangle removes one rectangle.
+  - If rectangles overlap, deletion removes the smallest rectangle under the cursor.
+  - If overlapping rectangles are the same size, deletion removes the newest one.
+  - Bottom bar now shows: Free Zones: N
+  - Preset and global pointer-map XML now save/load multiple zones.
+  - Old single-zone XML is still loaded for compatibility.
+  - Edge snapping/free movement now works against the list of zones.
 
 
 > [!NOTE]
