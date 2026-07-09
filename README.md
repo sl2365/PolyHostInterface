@@ -15,7 +15,7 @@ See the demos at the bottom of the page for a better idea of what it does...
 | Feature | Status - Some features only in APP or VST3 |
 |---|---|
 | VST3 x64 | ✅ Working - Also supports Shell VST's|
-| CLAP x64 | ✅ Working - May be buggy - Requires CLAP SDK to build — see below |
+| CLAP x64 | ✅ Working - May be buggy - Requires CLAP SDK to build — see below. NOTE: Once JUCE natively supports CLAP, then it will be added to the VST3 plugin version of PHI |
 | VST2 x64 | ✅ Working - Requires Steinberg VST2 SDK to build — see below |
 | VST2 **32-bit** in 64-bit host | 🔴 Needs plugin bridge — see below - planned |
 | MIDI 1.0 | ✅ Working |
@@ -208,6 +208,32 @@ A built-in MIDI monitor can be used to inspect incoming MIDI events, including:
 - system messages
 - clock / active sensing filtering
 - filter specific events
+
+Pause / Freeze works like this:
+- Pause:
+  - stops capture.
+  - incoming monitor events are discarded while paused.
+  
+- Freeze:
+  - keeps capturing internally.
+  - visible table stops updating/scrolling.
+  - unfreezing refreshes the table with the captured rows.
+
+Copy/export behaviour:
+- Copy Row:
+  - copies selected visible row as tab-separated text.
+
+- Copy All:
+  - copies all currently visible rows as tab-separated text.
+
+- Export:
+  - exports currently visible rows to .csv or .txt.
+
+- Raw Hex:
+  - shows raw MIDI bytes, for example:
+  - B0 07 64
+  - E0 00 40
+  - F0 7E 7F 09 01 F7
 
 ## Project Folder Structure
 
