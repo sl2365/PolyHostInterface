@@ -38,6 +38,11 @@ public:
 
     void setJumpPoints(const juce::Array<JumpPoint>& newJumpPoints,
                        juce::Rectangle<int> sourceBounds);
+    void setFreeZones(const juce::Array<juce::Rectangle<float>>& sourceFreeZones,
+                      juce::Rectangle<int> sourceBounds);
+    void setFreeZone(bool shouldHaveFreeZone,
+                     juce::Rectangle<float> sourceFreeZone,
+                     juce::Rectangle<int> sourceBounds);
 
     void panX(int midiValue);
     void panY(int midiValue);
@@ -63,6 +68,12 @@ private:
     void updateJumpSelection();
     int findNearestJumpPointInCurrentLane() const;
     bool hasJumpPoints() const;
+    bool isPointInFreeZone(float x, float y) const;
+    int findFreeZoneForCurrentAxis() const;
+    bool shouldUseFreeZoneForCurrentAxis() const;
+    bool isCurrentVirtualPositionInFreeZone() const;
+    juce::Point<float> getFreeZoneAdjustedVirtualPosition() const;
+    void moveFreelyToVirtualPosition();
     void beginDrag();
     void moveDragBy(int deltaY);
     void restoreCursorIfHidden();
@@ -78,6 +89,7 @@ private:
 
     juce::Rectangle<int> targetScreenBounds;
     juce::Array<JumpPoint> jumpPoints;
+    juce::Array<juce::Rectangle<float>> freeZones;
     float virtualX = 0.0f;
     float virtualY = 0.0f;
 

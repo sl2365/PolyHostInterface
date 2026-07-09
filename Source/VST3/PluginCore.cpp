@@ -1,4 +1,5 @@
 #include "PluginCore.h"
+#include "DebugLog.h"
 
 namespace
 {
@@ -14,6 +15,47 @@ namespace
             return {};
 
         return block.toBase64Encoding();
+    }
+
+    juce::String makePluginQuarantineDisplayNameFromData(const SessionPluginData& pluginData)
+    {
+        auto name = pluginData.pluginName.trim();
+
+        if (name.isEmpty())
+            name = pluginData.pluginDescriptiveName.trim();
+
+        if (name.isEmpty())
+            name = juce::File(pluginData.pluginPath).getFileNameWithoutExtension();
+
+        if (name.isEmpty())
+            name = "Unknown Plugin";
+
+        auto manufacturer = pluginData.pluginManufacturer.trim();
+
+        if (manufacturer.isNotEmpty())
+            return manufacturer + " - " + name;
+
+        return name;
+    }
+
+    juce::String makeRestoreIssueTabTitle(const SessionPluginData& pluginData,
+                                          const juce::String& fallbackName)
+    {
+        auto title = pluginData.pluginName.trim();
+
+        if (title.isEmpty())
+            title = pluginData.pluginDescriptiveName.trim();
+
+        if (title.isEmpty())
+            title = fallbackName.trim();
+
+        if (title.isEmpty())
+            title = juce::File(pluginData.pluginPath).getFileNameWithoutExtension();
+
+        if (title.isEmpty())
+            title = "Problem Plugin";
+
+        return title;
     }
 
     juce::String sanitisePointerMapToken(juce::String text)
@@ -35,6 +77,335 @@ namespace
 
         return text;
     }
+
+    bool pointerMapStringsMatch(const juce::String& a, const juce::String& b)
+    {
+        const auto lhs = a.trim();
+        const auto rhs = b.trim();
+
+        return lhs.isNotEmpty()
+            && rhs.isNotEmpty()
+            && lhs.equalsIgnoreCase(rhs);
+    }
+
+    bool pluginDescriptionMatchesSessionPluginData(const juce::PluginDescription& description,
+                                                   const SessionPluginData& pluginData)
+    {
+        const auto savedFormat = pluginData.pluginFormatName.trim();
+
+        const bool formatMatches =
+            savedFormat.isEmpty()
+            || description.pluginFormatName.trim().isEmpty()
+            || pointerMapStringsMatch(savedFormat, description.pluginFormatName);
+
+        const bool uniqueIdMatches =
+            pluginData.pluginUniqueId != 0
+            && description.uniqueId != 0
+            && pluginData.pluginUniqueId == description.uniqueId;
+
+        if (uniqueIdMatches && formatMatches)
+            return true;
+
+        const bool nameMatches =
+            pointerMapStringsMatch(pluginData.pluginName, description.name)
+            || pointerMapStringsMatch(pluginData.pluginName, description.descriptiveName)
+            || pointerMapStringsMatch(pluginData.pluginDescriptiveName, description.name)
+            || pointerMapStringsMatch(pluginData.pluginDescriptiveName, description.descriptiveName);
+
+        const bool manufacturerMatches =
+            pluginData.pluginManufacturer.trim().isEmpty()
+            || description.manufacturerName.trim().isEmpty()
+            || pointerMapStringsMatch(pluginData.pluginManufacturer, description.manufacturerName);
+
+        return formatMatches
+            && manufacturerMatches
+            && nameMatches;
+    }
+
+    juce::String getBestPointerMapPluginName(const juce::PluginDescription& description)
+    {
+        auto name = description.name.trim();
+        const auto manufacturer = description.manufacturerName.trim();
+        const auto descriptiveName = description.descriptiveName.trim();
+
+        if (name.isEmpty() || name.equalsIgnoreCase(manufacturer))
+        {
+            if (descriptiveName.isNotEmpty() && ! descriptiveName.equalsIgnoreCase(manufacturer))
+                name = descriptiveName;
+            else
+                name.clear();
+        }
+
+        if (name.isEmpty())
+            name = "Unknown Plugin";
+
+        return name;
+    }
+
+    juce::String getBestPointerMapManufacturerName(const juce::PluginDescription& description)
+    {
+        auto manufacturer = description.manufacturerName.trim();
+
+        if (manufacturer.isEmpty())
+            manufacturer = "Unknown Manufacturer";
+
+        return manufacturer;
+    }
+
+    bool pointerMapDescriptionNeedsUserLabel(const juce::PluginDescription& description)
+    {
+        const auto manufacturer = description.manufacturerName.trim();
+        const auto name = description.name.trim();
+        const auto descriptiveName = description.descriptiveName.trim();
+
+        const bool missingManufacturer = manufacturer.isEmpty();
+
+        const bool badPluginName =
+            name.isEmpty()
+            || (manufacturer.isNotEmpty() && name.equalsIgnoreCase(manufacturer));
+
+        const bool hasUsefulDescriptiveName =
+            descriptiveName.isNotEmpty()
+            && (manufacturer.isEmpty() || ! descriptiveName.equalsIgnoreCase(manufacturer));
+
+        return missingManufacturer || (badPluginName && ! hasUsefulDescriptiveName);
+    }
+
+    juce::String makePointerMapIdentityText(const juce::PluginDescription& description,
+                                            const juce::String& userLabel = {})
+    {
+        const auto trimmedUserLabel = userLabel.trim();
+
+        if (trimmedUserLabel.isNotEmpty())
+            return trimmedUserLabel;
+
+        juce::String text = getBestPointerMapManufacturerName(description)
+                          + " - "
+                          + getBestPointerMapPluginName(description);
+
+        if (description.pluginFormatName.isNotEmpty())
+            text += " [" + description.pluginFormatName + "]";
+
+        if (description.uniqueId != 0)
+            text += " UID " + juce::String(description.uniqueId);
+
+        return text;
+    }
+
+    bool pointerMapXmlHasPluginIdentity(const juce::XmlElement& xml)
+    {
+        return xml.hasAttribute("pluginName")
+            || xml.hasAttribute("pluginDescriptiveName")
+            || xml.hasAttribute("pluginManufacturer")
+            || xml.hasAttribute("pluginFormatName")
+            || xml.hasAttribute("pluginUniqueId")
+            || xml.hasAttribute("userDisplayName");
+    }
+
+    bool pointerMapXmlMatchesDescription(const juce::XmlElement& xml,
+                                         const juce::PluginDescription& description)
+    {
+        if (! pointerMapXmlHasPluginIdentity(xml))
+            return false;
+
+        const int savedUniqueId = xml.getIntAttribute("pluginUniqueId", 0);
+        const auto savedFormat = xml.getStringAttribute("pluginFormatName").trim();
+
+        const bool formatMatches =
+            savedFormat.isEmpty()
+            || description.pluginFormatName.trim().isEmpty()
+            || pointerMapStringsMatch(savedFormat, description.pluginFormatName);
+
+        const bool uniqueIdMatches =
+            savedUniqueId != 0
+            && description.uniqueId != 0
+            && savedUniqueId == description.uniqueId;
+
+        if (uniqueIdMatches && formatMatches)
+            return true;
+
+        const auto savedName = xml.getStringAttribute("pluginName").trim();
+        const auto savedDescriptiveName = xml.getStringAttribute("pluginDescriptiveName").trim();
+        const auto savedManufacturer = xml.getStringAttribute("pluginManufacturer").trim();
+
+        const bool nameMatches =
+            pointerMapStringsMatch(savedName, description.name)
+            || pointerMapStringsMatch(savedName, description.descriptiveName)
+            || pointerMapStringsMatch(savedDescriptiveName, description.name)
+            || pointerMapStringsMatch(savedDescriptiveName, description.descriptiveName)
+            || pointerMapStringsMatch(savedName, getBestPointerMapPluginName(description))
+            || pointerMapStringsMatch(savedDescriptiveName, getBestPointerMapPluginName(description));
+
+        const bool manufacturerMatches =
+            savedManufacturer.isEmpty()
+            || description.manufacturerName.trim().isEmpty()
+            || pointerMapStringsMatch(savedManufacturer, description.manufacturerName)
+            || pointerMapStringsMatch(savedManufacturer, getBestPointerMapManufacturerName(description));
+
+        return formatMatches
+            && manufacturerMatches
+            && nameMatches;
+    }
+
+    void writePointerMapPluginIdentity(juce::XmlElement& xml,
+                                       const juce::PluginDescription& description,
+                                       const juce::String& userLabel)
+    {
+        const auto trimmedUserLabel = userLabel.trim();
+
+        xml.setAttribute("schemaVersion", 3);
+        xml.setAttribute("pluginName", description.name);
+        xml.setAttribute("pluginDescriptiveName", description.descriptiveName);
+        xml.setAttribute("pluginManufacturer", description.manufacturerName);
+        xml.setAttribute("pluginFormatName", description.pluginFormatName);
+        xml.setAttribute("pluginUniqueId", description.uniqueId);
+        xml.setAttribute("pluginVersion", description.version);
+        xml.setAttribute("isInstrument", description.isInstrument);
+        xml.setAttribute("displayName", makePointerMapIdentityText(description, trimmedUserLabel));
+
+        if (trimmedUserLabel.isNotEmpty())
+            xml.setAttribute("userDisplayName", trimmedUserLabel);
+    }
+
+    std::unique_ptr<juce::XmlElement> parsePointerMapFile(const juce::File& file)
+    {
+        if (! file.existsAsFile())
+            return {};
+
+        std::unique_ptr<juce::XmlElement> xml(juce::XmlDocument::parse(file));
+
+        if (xml == nullptr || ! xml->hasTagName("PointerMap"))
+            return {};
+
+        return xml;
+    }
+
+    juce::File findExistingPointerMapFileForDescription(const juce::File& mapsDir,
+                                                        const juce::File& legacyFile,
+                                                        const juce::PluginDescription& description)
+    {
+        if (mapsDir.isDirectory())
+        {
+            for (const auto& entry : juce::RangedDirectoryIterator(mapsDir,
+                                                                   false,
+                                                                   "*.xml",
+                                                                   juce::File::findFiles))
+            {
+                const auto file = entry.getFile();
+
+                if (auto xml = parsePointerMapFile(file))
+                {
+                    if (pointerMapXmlMatchesDescription(*xml, description))
+                        return file;
+                }
+            }
+        }
+
+        if (legacyFile.existsAsFile())
+        {
+            if (auto legacyXml = parsePointerMapFile(legacyFile))
+            {
+                if (! pointerMapXmlHasPluginIdentity(*legacyXml)
+                    || pointerMapXmlMatchesDescription(*legacyXml, description))
+                {
+                    return legacyFile;
+                }
+            }
+        }
+
+        return {};
+    }
+
+    juce::File getNonConflictingPointerMapFile(const juce::File& baseFile)
+    {
+        if (! baseFile.existsAsFile())
+            return baseFile;
+
+        const auto parent = baseFile.getParentDirectory();
+        const auto baseName = baseFile.getFileNameWithoutExtension();
+        const auto extension = baseFile.getFileExtension();
+
+        for (int i = 2; i < 1000; ++i)
+        {
+            auto candidate = parent.getChildFile(baseName + " (" + juce::String(i) + ")")
+                                   .withFileExtension(extension);
+
+            if (! candidate.existsAsFile())
+                return candidate;
+        }
+
+        return parent.getChildFile(baseName + " (" + juce::String(juce::Time::getMillisecondCounter()) + ")")
+                     .withFileExtension(extension);
+    }
+
+    juce::File getWritablePointerMapFileForDescription(const juce::File& mapsDir,
+                                                       const juce::File& defaultFile,
+                                                       const juce::PluginDescription& description)
+    {
+        auto existingFile = findExistingPointerMapFileForDescription(mapsDir,
+                                                                     defaultFile,
+                                                                     description);
+
+        if (existingFile.existsAsFile())
+            return existingFile;
+
+        return getNonConflictingPointerMapFile(defaultFile);
+    }
+    juce::String makePluginQuarantineKeyFromData(const SessionPluginData& pluginData)
+    {
+        juce::String key;
+        key << pluginData.pluginFormatName.trim() << "|"
+            << pluginData.pluginUniqueId << "|"
+            << pluginData.pluginManufacturer.trim() << "|"
+            << pluginData.pluginName.trim() << "|"
+            << pluginData.pluginDescriptiveName.trim() << "|"
+            << pluginData.pluginFileOrIdentifier.trim() << "|"
+            << pluginData.pluginPath.trim();
+
+        return key.toLowerCase();
+    }
+
+    juce::File getPluginLoadCrashMarkerFile()
+    {
+        auto settingsDir = juce::File::getSpecialLocation(juce::File::currentExecutableFile)
+            .getParentDirectory()
+            .getChildFile("Settings");
+
+        settingsDir.createDirectory();
+        return settingsDir.getChildFile("plugin-load-marker.xml");
+    }
+
+    void writePluginDataToXml(juce::XmlElement& xml, const SessionPluginData& pluginData)
+    {
+        xml.setAttribute("pluginName", pluginData.pluginName);
+        xml.setAttribute("pluginDescriptiveName", pluginData.pluginDescriptiveName);
+        xml.setAttribute("pluginPath", pluginData.pluginPath);
+        xml.setAttribute("pluginPathRelative", pluginData.pluginPathRelative);
+        xml.setAttribute("pluginPathDriveFlexible", pluginData.pluginPathDriveFlexible);
+        xml.setAttribute("pluginFormatName", pluginData.pluginFormatName);
+        xml.setAttribute("pluginFileOrIdentifier", pluginData.pluginFileOrIdentifier);
+        xml.setAttribute("pluginUniqueId", pluginData.pluginUniqueId);
+        xml.setAttribute("isInstrument", pluginData.isInstrument);
+        xml.setAttribute("pluginManufacturer", pluginData.pluginManufacturer);
+        xml.setAttribute("pluginVersion", pluginData.pluginVersion);
+    }
+
+    SessionPluginData readPluginDataFromXml(const juce::XmlElement& xml)
+    {
+        SessionPluginData pluginData;
+        pluginData.pluginName = xml.getStringAttribute("pluginName");
+        pluginData.pluginDescriptiveName = xml.getStringAttribute("pluginDescriptiveName");
+        pluginData.pluginPath = xml.getStringAttribute("pluginPath");
+        pluginData.pluginPathRelative = xml.getStringAttribute("pluginPathRelative");
+        pluginData.pluginPathDriveFlexible = xml.getStringAttribute("pluginPathDriveFlexible");
+        pluginData.pluginFormatName = xml.getStringAttribute("pluginFormatName");
+        pluginData.pluginFileOrIdentifier = xml.getStringAttribute("pluginFileOrIdentifier");
+        pluginData.pluginUniqueId = xml.getIntAttribute("pluginUniqueId", 0);
+        pluginData.isInstrument = xml.getBoolAttribute("isInstrument", false);
+        pluginData.pluginManufacturer = xml.getStringAttribute("pluginManufacturer");
+        pluginData.pluginVersion = xml.getStringAttribute("pluginVersion");
+        return pluginData;
+    }
 }
 
 PluginCore::PluginCore()
@@ -43,7 +414,237 @@ PluginCore::PluginCore()
 
     sessionDocument.clear();
     statusText = "Ready";
-    refreshAvailableMidiInputs();
+
+    addTab("Empty");
+    setSelectedTabIndex(0);
+    tabModel.selectTab(0);
+    rebuildTabModelFromHostedTabs();
+}
+
+juce::String PluginCore::makePluginQuarantineKey(const SessionPluginData& pluginData)
+{
+    return makePluginQuarantineKeyFromData(pluginData);
+}
+
+juce::String PluginCore::makePluginQuarantineDisplayName(const SessionPluginData& pluginData)
+{
+    return makePluginQuarantineDisplayNameFromData(pluginData);
+}
+
+bool PluginCore::isPluginQuarantined(const SessionPluginData& pluginData, juce::String* reason) const
+{
+    const auto key = makePluginQuarantineKey(pluginData);
+
+    if (key.trim().isEmpty())
+        return false;
+
+    const auto storedReason = pluginQuarantineReasons[key];
+
+    if (storedReason.isEmpty())
+        return false;
+
+    if (reason != nullptr)
+        *reason = storedReason;
+
+    return true;
+}
+
+void PluginCore::quarantinePlugin(const SessionPluginData& pluginData, const juce::String& reason)
+{
+    const auto key = makePluginQuarantineKey(pluginData);
+
+    if (key.trim().isEmpty())
+        return;
+
+    const auto displayName = makePluginQuarantineDisplayName(pluginData);
+    const auto reasonToStore = reason.trim().isNotEmpty() ? reason.trim()
+                                                          : "Plugin load/restore failed";
+
+    pluginQuarantineReasons.set(key, reasonToStore);
+
+    DebugLog::write("[PluginQuarantine] blocked for this session | plugin="
+                    + displayName
+                    + " | reason="
+                    + reasonToStore);
+}
+
+void PluginCore::clearPluginQuarantine(const SessionPluginData& pluginData)
+{
+    const auto key = makePluginQuarantineKey(pluginData);
+
+    if (key.trim().isNotEmpty())
+        pluginQuarantineReasons.remove(juce::StringRef(key));
+}
+
+void PluginCore::clearPluginQuarantine()
+{
+    pluginQuarantineReasons.clear();
+}
+
+juce::String PluginCore::getPluginQuarantineReport() const
+{
+    juce::String report;
+
+    for (int i = 0; i < pluginQuarantineReasons.size(); ++i)
+    {
+        report << pluginQuarantineReasons.getAllKeys()[i]
+               << " | "
+               << pluginQuarantineReasons.getAllValues()[i]
+               << "\n";
+    }
+
+    return report;
+}
+
+void PluginCore::setLastPresetLoadReport(const juce::String& reportText, bool hadIssues)
+{
+    lastPresetLoadReportText = reportText;
+    lastPresetLoadReportHadProblems = hadIssues;
+}
+
+void PluginCore::clearLastPresetLoadReport()
+{
+    lastPresetLoadReportText.clear();
+    lastPresetLoadReportHadProblems = false;
+}
+
+bool PluginCore::hasLastPresetLoadReport() const
+{
+    return lastPresetLoadReportText.trim().isNotEmpty();
+}
+
+bool PluginCore::lastPresetLoadReportHadIssues() const
+{
+    return lastPresetLoadReportHadProblems;
+}
+
+juce::String PluginCore::getLastPresetLoadReport() const
+{
+    return lastPresetLoadReportText;
+}
+
+void PluginCore::clearTabRestoreIssue(HostedTabState& tab)
+{
+    tab.restoreIssueActive = false;
+    tab.restoreIssueMissingPlugin = false;
+    tab.restoreIssueFailedPlugin = false;
+    tab.restoreIssueTitle.clear();
+    tab.restoreIssueMessage.clear();
+    tab.restoreIssueType = PluginSlotType::Empty;
+    tab.restoreIssueHasPluginData = false;
+    tab.restoreIssuePluginData = {};
+}
+
+void PluginCore::setTabRestoreIssue(int tabIndex,
+                                    const SessionPluginData& pluginData,
+                                    bool isMissingPlugin,
+                                    const juce::String& message)
+{
+    if (! juce::isPositiveAndBelow(tabIndex, hostedTabs.size()))
+        return;
+
+    auto* tab = hostedTabs[tabIndex];
+
+    if (tab == nullptr)
+        return;
+
+    const auto title = makeRestoreIssueTabTitle(pluginData, tab->tabName);
+
+    tab->restoreIssueActive = true;
+    tab->restoreIssueMissingPlugin = isMissingPlugin;
+    tab->restoreIssueFailedPlugin = ! isMissingPlugin;
+    tab->restoreIssueTitle = title;
+    tab->restoreIssueMessage = message.trim().isNotEmpty() ? message.trim()
+                                                           : "This plugin could not be restored.";
+    tab->restoreIssueType = pluginData.isInstrument ? PluginSlotType::Synth
+                                                     : PluginSlotType::FX;
+    tab->restoreIssueHasPluginData = true;
+    tab->restoreIssuePluginData = pluginData;
+    tab->tabName = title;
+}
+
+bool PluginCore::tabNeedsAttention(int tabIndex) const
+{
+    return juce::isPositiveAndBelow(tabIndex, hostedTabs.size())
+        && hostedTabs[tabIndex] != nullptr
+        && hostedTabs[tabIndex]->restoreIssueActive;
+}
+
+bool PluginCore::tabHasMissingPluginIssue(int tabIndex) const
+{
+    return tabNeedsAttention(tabIndex)
+        && hostedTabs[tabIndex]->restoreIssueMissingPlugin;
+}
+
+bool PluginCore::tabHasFailedPluginIssue(int tabIndex) const
+{
+    return tabNeedsAttention(tabIndex)
+        && hostedTabs[tabIndex]->restoreIssueFailedPlugin;
+}
+
+juce::String PluginCore::getTabAttentionTitle(int tabIndex) const
+{
+    if (! tabNeedsAttention(tabIndex))
+        return {};
+
+    return hostedTabs[tabIndex]->restoreIssueTitle;
+}
+
+juce::String PluginCore::getTabAttentionMessage(int tabIndex) const
+{
+    if (! tabNeedsAttention(tabIndex))
+        return {};
+
+    return hostedTabs[tabIndex]->restoreIssueMessage;
+}
+
+void PluginCore::beginPluginLoadCrashMarker(const SessionPluginData& pluginData, int tabIndex)
+{
+    juce::XmlElement marker("PolyHostPluginLoadMarker");
+    marker.setAttribute("tabIndex", tabIndex);
+    marker.setAttribute("displayName", makePluginQuarantineDisplayName(pluginData));
+    marker.setAttribute("key", makePluginQuarantineKey(pluginData));
+    marker.setAttribute("startedAt", juce::Time::getCurrentTime().toString(true, true));
+    writePluginDataToXml(marker, pluginData);
+    marker.writeTo(getPluginLoadCrashMarkerFile(), {});
+}
+
+void PluginCore::clearPluginLoadCrashMarker()
+{
+    getPluginLoadCrashMarkerFile().deleteFile();
+}
+
+void PluginCore::importUnclosedPluginLoadCrashMarker(juce::StringArray& warnings)
+{
+    auto markerFile = getPluginLoadCrashMarkerFile();
+
+    if (! markerFile.existsAsFile())
+        return;
+
+    std::unique_ptr<juce::XmlElement> marker(juce::XmlDocument::parse(markerFile));
+    markerFile.deleteFile();
+
+    if (marker == nullptr || ! marker->hasTagName("PolyHostPluginLoadMarker"))
+        return;
+
+    const auto pluginData = readPluginDataFromXml(*marker);
+    const auto displayName = marker->getStringAttribute("displayName",
+                                                        makePluginQuarantineDisplayName(pluginData));
+    const auto startedAt = marker->getStringAttribute("startedAt");
+
+    juce::String reason = "Previous plugin load/restore did not complete";
+
+    if (startedAt.isNotEmpty())
+        reason << " (started " << startedAt << ")";
+
+    quarantinePlugin(pluginData, reason);
+    warnings.add("Quarantined plugin after previous interrupted load/restore: " + displayName);
+}
+
+void PluginCore::ensurePluginFormatsInitialised()
+{
+    if (pluginFormatsInitialised)
+        return;
 
    #if JUCE_PLUGINHOST_VST3
     formatManager.addFormat(std::make_unique<juce::VST3PluginFormat>());
@@ -53,45 +654,69 @@ PluginCore::PluginCore()
     formatManager.addFormat(std::make_unique<juce::VSTPluginFormat>());
    #endif
 
-    addTab("Empty");
-    setSelectedTabIndex(0);
-    tabModel.selectTab(0);
-    rebuildTabModelFromHostedTabs();
+    pluginFormatsInitialised = true;
 }
 
 PluginCore::~PluginCore()
 {
+    playbackPrepared.store(false);
+
     for (auto* tab : hostedTabs)
+    {
+        if (tab == nullptr)
+            continue;
+
         detachFromHostedPlugin(tab->pluginInstance.get());
+
+        if (tab->pluginInstance != nullptr)
+        {
+            tab->pluginInstance->releaseResources();
+            tab->pluginInstance.reset();
+        }
+    }
+
+    hostedTabs.clear();
 }
 
 void PluginCore::prepareToPlay(double sampleRate, int samplesPerBlock)
 {
+    playbackPrepared.store(false);
+
     currentSampleRate = sampleRate;
     currentBlockSize = samplesPerBlock;
-    playbackPrepared = true;
 
     for (auto* tab : hostedTabs)
     {
+        if (tab == nullptr)
+            continue;
+
         if (tab->pluginInstance != nullptr)
             tab->pluginInstance->prepareToPlay(sampleRate, samplesPerBlock);
     }
+
+    playbackPrepared.store(true);
 }
 
 void PluginCore::releaseResources()
 {
+    playbackPrepared.store(false);
+
     for (auto* tab : hostedTabs)
     {
+        if (tab == nullptr)
+            continue;
+
         if (tab->pluginInstance != nullptr)
             tab->pluginInstance->releaseResources();
     }
-
-    playbackPrepared = false;
 }
 
 void PluginCore::processBlock(juce::AudioBuffer<float>& buffer,
                               juce::MidiBuffer& midiMessages)
 {
+    if (! playbackPrepared.load())
+        return;
+
     if (hostedTabs.isEmpty())
         return;
 
@@ -216,16 +841,34 @@ void PluginCore::processBlock(juce::AudioBuffer<float>& buffer,
         juce::MidiBuffer fxMidi;
         buildMidiBufferForTab(tabIndex, midiMessages, fxMidi);
 
-        const int totalInputChannels = instance->getTotalNumInputChannels();
-        const int totalOutputChannels = instance->getTotalNumOutputChannels();
+        const int totalInputChannels = juce::jmax(0, instance->getTotalNumInputChannels());
+        const int totalOutputChannels = juce::jmax(0, instance->getTotalNumOutputChannels());
+        const int processChannels = juce::jmax(hostChannels,
+                                               juce::jmax(totalInputChannels, totalOutputChannels));
 
-        if (hostChannels < totalOutputChannels)
-            continue;
+        juce::AudioBuffer<float> expandedFxBuffer;
+        juce::AudioBuffer<float>* processBuffer = &fxBuffer;
 
-        for (int ch = totalInputChannels; ch < hostChannels; ++ch)
-            fxBuffer.clear(ch, 0, numSamples);
+        if (processChannels > hostChannels)
+        {
+            expandedFxBuffer.setSize(processChannels, numSamples, false, false, true);
+            expandedFxBuffer.clear();
 
-        instance->processBlock(fxBuffer, fxMidi);
+            for (int ch = 0; ch < hostChannels; ++ch)
+                expandedFxBuffer.copyFrom(ch, 0, fxBuffer, ch, 0, numSamples);
+
+            processBuffer = &expandedFxBuffer;
+        }
+
+        const int inputChannelsToPreserve = juce::jlimit(0,
+                                                         processBuffer->getNumChannels(),
+                                                         totalInputChannels > 0 ? totalInputChannels
+                                                                                : hostChannels);
+
+        for (int ch = inputChannelsToPreserve; ch < processBuffer->getNumChannels(); ++ch)
+            processBuffer->clear(ch, 0, numSamples);
+
+        instance->processBlock(*processBuffer, fxMidi);
 
         const int nextFxTab = findNextActiveFxTab(tabIndex);
 
@@ -238,13 +881,13 @@ void PluginCore::processBlock(juce::AudioBuffer<float>& buffer,
                 auto& targetBuffer = fxInputBuffers.getReference(nextFxBufferIndex);
 
                 for (int ch = 0; ch < hostChannels; ++ch)
-                    targetBuffer.addFrom(ch, 0, fxBuffer, ch, 0, numSamples);
+                    targetBuffer.addFrom(ch, 0, *processBuffer, ch, 0, numSamples);
             }
         }
         else
         {
             for (int ch = 0; ch < hostChannels; ++ch)
-                finalOutput.addFrom(ch, 0, fxBuffer, ch, 0, numSamples);
+                finalOutput.addFrom(ch, 0, *processBuffer, ch, 0, numSamples);
         }
     }
 
@@ -303,10 +946,85 @@ juce::File PluginCore::getGlobalPointerMapFileForTab(int tabIndex) const
     juce::PluginDescription description;
     hostedTab->pluginInstance->fillInPluginDescription(description);
 
-    return getPointerMapsDirectory()
-        .getChildFile(makeSafePointerMapFileName(description.name,
-                                                 description.manufacturerName))
+    const auto mapsDir = getPointerMapsDirectory();
+    const auto defaultFile = mapsDir
+        .getChildFile(makeSafePointerMapFileName(getBestPointerMapPluginName(description),
+                                                 getBestPointerMapManufacturerName(description)))
         .withFileExtension(".xml");
+
+    return findExistingPointerMapFileForDescription(mapsDir,
+                                                    defaultFile,
+                                                    description);
+}
+
+juce::File PluginCore::getWritableGlobalPointerMapFileForTab(int tabIndex,
+                                                             const juce::String& userLabel) const
+{
+    if (! juce::isPositiveAndBelow(tabIndex, hostedTabs.size()))
+        return {};
+
+    const auto* hostedTab = hostedTabs[tabIndex];
+
+    if (hostedTab == nullptr || hostedTab->pluginInstance == nullptr)
+        return {};
+
+    juce::PluginDescription description;
+    hostedTab->pluginInstance->fillInPluginDescription(description);
+
+    const auto mapsDir = getPointerMapsDirectory();
+    const auto trimmedUserLabel = userLabel.trim();
+
+    juce::File defaultFile;
+
+    if (trimmedUserLabel.isNotEmpty())
+    {
+        defaultFile = mapsDir
+            .getChildFile(sanitisePointerMapToken(trimmedUserLabel))
+            .withFileExtension(".xml");
+    }
+    else
+    {
+        defaultFile = mapsDir
+            .getChildFile(makeSafePointerMapFileName(getBestPointerMapPluginName(description),
+                                                     getBestPointerMapManufacturerName(description)))
+            .withFileExtension(".xml");
+    }
+
+    return getWritablePointerMapFileForDescription(mapsDir,
+                                                   defaultFile,
+                                                   description);
+}
+
+juce::String PluginCore::getGlobalPointerMapIdentityText(int tabIndex) const
+{
+    if (! juce::isPositiveAndBelow(tabIndex, hostedTabs.size()))
+        return "Unknown plugin";
+
+    const auto* hostedTab = hostedTabs[tabIndex];
+
+    if (hostedTab == nullptr || hostedTab->pluginInstance == nullptr)
+        return "Unknown plugin";
+
+    juce::PluginDescription description;
+    hostedTab->pluginInstance->fillInPluginDescription(description);
+
+    return makePointerMapIdentityText(description);
+}
+
+bool PluginCore::globalPointerMapNeedsUserLabel(int tabIndex) const
+{
+    if (! juce::isPositiveAndBelow(tabIndex, hostedTabs.size()))
+        return true;
+
+    const auto* hostedTab = hostedTabs[tabIndex];
+
+    if (hostedTab == nullptr || hostedTab->pluginInstance == nullptr)
+        return true;
+
+    juce::PluginDescription description;
+    hostedTab->pluginInstance->fillInPluginDescription(description);
+
+    return pointerMapDescriptionNeedsUserLabel(description);
 }
 
 void PluginCore::updateMeterLevels(const juce::AudioBuffer<float>& inputBuffer,
@@ -505,8 +1223,11 @@ bool PluginCore::clearTab(int tabIndex)
     selectedTab->preferGlobalPointerMap = false;
     selectedTab->pointerJumpPoints.clear();
     selectedTab->presetPointerJumpPoints.clear();
+    selectedTab->pointerFreeZones.clear();
+    selectedTab->presetPointerFreeZones.clear();
     selectedTab->pointerLaneTolerance = 30.0f;
     selectedTab->pointerAdjustSensitivity = 1;
+    clearTabRestoreIssue(*selectedTab);
     selectedTab->midiAssignedDeviceIdentifiers.clear();
     selectedTab->midiAssignedDeviceIdentifiers.addIfNotAlreadyThere("MIDI Ch: All");
 
@@ -539,9 +1260,12 @@ bool PluginCore::reloadTabPlugin(int tabIndex)
         return false;
     }
 
+    juce::PluginDescription previousDescription;
+    selectedTab->pluginInstance->fillInPluginDescription(previousDescription);
+
     const auto pluginPath = selectedTab->slot->getPluginPath();
 
-    if (pluginPath.isEmpty())
+    if (pluginPath.isEmpty() && previousDescription.fileOrIdentifier.isEmpty())
     {
         selectedTabIndex = previousSelected;
         return false;
@@ -558,11 +1282,13 @@ bool PluginCore::reloadTabPlugin(int tabIndex)
     const auto preferGlobalPointerMap = selectedTab->preferGlobalPointerMap;
     const auto pointerJumpPoints = selectedTab->pointerJumpPoints;
     const auto presetPointerJumpPoints = selectedTab->presetPointerJumpPoints;
+    const auto pointerFreeZones = selectedTab->pointerFreeZones;
+    const auto presetPointerFreeZones = selectedTab->presetPointerFreeZones;
     const auto midiAssignments = selectedTab->midiAssignedDeviceIdentifiers;
 
     unloadMainSlotPlugin();
 
-    if (! loadMainSlotPluginFromPath(pluginPath))
+    if (! loadMainSlotPluginFromDescription(previousDescription))
     {
         selectedTab->tabName = tabName;
         selectedTab->bypassed = bypassed;
@@ -572,6 +1298,8 @@ bool PluginCore::reloadTabPlugin(int tabIndex)
         selectedTab->preferGlobalPointerMap = preferGlobalPointerMap;
         selectedTab->pointerJumpPoints = pointerJumpPoints;
         selectedTab->presetPointerJumpPoints = presetPointerJumpPoints;
+        selectedTab->pointerFreeZones = pointerFreeZones;
+        selectedTab->presetPointerFreeZones = presetPointerFreeZones;
         selectedTab->midiAssignedDeviceIdentifiers = midiAssignments;
 
         selectedTabIndex = previousSelected;
@@ -591,6 +1319,8 @@ bool PluginCore::reloadTabPlugin(int tabIndex)
     selectedTab->preferGlobalPointerMap = preferGlobalPointerMap;
     selectedTab->pointerJumpPoints = pointerJumpPoints;
     selectedTab->presetPointerJumpPoints = presetPointerJumpPoints;
+    selectedTab->pointerFreeZones = pointerFreeZones;
+    selectedTab->presetPointerFreeZones = presetPointerFreeZones;
     selectedTab->midiAssignedDeviceIdentifiers = midiAssignments;
 
     selectedTabIndex = previousSelected;
@@ -757,6 +1487,7 @@ void PluginCore::setTabPreferGlobalPointerMap(int tabIndex, bool shouldPreferGlo
     tab->preferGlobalPointerMap = shouldPreferGlobal;
 
     tab->pointerJumpPoints.clear();
+    tab->pointerFreeZones.clear();
 
     if (shouldPreferGlobal)
     {
@@ -765,6 +1496,7 @@ void PluginCore::setTabPreferGlobalPointerMap(int tabIndex, bool shouldPreferGlo
     else if (tab->hasCustomPointerMap)
     {
         tab->pointerJumpPoints = tab->presetPointerJumpPoints;
+        tab->pointerFreeZones = tab->presetPointerFreeZones;
     }
     else
     {
@@ -802,27 +1534,92 @@ bool PluginCore::loadGlobalPointerMapForTab(int tabIndex)
         points.add(point);
     }
 
-    hostedTabs[tabIndex]->pointerJumpPoints = points;
+    juce::Array<juce::Rectangle<float>> freeZones;
+
+    if (auto* freeZonesXml = xml->getChildByName("PointerFreeZones"))
+    {
+        for (auto* freeZoneXml : freeZonesXml->getChildIterator())
+        {
+            if (! freeZoneXml->hasTagName("Zone"))
+                continue;
+
+            auto zone = juce::Rectangle<float>(
+                (float) freeZoneXml->getDoubleAttribute("x", 0.0),
+                (float) freeZoneXml->getDoubleAttribute("y", 0.0),
+                (float) freeZoneXml->getDoubleAttribute("width", 0.0),
+                (float) freeZoneXml->getDoubleAttribute("height", 0.0));
+
+            if (! zone.isEmpty())
+                freeZones.add(zone);
+        }
+    }
+
+    // Legacy single-zone format support.
+    if (freeZones.isEmpty())
+    {
+        if (auto* freeZoneXml = xml->getChildByName("PointerFreeZone"))
+        {
+            auto zone = juce::Rectangle<float>(
+                (float) freeZoneXml->getDoubleAttribute("x", 0.0),
+                (float) freeZoneXml->getDoubleAttribute("y", 0.0),
+                (float) freeZoneXml->getDoubleAttribute("width", 0.0),
+                (float) freeZoneXml->getDoubleAttribute("height", 0.0));
+
+            if (! zone.isEmpty())
+                freeZones.add(zone);
+        }
+    }
+
+    auto* tab = hostedTabs[tabIndex];
+    tab->pointerJumpPoints = points;
+    tab->pointerFreeZones = freeZones;
     return true;
 }
 
-bool PluginCore::saveCurrentPointerMapToGlobalFile(int tabIndex)
+bool PluginCore::saveCurrentPointerMapToGlobalFile(int tabIndex,
+                                                   const juce::String& userLabel)
 {
     if (! juce::isPositiveAndBelow(tabIndex, hostedTabs.size()))
         return false;
 
-    auto file = getGlobalPointerMapFileForTab(tabIndex);
+    const auto* hostedTab = hostedTabs[tabIndex];
+
+    if (hostedTab == nullptr || hostedTab->pluginInstance == nullptr)
+        return false;
+
+    auto file = getWritableGlobalPointerMapFileForTab(tabIndex, userLabel);
 
     if (file == juce::File())
         return false;
 
+    juce::PluginDescription description;
+    hostedTab->pluginInstance->fillInPluginDescription(description);
+
     juce::XmlElement xml("PointerMap");
+    writePointerMapPluginIdentity(xml, description, userLabel);
 
     for (auto& point : hostedTabs[tabIndex]->pointerJumpPoints)
     {
         auto* pointXml = xml.createNewChildElement("Point");
         pointXml->setAttribute("x", point.x);
         pointXml->setAttribute("y", point.y);
+    }
+
+    if (! hostedTab->pointerFreeZones.isEmpty())
+    {
+        auto* freeZonesXml = xml.createNewChildElement("PointerFreeZones");
+
+        for (auto& zone : hostedTab->pointerFreeZones)
+        {
+            if (zone.isEmpty())
+                continue;
+
+            auto* freeZoneXml = freeZonesXml->createNewChildElement("Zone");
+            freeZoneXml->setAttribute("x", zone.getX());
+            freeZoneXml->setAttribute("y", zone.getY());
+            freeZoneXml->setAttribute("width", zone.getWidth());
+            freeZoneXml->setAttribute("height", zone.getHeight());
+        }
     }
 
     return xml.writeTo(file, {});
@@ -855,9 +1652,13 @@ void PluginCore::saveCurrentPointerMapToPreset(int tabIndex)
     auto* tab = hostedTabs[tabIndex];
     tab->hasCustomPointerMap = true;
     tab->presetPointerJumpPoints = tab->pointerJumpPoints;
+    tab->presetPointerFreeZones = tab->pointerFreeZones;
 
     if (! tab->preferGlobalPointerMap)
+    {
         tab->pointerJumpPoints = tab->presetPointerJumpPoints;
+        tab->pointerFreeZones = tab->presetPointerFreeZones;
+    }
 
     markDirty();
 }
@@ -871,6 +1672,8 @@ void PluginCore::clearCurrentPresetPointerMap(int tabIndex)
     tab->hasCustomPointerMap = false;
     tab->presetPointerJumpPoints.clear();
     tab->pointerJumpPoints.clear();
+    tab->presetPointerFreeZones.clear();
+    tab->pointerFreeZones.clear();
 
     loadGlobalPointerMapForTab(tabIndex);
     markDirty();
@@ -902,6 +1705,126 @@ void PluginCore::setTabPointerJumpPoints(int tabIndex,
         return;
 
     hostedTabs[tabIndex]->pointerJumpPoints = points;
+    markDirty();
+}
+
+bool PluginCore::tabHasPointerFreeZone(int tabIndex) const
+{
+    return tabHasPointerFreeZones(tabIndex);
+}
+
+bool PluginCore::tabHasPointerFreeZones(int tabIndex) const
+{
+    if (! juce::isPositiveAndBelow(tabIndex, hostedTabs.size()))
+        return false;
+
+    const auto* tab = hostedTabs[tabIndex];
+    return tab != nullptr && ! tab->pointerFreeZones.isEmpty();
+}
+
+juce::Rectangle<float> PluginCore::getTabPointerFreeZone(int tabIndex) const
+{
+    const auto& zones = getTabPointerFreeZones(tabIndex);
+
+    if (zones.isEmpty())
+        return {};
+
+    return zones.getReference(0);
+}
+
+const juce::Array<juce::Rectangle<float>>& PluginCore::getTabPointerFreeZones(int tabIndex) const
+{
+    static const juce::Array<juce::Rectangle<float>> emptyZones;
+
+    if (! juce::isPositiveAndBelow(tabIndex, hostedTabs.size()))
+        return emptyZones;
+
+    const auto* tab = hostedTabs[tabIndex];
+
+    if (tab == nullptr)
+        return emptyZones;
+
+    return tab->pointerFreeZones;
+}
+
+void PluginCore::setTabPointerFreeZone(int tabIndex, juce::Rectangle<float> freeZone)
+{
+    juce::Array<juce::Rectangle<float>> zones;
+
+    if (! freeZone.isEmpty())
+        zones.add(freeZone);
+
+    setTabPointerFreeZones(tabIndex, zones);
+}
+
+void PluginCore::setTabPointerFreeZones(int tabIndex, const juce::Array<juce::Rectangle<float>>& freeZones)
+{
+    if (! juce::isPositiveAndBelow(tabIndex, hostedTabs.size()))
+        return;
+
+    auto* tab = hostedTabs[tabIndex];
+
+    tab->pointerFreeZones.clear();
+
+    for (int i = 0; i < freeZones.size(); ++i)
+    {
+        const auto& zone = freeZones.getReference(i);
+
+        if (zone.getWidth() < 4.0f || zone.getHeight() < 4.0f)
+            continue;
+
+        tab->pointerFreeZones.add(zone);
+
+        if (tab->pointerFreeZones.size() >= 8)
+            break;
+    }
+
+    markDirty();
+}
+
+void PluginCore::addTabPointerFreeZone(int tabIndex, juce::Rectangle<float> freeZone)
+{
+    if (! juce::isPositiveAndBelow(tabIndex, hostedTabs.size()))
+        return;
+
+    if (freeZone.getWidth() < 4.0f || freeZone.getHeight() < 4.0f)
+        return;
+
+    auto zones = getTabPointerFreeZones(tabIndex);
+
+    if (zones.size() >= 8)
+        zones.remove(0);
+
+    zones.add(freeZone);
+    setTabPointerFreeZones(tabIndex, zones);
+}
+
+bool PluginCore::removeTabPointerFreeZoneAt(int tabIndex, int freeZoneIndex)
+{
+    if (! juce::isPositiveAndBelow(tabIndex, hostedTabs.size()))
+        return false;
+
+    auto* tab = hostedTabs[tabIndex];
+
+    if (tab == nullptr || ! juce::isPositiveAndBelow(freeZoneIndex, tab->pointerFreeZones.size()))
+        return false;
+
+    tab->pointerFreeZones.remove(freeZoneIndex);
+    markDirty();
+    return true;
+}
+
+void PluginCore::clearTabPointerFreeZone(int tabIndex)
+{
+    if (! juce::isPositiveAndBelow(tabIndex, hostedTabs.size()))
+        return;
+
+    auto* tab = hostedTabs[tabIndex];
+
+    if (tab == nullptr)
+        return;
+
+    tab->pointerFreeZones.clear();
     markDirty();
 }
 
@@ -969,6 +1892,122 @@ juce::String PluginCore::getRoutingTooltipForTab(int tabIndex) const
     }
 
     return "Empty tab";
+}
+
+
+juce::String PluginCore::buildPluginDiagnosticsText(int tabIndex) const
+{
+    auto boolText = [](bool value) -> juce::String
+    {
+        return value ? "Yes" : "No";
+    };
+
+    auto typeText = [](PluginSlotType type) -> juce::String
+    {
+        switch (type)
+        {
+            case PluginSlotType::Synth: return "Synth";
+            case PluginSlotType::FX:    return "FX";
+            case PluginSlotType::Empty: return "Empty";
+        }
+
+        return "Unknown";
+    };
+
+    juce::String text;
+
+    auto addLine = [&text](const juce::String& label, const juce::String& value)
+    {
+        text << label << ": " << (value.isNotEmpty() ? value : "-") << "\n";
+    };
+
+    auto addSection = [&text](const juce::String& title)
+    {
+        if (text.isNotEmpty())
+            text << "\n";
+
+        text << title << "\n";
+        text << juce::String::repeatedString("-", title.length()) << "\n";
+    };
+
+    addSection("Tab");
+    addLine("Tab Index", juce::String(tabIndex));
+
+    if (! juce::isPositiveAndBelow(tabIndex, hostedTabs.size()))
+    {
+        addLine("Status", "Invalid tab index");
+        return text;
+    }
+
+    const auto* hostedTab = hostedTabs[tabIndex];
+
+    if (hostedTab == nullptr)
+    {
+        addLine("Status", "Missing internal tab state");
+        return text;
+    }
+
+    addLine("Tab Name", hostedTab->tabName);
+    addLine("Bypassed", boolText(hostedTab->bypassed));
+    addLine("MIDI Assignments", juce::String(hostedTab->midiAssignedDeviceIdentifiers.size()));
+    addLine("Pointer Map Source", getActivePointerMapSourceText(tabIndex));
+    addLine("Routing", getRoutingTooltipForTab(tabIndex).replace("\n", "  "));
+
+    auto* instance = hostedTab->pluginInstance.get();
+
+    if (instance == nullptr)
+    {
+        addSection("Plugin");
+        addLine("Loaded", "No");
+
+        if (hostedTab->slot != nullptr)
+        {
+            addLine("Slot Name", hostedTab->slot->getSlotName());
+            addLine("Slot Plugin Name", hostedTab->slot->getLoadedPluginName());
+            addLine("Slot Plugin Path", hostedTab->slot->getPluginPath());
+            addLine("Last Error", hostedTab->slot->getLastError());
+        }
+
+        return text;
+    }
+
+    juce::PluginDescription description;
+    instance->fillInPluginDescription(description);
+
+    juce::MemoryBlock pluginState;
+    instance->getStateInformation(pluginState);
+
+    const juce::File pluginFile(description.fileOrIdentifier);
+
+    addSection("Plugin Identity");
+    addLine("Loaded", "Yes");
+    addLine("Plugin Name", description.name);
+    addLine("Descriptive Name", description.descriptiveName);
+    addLine("Manufacturer", description.manufacturerName);
+    addLine("Version", description.version);
+    addLine("Format", description.pluginFormatName);
+    addLine("Unique ID", juce::String(description.uniqueId));
+    addLine("Shell / Subplugin Name", description.name);
+    addLine("Is Instrument", boolText(description.isInstrument));
+    addLine("Tab Type", typeText(slotTypeFromDescription(description)));
+
+    addSection("Audio / MIDI");
+    addLine("Input Channels", juce::String(instance->getTotalNumInputChannels()));
+    addLine("Output Channels", juce::String(instance->getTotalNumOutputChannels()));
+    addLine("Accepts MIDI", boolText(instance->acceptsMidi()));
+    addLine("Produces MIDI", boolText(instance->producesMidi()));
+    addLine("Latency Samples", juce::String(instance->getLatencySamples()));
+    addLine("Tail Length Seconds", juce::String(instance->getTailLengthSeconds(), 3));
+    addLine("Parameter Count", juce::String(instance->getParameters().size()));
+
+    addSection("Location / State");
+    addLine("Loaded Path", hostedTab->slot != nullptr ? hostedTab->slot->getPluginPath() : juce::String());
+    addLine("File / Identifier", description.fileOrIdentifier);
+    addLine("Resolved File Path", pluginFile.getFullPathName());
+    addLine("State Size Bytes", juce::String((int64) pluginState.getSize()));
+    addLine("Current Pointer Map", getActivePointerMapSourceText(tabIndex));
+
+    return text;
 }
 
 void PluginCore::buildMidiBufferForTab(int tabIndex,
@@ -1215,46 +2254,34 @@ void PluginCore::captureLastTouchedParameter(juce::AudioProcessor* processor,
     lastTouchedParameter.valid = true;
 }
 
-bool PluginCore::loadMainSlotPluginFromPath(const juce::String& pluginPath)
+bool PluginCore::scanPluginDescriptionsForFile(const juce::String& pluginPath,
+                                               juce::OwnedArray<juce::PluginDescription>& typesFound,
+                                               juce::String& errorMessage)
 {
-    auto* selectedTab = getSelectedHostedTab();
-
-    if (selectedTab == nullptr)
-        return false;
-
-    unloadMainSlotPlugin();
+    typesFound.clear();
+    errorMessage.clear();
 
     const juce::File pluginFile(pluginPath);
 
     if (! pluginFile.exists())
     {
-        selectedTab->slot->clearPlugin();
-        selectedTab->slot->setPluginPath(pluginPath);
-        selectedTab->slot->setLastError("Plugin file does not exist");
-        statusText = "Plugin load failed";
+        errorMessage = "Plugin file does not exist";
         return false;
     }
 
-    // Determine which format to try based on file extension
     const bool isVST3 = pluginFile.hasFileExtension(".vst3");
     const bool isVST2 = pluginFile.hasFileExtension(".dll");
 
     if (! isVST3 && ! isVST2)
     {
-        selectedTab->slot->clearPlugin();
-        selectedTab->slot->setPluginPath(pluginPath);
-        selectedTab->slot->setLastError("Unsupported plugin format");
-        statusText = "Plugin load failed";
+        errorMessage = "Unsupported plugin format";
         return false;
     }
 
    #if ! JUCE_PLUGINHOST_VST3
     if (isVST3)
     {
-        selectedTab->slot->clearPlugin();
-        selectedTab->slot->setPluginPath(pluginPath);
-        selectedTab->slot->setLastError("VST3 hosting is not enabled");
-        statusText = "Plugin load failed";
+        errorMessage = "VST3 hosting is not enabled";
         return false;
     }
    #endif
@@ -1262,22 +2289,13 @@ bool PluginCore::loadMainSlotPluginFromPath(const juce::String& pluginPath)
    #if ! JUCE_PLUGINHOST_VST
     if (isVST2)
     {
-        selectedTab->slot->clearPlugin();
-        selectedTab->slot->setPluginPath(pluginPath);
-        selectedTab->slot->setLastError("VST2 hosting is not enabled");
-        statusText = "Plugin load failed";
+        errorMessage = "VST2 hosting is not enabled";
         return false;
     }
    #endif
 
-    juce::OwnedArray<juce::PluginDescription> typesFound;
-    juce::String errorMessage;
+    ensurePluginFormatsInitialised();
 
-    // Ensure safe fallback values if host hasn't called prepareToPlay yet
-    const double sampleRateToUse = (currentSampleRate > 0.0) ? currentSampleRate : 44100.0;
-    const int blockSizeToUse = (currentBlockSize > 0) ? currentBlockSize : 512;
-
-    // Find the right format and scan for types
     for (int i = 0; i < formatManager.getNumFormats(); ++i)
     {
         auto* format = formatManager.getFormat(i);
@@ -1304,17 +2322,45 @@ bool PluginCore::loadMainSlotPluginFromPath(const juce::String& pluginPath)
 
     if (typesFound.isEmpty())
     {
-        selectedTab->slot->clearPlugin();
-        selectedTab->slot->setPluginPath(pluginPath);
-        selectedTab->slot->setLastError("No plugin type found in file");
-        statusText = "Load failed: No plugin type found in file";
+        errorMessage = "No plugin type found in file";
         return false;
     }
 
-    auto description = *typesFound[0];
+    return true;
+}
+
+bool PluginCore::loadMainSlotPluginFromDescription(const juce::PluginDescription& description)
+{
+    auto* selectedTab = getSelectedHostedTab();
+
+    if (selectedTab == nullptr)
+        return false;
+
+    unloadMainSlotPlugin();
+
+    selectedTab = getSelectedHostedTab();
+
+    if (selectedTab == nullptr)
+        return false;
+
+    juce::String errorMessage;
+
+    const double sampleRateToUse = (currentSampleRate > 0.0) ? currentSampleRate : 44100.0;
+    const int blockSizeToUse = (currentBlockSize > 0) ? currentBlockSize : 512;
+
+    const juce::File pluginFile(description.fileOrIdentifier);
+
+    const bool descriptionFormatIsVST3 = description.pluginFormatName.containsIgnoreCase("VST3");
+    const bool descriptionFormatIsVST2 = description.pluginFormatName.containsIgnoreCase("VST")
+                                      && ! descriptionFormatIsVST3;
+
+    const bool isVST3 = descriptionFormatIsVST3 || pluginFile.hasFileExtension(".vst3");
+    const bool isVST2 = descriptionFormatIsVST2 || pluginFile.hasFileExtension(".dll");
+
+    ensurePluginFormatsInitialised();
+
     std::unique_ptr<juce::AudioPluginInstance> instance;
 
-    // Instantiate using the right format
     for (int i = 0; i < formatManager.getNumFormats(); ++i)
     {
         auto* format = formatManager.getFormat(i);
@@ -1345,14 +2391,15 @@ bool PluginCore::loadMainSlotPluginFromPath(const juce::String& pluginPath)
     {
         juce::String fullError = errorMessage.isNotEmpty() ? errorMessage
                                                            : "Unknown instantiation failure";
+
         selectedTab->slot->clearPlugin();
-        selectedTab->slot->setPluginPath(pluginPath);
+        selectedTab->slot->setPluginPath(description.fileOrIdentifier);
         selectedTab->slot->setLastError(fullError);
         statusText = "Load failed: " + fullError;
         return false;
     }
 
-    if (playbackPrepared)
+    if (playbackPrepared.load())
         instance->prepareToPlay(currentSampleRate, currentBlockSize);
 
     selectedTab->pluginInstance = std::move(instance);
@@ -1360,19 +2407,92 @@ bool PluginCore::loadMainSlotPluginFromPath(const juce::String& pluginPath)
 
     selectedTab->slot->setPluginLoaded(true);
     selectedTab->slot->setLoadedPluginName(description.name);
-    selectedTab->slot->setPluginPath(pluginPath);
+    selectedTab->slot->setPluginPath(description.fileOrIdentifier);
     selectedTab->slot->setLastError({});
 
     if (! selectedTab->hasCustomPointerMap)
     {
         selectedTab->pointerJumpPoints.clear();
+        selectedTab->pointerFreeZones.clear();
         loadGlobalPointerMapForTab(selectedTabIndex);
     }
+
+    clearTabRestoreIssue(*selectedTab);
 
     statusText = "Plugin instantiated";
     markDirty();
     suppressDirtyMarkingFor(1500);
     return true;
+}
+
+bool PluginCore::loadMainSlotPluginFromPath(const juce::String& pluginPath)
+{
+    juce::OwnedArray<juce::PluginDescription> typesFound;
+    juce::String errorMessage;
+
+    if (! scanPluginDescriptionsForFile(pluginPath, typesFound, errorMessage))
+    {
+        auto* selectedTab = getSelectedHostedTab();
+
+        if (selectedTab != nullptr && selectedTab->slot != nullptr)
+        {
+            selectedTab->slot->setPluginPath(pluginPath);
+            selectedTab->slot->setLastError(errorMessage);
+        }
+
+        statusText = "Load failed: " + errorMessage;
+        return false;
+    }
+
+    return loadMainSlotPluginFromDescription(*typesFound[0]);
+}
+
+bool PluginCore::loadMainSlotPluginFromPathMatchingSessionData(const juce::String& pluginPath,
+                                                               const SessionPluginData& pluginData)
+{
+    juce::OwnedArray<juce::PluginDescription> typesFound;
+    juce::String errorMessage;
+
+    if (! scanPluginDescriptionsForFile(pluginPath, typesFound, errorMessage))
+    {
+        auto* selectedTab = getSelectedHostedTab();
+
+        if (selectedTab != nullptr && selectedTab->slot != nullptr)
+        {
+            selectedTab->slot->setPluginPath(pluginPath);
+            selectedTab->slot->setLastError(errorMessage);
+        }
+
+        quarantinePlugin(pluginData, "Plugin scan failed: " + errorMessage);
+        statusText = "Load failed: " + errorMessage;
+        return false;
+    }
+
+    auto tryLoadDescription = [this, &pluginData](const juce::PluginDescription& description)
+    {
+        if (loadMainSlotPluginFromDescription(description))
+        {
+            clearPluginQuarantine(pluginData);
+            return true;
+        }
+
+        juce::String reason = "Plugin instantiation failed";
+
+        if (auto* selectedTab = getSelectedHostedTab())
+            if (selectedTab->slot != nullptr && selectedTab->slot->getLastError().isNotEmpty())
+                reason << ": " << selectedTab->slot->getLastError();
+
+        quarantinePlugin(pluginData, reason);
+        return false;
+    };
+
+    for (int i = 0; i < typesFound.size(); ++i)
+    {
+        if (pluginDescriptionMatchesSessionPluginData(*typesFound[i], pluginData))
+            return tryLoadDescription(*typesFound[i]);
+    }
+
+    return tryLoadDescription(*typesFound[0]);
 }
 
 void PluginCore::unloadMainSlotPlugin()
@@ -1396,13 +2516,27 @@ void PluginCore::unloadMainSlotPlugin()
 
 void PluginCore::resetForNewPreset()
 {
+    playbackPrepared.store(false);
+
     for (auto* tab : hostedTabs)
+    {
+        if (tab == nullptr)
+            continue;
+
         detachFromHostedPlugin(tab->pluginInstance.get());
+
+        if (tab->pluginInstance != nullptr)
+        {
+            tab->pluginInstance->releaseResources();
+            tab->pluginInstance.reset();
+        }
+    }
 
     hostedTabs.clear();
     selectedTabIndex = 0;
 
     sessionDocument.clear();
+    clearLastPresetLoadReport();
     statusText = "Ready";
     macroMappings.clear();
     lastTouchedParameter = {};
@@ -1481,13 +2615,25 @@ SessionTabData PluginCore::buildSessionTabData(int tabIndex) const
     tabData.hasCustomPointerMap = hostedTab->hasCustomPointerMap;
     tabData.preferGlobalPointerMap = hostedTab->preferGlobalPointerMap;
     if (hostedTab->hasCustomPointerMap)
+    {
         tabData.pointerJumpPoints = hostedTab->presetPointerJumpPoints;
+        tabData.pointerFreeZones = hostedTab->presetPointerFreeZones;
+    }
     tabData.midiAssignedDeviceIdentifiers = hostedTab->midiAssignedDeviceIdentifiers;
 
     auto* instance = hostedTab->pluginInstance.get();
 
     if (instance == nullptr)
+    {
+        if (hostedTab->restoreIssueActive && hostedTab->restoreIssueHasPluginData)
+        {
+            tabData.type = hostedTab->restoreIssueType;
+            tabData.hasPlugin = true;
+            tabData.plugin = hostedTab->restoreIssuePluginData;
+        }
+
         return tabData;
+    }
 
     juce::MemoryBlock pluginState;
     instance->getStateInformation(pluginState);
@@ -1542,6 +2688,7 @@ bool PluginCore::restoreTabFromSessionData(int tabIndex,
 
     selectedTab->tabName = tabData.tabName.isNotEmpty() ? tabData.tabName
                                                         : "Empty";
+    clearTabRestoreIssue(*selectedTab);
     selectedTab->bypassed = tabData.bypassed;
     selectedTab->pointerAdjustMethodOverride = tabData.pointerAdjustMethodOverride;
     selectedTab->pointerLaneTolerance = tabData.pointerLaneTolerance;
@@ -1549,7 +2696,9 @@ bool PluginCore::restoreTabFromSessionData(int tabIndex,
     selectedTab->hasCustomPointerMap = tabData.hasCustomPointerMap;
     selectedTab->preferGlobalPointerMap = tabData.preferGlobalPointerMap;
     selectedTab->presetPointerJumpPoints = tabData.pointerJumpPoints;
+    selectedTab->presetPointerFreeZones = tabData.pointerFreeZones;
     selectedTab->pointerJumpPoints.clear();
+    selectedTab->pointerFreeZones.clear();
 
     if (selectedTab->preferGlobalPointerMap)
     {
@@ -1558,6 +2707,7 @@ bool PluginCore::restoreTabFromSessionData(int tabIndex,
     else if (selectedTab->hasCustomPointerMap)
     {
         selectedTab->pointerJumpPoints = selectedTab->presetPointerJumpPoints;
+        selectedTab->pointerFreeZones = selectedTab->presetPointerFreeZones;
     }
     else
     {
@@ -1587,6 +2737,40 @@ bool PluginCore::restoreTabFromSessionData(int tabIndex,
         return true;
     }
 
+    juce::String quarantineReason;
+
+    if (isPluginQuarantined(tabData.plugin, &quarantineReason))
+    {
+        const auto displayName = makePluginQuarantineDisplayName(tabData.plugin);
+
+        juce::String message;
+        message << "This plugin was skipped because it is quarantined for this session.\n\n";
+        message << "Plugin: " << displayName << "\n";
+        message << "Reason: " << quarantineReason << "\n\n";
+        message << "The plugin was not loaded to protect the preset restore process. "
+                   "Use Replace Plugin or reload the preset after restarting PolyHost to try again.";
+
+        setTabRestoreIssue(tabIndex, tabData.plugin, false, message);
+
+        warnings.add("Skipped quarantined plugin for tab: "
+                     + getTabAttentionTitle(tabIndex)
+                     + " ("
+                     + displayName
+                     + "): "
+                     + quarantineReason);
+
+        if (selectedTab->slot != nullptr)
+        {
+            selectedTab->slot->setPluginPath(tabData.plugin.pluginPath);
+            selectedTab->slot->setLastError("Quarantined: " + quarantineReason);
+        }
+
+        rebuildTabModelFromHostedTabs();
+        statusText = "Skipped quarantined plugin";
+        selectedTabIndex = previousSelected;
+        return false;
+    }
+
     const auto resolvedPluginFile = AppSettings::resolvePluginPath(
         tabData.plugin.pluginPath,
         tabData.plugin.pluginPathRelative,
@@ -1594,7 +2778,17 @@ bool PluginCore::restoreTabFromSessionData(int tabIndex,
 
     if (! resolvedPluginFile.existsAsFile())
     {
-        warnings.add("Could not locate plugin for tab: " + tabData.tabName);
+        const auto displayName = makePluginQuarantineDisplayName(tabData.plugin);
+
+        juce::String message;
+        message << "This plugin is missing and could not be restored.\n\n";
+        message << "Plugin: " << displayName << "\n";
+        message << "Saved path: " << tabData.plugin.pluginPath << "\n\n";
+        message << "Use the button above or File > Locate Missing Plugins... to locate the plugin.";
+
+        setTabRestoreIssue(tabIndex, tabData.plugin, true, message);
+
+        warnings.add("Could not locate plugin for tab: " + getTabAttentionTitle(tabIndex));
         statusText = "Plugin file missing";
 
         MissingPluginEntry entry;
@@ -1610,13 +2804,39 @@ bool PluginCore::restoreTabFromSessionData(int tabIndex,
         entry.pluginVersion = tabData.plugin.pluginVersion;
         missingPlugins.add(entry);
 
+        rebuildTabModelFromHostedTabs();
         selectedTabIndex = previousSelected;
         return false;
     }
 
-    if (! loadMainSlotPluginFromPath(resolvedPluginFile.getFullPathName()))
+    beginPluginLoadCrashMarker(tabData.plugin, tabIndex);
+
+    if (! loadMainSlotPluginFromPathMatchingSessionData(resolvedPluginFile.getFullPathName(),
+                                                       tabData.plugin))
     {
-        warnings.add("Failed to load plugin for tab: " + tabData.tabName);
+        clearPluginLoadCrashMarker();
+
+        juce::String failureReason = "Plugin load failed";
+
+        if (selectedTab->slot != nullptr && selectedTab->slot->getLastError().isNotEmpty())
+            failureReason = selectedTab->slot->getLastError();
+
+        const auto displayName = makePluginQuarantineDisplayName(tabData.plugin);
+
+        juce::String message;
+        message << "This plugin file was found, but PolyHost could not load it.\n\n";
+        message << "Plugin: " << displayName << "\n";
+        message << "Reason: " << failureReason << "\n\n";
+        message << "The plugin has been quarantined for this session so preset restore will not keep retrying it. "
+                   "You can replace it manually using the load button below.";
+
+        setTabRestoreIssue(tabIndex, tabData.plugin, false, message);
+
+        warnings.add("Failed to load plugin for tab: "
+                     + getTabAttentionTitle(tabIndex)
+                     + " (quarantined for this session)");
+
+        rebuildTabModelFromHostedTabs();
         selectedTabIndex = previousSelected;
         return false;
     }
@@ -1638,6 +2858,8 @@ bool PluginCore::restoreTabFromSessionData(int tabIndex,
             warnings.add("Invalid plugin state data for tab: " + tabData.tabName);
         }
     }
+
+    clearPluginLoadCrashMarker();
 
     rebuildTabModelFromHostedTabs();
     selectedTabIndex = previousSelected;
@@ -1669,6 +2891,7 @@ bool PluginCore::restoreSessionData(const SessionData& sessionData,
 {
     warnings.clear();
     missingPlugins.clear();
+    importUnclosedPluginLoadCrashMarker(warnings);
 
     for (auto* tab : hostedTabs)
         detachFromHostedPlugin(tab->pluginInstance.get());
@@ -1744,7 +2967,14 @@ void PluginCore::rebuildTabModelFromHostedTabs()
         if (hostedTab->tabName.isNotEmpty())
             tabName = hostedTab->tabName;
 
-        if (hostedTab->slot != nullptr && hostedTab->slot->isPluginLoaded())
+        if (hostedTab->restoreIssueActive)
+        {
+            if (hostedTab->restoreIssueTitle.isNotEmpty())
+                tabName = hostedTab->restoreIssueTitle;
+
+            tabType = hostedTab->restoreIssueType;
+        }
+        else if (hostedTab->slot != nullptr && hostedTab->slot->isPluginLoaded())
         {
             if (hostedTab->pluginInstance != nullptr)
             {

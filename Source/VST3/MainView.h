@@ -53,18 +53,21 @@ private:
     public:
         TabButton(const juce::String& textIn,
                   PluginSlotType typeIn,
-                  bool selectedIn)
+                  bool selectedIn,
+                  bool needsAttentionIn = false)
             : juce::Button(textIn),
               tabText(textIn),
               tabType(typeIn),
-              selected(selectedIn)
+              selected(selectedIn),
+              needsAttention(needsAttentionIn)
         {
         }
 
-        void setTabState(PluginSlotType newType, bool isSelected)
+        void setTabState(PluginSlotType newType, bool isSelected, bool shouldNeedAttention = false)
         {
             tabType = newType;
             selected = isSelected;
+            needsAttention = shouldNeedAttention;
             repaint();
         }
 
@@ -76,7 +79,8 @@ private:
 
             auto bounds = getLocalBounds().toFloat();
 
-            auto baseColour = colourForType(tabType);
+            auto baseColour = needsAttention ? juce::Colour(0xFFB3261E)
+                                             : colourForType(tabType);
             auto fill = selected ? baseColour
                                  : baseColour.darker(0.60f);
 
@@ -126,6 +130,7 @@ private:
         juce::String tabText;
         PluginSlotType tabType = PluginSlotType::Empty;
         bool selected = false;
+        bool needsAttention = false;
     };
 
     class AddTabButton final : public juce::Button
@@ -455,7 +460,9 @@ private:
         commandAddPluginScanFolder = 2601,
         commandShowPluginScanFolders = 2602,
         commandClearPluginScanFolders = 2603,
-        commandLocateMissingPluginsNow = 2604
+        commandLocateMissingPluginsNow = 2604,
+
+        commandPresetLoadReport = 2700
     };
 
     juce::StringArray getMenuBarNames() override;
@@ -482,6 +489,7 @@ private:
     void showTabContextMenuAsync(int tabIndex, juce::Component* anchor);
     void handleTabContextCommand(int commandId, int tabIndex);
     void showMidiAssignmentsPopup(int tabIndex, juce::Component* anchorComponent);
+    void showPluginDiagnosticsDialog(int tabIndex);
     void dismissMidiAssignmentsPopup();
     void toggleRoutingView();
     void handleToggleSolo(int tabIndex);
@@ -496,6 +504,13 @@ private:
     void refreshPointerControlTarget();
     void showPointerControlSettingsDialog();
     void showAboutDialog();
+    void buildAndStorePresetLoadReport(const juce::File& file,
+                                       const SessionData& sessionData,
+                                       const juce::StringArray& warnings,
+                                       bool loadSucceeded,
+                                       const juce::String& failureReason);
+    void buildAndStoreCurrentSessionPresetLoadReport();
+    void showPresetLoadReportDialog(bool manualRequest);
 
     void setPointerControlEditMode(bool shouldEnable);
     void togglePointerControlEditMode();
@@ -557,6 +572,7 @@ private:
     juce::Component editorHolder;
     std::unique_ptr<juce::AudioProcessorEditor> hostedEditor;
     juce::Label contentPlaceholder;
+    juce::TextEditor pluginIssueMessageEditor;
     RoutingView routingView;
     MacroMappingsView macroMappingsView;
     juce::Component::SafePointer<juce::CallOutBox> midiAssignmentsCallout;
@@ -584,6 +600,8 @@ private:
     bool pointerEditGestureActive = false;
     std::unique_ptr<PointerEditOverlayHost> pointerEditOverlayHost;
 
+    std::unique_ptr<juce::PluginDescription> choosePluginDescriptionForFile(const juce::File& file);
+    bool loadPluginFileIntoSelectedTabWithShellChoice(const juce::File& file);
     bool handleDroppedPluginFile(const juce::File& file, int targetTabIndex);
     bool loadDroppedPluginInNewTab(const juce::File& file);
     int promptForDroppedPluginAction(const juce::File& droppedFile, int targetTabIndex) const;

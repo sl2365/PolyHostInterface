@@ -3,9 +3,19 @@
 #include "PluginProcessor.h"
 #include "PluginEditor.h"
 #include "PointerSettingsDialogue.h"
+#include <functional>
+#include <limits>
+
+#if JUCE_WINDOWS
+extern "C" __declspec(dllimport) short __stdcall GetAsyncKeyState(int virtualKeyCode);
+#endif
 
 namespace
 {
+   #if JUCE_WINDOWS
+    static constexpr int polyHostVkXButton1 = 0x05; // Mouse Back
+    static constexpr int polyHostVkXButton2 = 0x06; // Mouse Forward
+   #endif
     class AboutDialogContent final : public juce::Component
     {
     public:
@@ -94,7 +104,177 @@ namespace
         juce::TextButton closeButton;
     };
 
-    class PointerEditOverlayContent final : public juce::Component
+    class PluginDiagnosticsDialogContent final : public juce::Component
+    {
+    public:
+        explicit PluginDiagnosticsDialogContent(const juce::String& diagnosticsTextIn)
+            : diagnosticsText(diagnosticsTextIn)
+        {
+            titleLabel.setText("Plugin Diagnostics", juce::dontSendNotification);
+            titleLabel.setJustificationType(juce::Justification::centredLeft);
+            titleLabel.setFont(juce::Font(juce::FontOptions(18.0f, juce::Font::bold)));
+            titleLabel.setColour(juce::Label::textColourId, juce::Colours::white);
+            addAndMakeVisible(titleLabel);
+
+            diagnosticsEditor.setMultiLine(true);
+            diagnosticsEditor.setReadOnly(true);
+            diagnosticsEditor.setScrollbarsShown(true);
+            diagnosticsEditor.setCaretVisible(false);
+            diagnosticsEditor.setColour(juce::TextEditor::backgroundColourId, juce::Colour(0xFF161B24));
+            diagnosticsEditor.setColour(juce::TextEditor::textColourId, juce::Colours::white);
+            diagnosticsEditor.setColour(juce::TextEditor::outlineColourId, juce::Colours::white.withAlpha(0.22f));
+            diagnosticsEditor.setText(diagnosticsText, juce::dontSendNotification);
+            diagnosticsEditor.applyFontToAllText(juce::Font(juce::FontOptions(13.0f)));
+            addAndMakeVisible(diagnosticsEditor);
+
+            copyButton.setButtonText("Copy");
+            copyButton.onClick = [this]
+            {
+                juce::SystemClipboard::copyTextToClipboard(diagnosticsText);
+            };
+            addAndMakeVisible(copyButton);
+
+            closeButton.setButtonText("Close");
+            closeButton.onClick = [this]
+            {
+                if (auto* parent = findParentComponentOfClass<juce::DialogWindow>())
+                    parent->exitModalState(0);
+            };
+            addAndMakeVisible(closeButton);
+
+            setSize(640, 500);
+        }
+
+        void paint(juce::Graphics& g) override
+        {
+            g.fillAll(juce::Colour(0xFF1D2230));
+        }
+
+        void resized() override
+        {
+            auto area = getLocalBounds().reduced(14);
+
+            titleLabel.setBounds(area.removeFromTop(28));
+            area.removeFromTop(8);
+
+            auto buttonRow = area.removeFromBottom(30);
+            closeButton.setBounds(buttonRow.removeFromRight(90));
+            buttonRow.removeFromRight(8);
+            copyButton.setBounds(buttonRow.removeFromRight(90));
+
+            area.removeFromBottom(10);
+            diagnosticsEditor.setBounds(area);
+        }
+
+    private:
+        juce::String diagnosticsText;
+        juce::Label titleLabel;
+        juce::TextEditor diagnosticsEditor;
+        juce::TextButton copyButton;
+        juce::TextButton closeButton;
+    };
+
+    class PresetLoadReportDialogContent final : public juce::Component
+    {
+    public:
+        PresetLoadReportDialogContent(const juce::String& reportTextIn,
+                                      bool showLocateButtonIn,
+                                      std::function<void()> locateMissingCallbackIn)
+            : reportText(reportTextIn),
+              showLocateButton(showLocateButtonIn),
+              locateMissingCallback(std::move(locateMissingCallbackIn))
+        {
+            titleLabel.setText("Preset Load Report", juce::dontSendNotification);
+            titleLabel.setJustificationType(juce::Justification::centredLeft);
+            titleLabel.setFont(juce::Font(juce::FontOptions(18.0f, juce::Font::bold)));
+            titleLabel.setColour(juce::Label::textColourId, juce::Colours::white);
+            addAndMakeVisible(titleLabel);
+
+            reportEditor.setMultiLine(true);
+            reportEditor.setReadOnly(true);
+            reportEditor.setScrollbarsShown(true);
+            reportEditor.setCaretVisible(false);
+            reportEditor.setColour(juce::TextEditor::backgroundColourId, juce::Colour(0xFF161B24));
+            reportEditor.setColour(juce::TextEditor::textColourId, juce::Colours::white);
+            reportEditor.setColour(juce::TextEditor::outlineColourId, juce::Colours::white.withAlpha(0.22f));
+            reportEditor.setText(reportText, juce::dontSendNotification);
+            reportEditor.applyFontToAllText(juce::Font(juce::FontOptions(13.0f)));
+            addAndMakeVisible(reportEditor);
+
+            if (showLocateButton)
+            {
+                locateMissingButton.setButtonText("Locate Missing Plugins");
+                locateMissingButton.onClick = [this]
+                {
+                    auto callback = locateMissingCallback;
+
+                    if (auto* parent = findParentComponentOfClass<juce::DialogWindow>())
+                        parent->exitModalState(0);
+
+                    if (callback)
+                        callback();
+                };
+                addAndMakeVisible(locateMissingButton);
+            }
+
+            copyButton.setButtonText("Copy");
+            copyButton.onClick = [this]
+            {
+                juce::SystemClipboard::copyTextToClipboard(reportText);
+            };
+            addAndMakeVisible(copyButton);
+
+            closeButton.setButtonText("Close");
+            closeButton.onClick = [this]
+            {
+                if (auto* parent = findParentComponentOfClass<juce::DialogWindow>())
+                    parent->exitModalState(0);
+            };
+            addAndMakeVisible(closeButton);
+
+            setSize(680, 540);
+        }
+
+        void paint(juce::Graphics& g) override
+        {
+            g.fillAll(juce::Colour(0xFF1D2230));
+        }
+
+        void resized() override
+        {
+            auto area = getLocalBounds().reduced(14);
+
+            titleLabel.setBounds(area.removeFromTop(28));
+            area.removeFromTop(8);
+
+            auto buttonRow = area.removeFromBottom(30);
+            closeButton.setBounds(buttonRow.removeFromRight(90));
+            buttonRow.removeFromRight(8);
+            copyButton.setBounds(buttonRow.removeFromRight(90));
+
+            if (showLocateButton)
+            {
+                buttonRow.removeFromRight(8);
+                locateMissingButton.setBounds(buttonRow.removeFromRight(170));
+            }
+
+            area.removeFromBottom(10);
+            reportEditor.setBounds(area);
+        }
+
+    private:
+        juce::String reportText;
+        bool showLocateButton = false;
+        std::function<void()> locateMissingCallback;
+        juce::Label titleLabel;
+        juce::TextEditor reportEditor;
+        juce::TextButton locateMissingButton;
+        juce::TextButton copyButton;
+        juce::TextButton closeButton;
+    };
+
+    class PointerEditOverlayContent final : public juce::Component,
+                                            private juce::Timer
     {
     public:
         explicit PointerEditOverlayContent(MainView& ownerIn)
@@ -103,6 +283,10 @@ namespace
             setInterceptsMouseClicks(true, true);
             setWantsKeyboardFocus(false);
             setMouseClickGrabsKeyboardFocus(false);
+
+           #if JUCE_WINDOWS
+            startTimerHz(60);
+           #endif
 
             snapXEnabled = owner.getAppSettings().getPointerControlSnapXEnabled();
             snapYEnabled = owner.getAppSettings().getPointerControlSnapYEnabled();
@@ -170,7 +354,64 @@ namespace
                 auto& core = owner.getProcessor().getCore();
                 const int tabIndex = core.getSelectedTabIndex();
 
-                if (core.saveCurrentPointerMapToGlobalFile(tabIndex))
+                if (! juce::isPositiveAndBelow(tabIndex, core.getNumTabs()))
+                    return;
+
+                juce::String userLabel;
+
+                if (core.globalPointerMapNeedsUserLabel(tabIndex))
+                {
+                    juce::AlertWindow labelPrompt("Name Global Pointer Map",
+                                                  "This plugin did not provide enough reliable name information.\n\n"
+                                                  "Enter a clear map name, for example:\n"
+                                                  "u-he Diva",
+                                                  juce::AlertWindow::QuestionIcon);
+
+                    labelPrompt.addTextEditor("mapName",
+                                              core.getGlobalPointerMapIdentityText(tabIndex),
+                                              "Map Name:");
+
+                    labelPrompt.addButton("Save", 1, juce::KeyPress(juce::KeyPress::returnKey));
+                    labelPrompt.addButton("Cancel", 0, juce::KeyPress(juce::KeyPress::escapeKey));
+
+                    if (labelPrompt.runModalLoop() != 1)
+                    {
+                        owner.showTemporaryStatusMessage("Global pointer map save cancelled");
+                        repaint();
+                        return;
+                    }
+
+                    userLabel = labelPrompt.getTextEditorContents("mapName").trim();
+
+                    if (userLabel.isEmpty())
+                    {
+                        owner.showTemporaryStatusMessage("Global pointer map needs a name");
+                        repaint();
+                        return;
+                    }
+                }
+
+                if (core.tabHasGlobalPointerMap(tabIndex))
+                {
+                    const bool confirmed = juce::AlertWindow::showOkCancelBox(
+                        juce::AlertWindow::WarningIcon,
+                        "Overwrite Global Pointer Map",
+                        "A global pointer map already exists for:\n\n"
+                            + core.getGlobalPointerMapIdentityText(tabIndex)
+                            + "\n\nOverwrite it?",
+                        "Overwrite",
+                        "Cancel",
+                        owner.getWindowCenterTarget());
+
+                    if (! confirmed)
+                    {
+                        owner.showTemporaryStatusMessage("Global pointer map save cancelled");
+                        repaint();
+                        return;
+                    }
+                }
+
+                if (core.saveCurrentPointerMapToGlobalFile(tabIndex, userLabel))
                     owner.showTemporaryStatusMessage("Global pointer map saved");
                 else
                     owner.showTemporaryStatusMessage("Failed to save global pointer map");
@@ -273,6 +514,17 @@ namespace
                        banner.reduced(8, 0),
                        juce::Justification::centred);
 
+            if (juce::isPositiveAndBelow(tabIndex, core.getNumTabs()))
+            {
+                const auto& zones = core.getTabPointerFreeZones(tabIndex);
+
+                for (int i = 0; i < zones.size(); ++i)
+                    drawFreeZone(g, zones.getReference(i), false);
+            }
+
+            if (freeZonePreviewActive)
+                drawFreeZone(g, getCurrentFreeZonePreview(), true);
+
             if (owner.getAppSettings().getPointerControlShowCrosshair() && hasHoverPosition)
             {
                 const auto crosshairPos = previewActive ? previewPosition : hoverPosition;
@@ -341,12 +593,13 @@ namespace
             const juce::String infoText =
                 "Map: " + core.getActivePointerMapSourceText(selectedTabIndex)
                 + "  |  Placement: " + getSnapModeText()
+                + "  |  Free Zones: " + juce::String(core.getTabPointerFreeZones(selectedTabIndex).size())
                 + "  |  Tol (CC"
                 + juce::String(owner.getAppSettings().getPointerControlToleranceCcNumber())
                 + "): " + juce::String(currentTolerance, 1);
 
             auto textLayoutBar = bottomBar.reduced(8, 0);
-            auto infoArea = textLayoutBar.removeFromRight(360);
+            auto infoArea = textLayoutBar.removeFromRight(440);
 
             g.drawText(infoText,
                        infoArea,
@@ -403,6 +656,33 @@ namespace
             repaint();
         }
 
+        void timerCallback() override
+        {
+           #if JUCE_WINDOWS
+            const bool backButtonDown = (GetAsyncKeyState(polyHostVkXButton1) & 0x8000) != 0;
+            const bool forwardButtonDown = (GetAsyncKeyState(polyHostVkXButton2) & 0x8000) != 0;
+
+            if (backButtonDown && ! backMouseButtonWasDown)
+            {
+                snapYEnabled = ! snapYEnabled;
+                owner.getAppSettings().setPointerControlSnapYEnabled(snapYEnabled);
+                owner.showTemporaryStatusMessage("Snap Y " + juce::String(snapYEnabled ? "enabled" : "disabled"));
+                repaint();
+            }
+
+            if (forwardButtonDown && ! forwardMouseButtonWasDown)
+            {
+                snapXEnabled = ! snapXEnabled;
+                owner.getAppSettings().setPointerControlSnapXEnabled(snapXEnabled);
+                owner.showTemporaryStatusMessage("Snap X " + juce::String(snapXEnabled ? "enabled" : "disabled"));
+                repaint();
+            }
+
+            backMouseButtonWasDown = backButtonDown;
+            forwardMouseButtonWasDown = forwardButtonDown;
+           #endif
+        }
+
         void mouseDown(const juce::MouseEvent& event) override
         {
             if (getSnapXButtonBounds().contains(event.position.toInt()))
@@ -432,6 +712,36 @@ namespace
             previewActive = false;
             pendingDeletePointIndex = -1;
 
+            if (event.mods.isRightButtonDown())
+            {
+                auto& core = owner.getProcessor().getCore();
+                const int tabIndex = core.getSelectedTabIndex();
+
+                owner.setPointerEditGestureActive(true);
+                freeZoneDragActive = true;
+                freeZonePreviewActive = true;
+                freeZoneClearCandidate = false;
+                freeZoneClearIndex = -1;
+                freeZoneStart = event.position;
+                freeZoneEnd = event.position;
+
+                if (juce::isPositiveAndBelow(tabIndex, core.getNumTabs()))
+                    freeZoneClearIndex = findFreeZoneAt(event.position);
+
+                if (freeZoneClearIndex >= 0)
+                {
+                    freeZoneClearCandidate = true;
+                    owner.showTemporaryStatusMessage("Right-click release clears this free zone. Drag to add another zone.");
+                }
+                else
+                {
+                    owner.showTemporaryStatusMessage("Right-drag to add a pointer free zone");
+                }
+
+                repaint();
+                return;
+            }
+
             if (event.mods.isLeftButtonDown())
             {
                 owner.setPointerEditGestureActive(true);
@@ -443,6 +753,24 @@ namespace
 
         void mouseDrag(const juce::MouseEvent& event) override
         {
+            if (freeZoneDragActive)
+            {
+                freeZoneEnd = event.position;
+                hoverPosition = event.position;
+                hasHoverPosition = true;
+
+                if (freeZoneStart.getDistanceFrom(freeZoneEnd) > 4.0f)
+                    freeZoneClearCandidate = false;
+
+                const auto zone = getCurrentFreeZonePreview();
+                owner.showTemporaryStatusMessage("Free Zone: "
+                                                 + juce::String((int) std::round(zone.getWidth()))
+                                                 + " x "
+                                                 + juce::String((int) std::round(zone.getHeight())));
+                repaint();
+                return;
+            }
+
             if (! previewActive)
                 return;
 
@@ -459,6 +787,8 @@ namespace
 
         void mouseUp(const juce::MouseEvent& event) override
         {
+            owner.setPointerEditGestureActive(false);
+
             auto& core = owner.getProcessor().getCore();
             const int tabIndex = core.getSelectedTabIndex();
 
@@ -466,6 +796,44 @@ namespace
             {
                 previewActive = false;
                 pendingDeletePointIndex = -1;
+                freeZoneDragActive = false;
+                freeZonePreviewActive = false;
+                freeZoneClearCandidate = false;
+                freeZoneClearIndex = -1;
+                repaint();
+                return;
+            }
+
+            if (freeZoneDragActive)
+            {
+                const float dragDistance = freeZoneStart.getDistanceFrom(freeZoneEnd);
+
+                if (freeZoneClearCandidate && dragDistance <= 4.0f && freeZoneClearIndex >= 0)
+                {
+                    if (core.removeTabPointerFreeZoneAt(tabIndex, freeZoneClearIndex))
+                        owner.showTemporaryStatusMessage("Pointer free zone removed");
+                    else
+                        owner.showTemporaryStatusMessage("No pointer free zone removed");
+                }
+                else
+                {
+                    auto zone = getCurrentFreeZonePreview();
+
+                    if (zone.getWidth() >= 8.0f && zone.getHeight() >= 8.0f)
+                    {
+                        core.addTabPointerFreeZone(tabIndex, zone);
+                        owner.showTemporaryStatusMessage("Pointer free zone added");
+                    }
+                    else
+                    {
+                        owner.showTemporaryStatusMessage("Pointer free zone needs a larger drag area");
+                    }
+                }
+
+                freeZoneDragActive = false;
+                freeZonePreviewActive = false;
+                freeZoneClearCandidate = false;
+                freeZoneClearIndex = -1;
                 repaint();
                 return;
             }
@@ -692,6 +1060,96 @@ namespace
             g.drawText(text, bounds, juce::Justification::centred);
         }
 
+        juce::Rectangle<float> getEditablePluginAreaBounds() const
+        {
+            auto area = getLocalBounds();
+            area.removeFromBottom(26);
+            return area.toFloat();
+        }
+
+        juce::Rectangle<float> makeFreeZoneRect(juce::Point<float> a, juce::Point<float> b) const
+        {
+            auto zone = juce::Rectangle<float>::leftTopRightBottom(
+                juce::jmin(a.x, b.x),
+                juce::jmin(a.y, b.y),
+                juce::jmax(a.x, b.x),
+                juce::jmax(a.y, b.y));
+
+            return zone.getIntersection(getEditablePluginAreaBounds());
+        }
+
+        juce::Rectangle<float> getCurrentFreeZonePreview() const
+        {
+            return makeFreeZoneRect(freeZoneStart, freeZoneEnd);
+        }
+
+        void drawFreeZone(juce::Graphics& g, juce::Rectangle<float> zone, bool preview)
+        {
+            if (zone.isEmpty())
+                return;
+
+            const auto fillColour = preview ? juce::Colour(0x55FF3030)
+                                            : juce::Colour(0x22FF3030);
+            const auto lineColour = preview ? juce::Colour(0xFFFF5050)
+                                            : juce::Colour(0xFFFF3030);
+
+            g.setColour(fillColour);
+            g.fillRect(zone);
+            g.setColour(lineColour);
+            g.drawRect(zone, 2.0f);
+        }
+
+        int findFreeZoneAt(juce::Point<float> position) const
+        {
+            auto& core = owner.getProcessor().getCore();
+            const int tabIndex = core.getSelectedTabIndex();
+
+            if (! juce::isPositiveAndBelow(tabIndex, core.getNumTabs()))
+                return -1;
+
+            const auto& zones = core.getTabPointerFreeZones(tabIndex);
+            int bestIndex = -1;
+            float bestArea = (std::numeric_limits<float>::max)();
+
+            for (int i = 0; i < zones.size(); ++i)
+            {
+                const auto& zone = zones.getReference(i);
+
+                if (! zone.contains(position))
+                    continue;
+
+                const float area = zone.getWidth() * zone.getHeight();
+
+                if (area < bestArea
+                    || (juce::approximatelyEqual(area, bestArea) && i > bestIndex))
+                {
+                    bestArea = area;
+                    bestIndex = i;
+                }
+            }
+
+            return bestIndex;
+        }
+
+        bool isPointInsideAnyFreeZone(const SessionTabData::PointerJumpPoint& point) const
+        {
+            auto& core = owner.getProcessor().getCore();
+            const int tabIndex = core.getSelectedTabIndex();
+
+            if (! juce::isPositiveAndBelow(tabIndex, core.getNumTabs()))
+                return false;
+
+            const auto& zones = core.getTabPointerFreeZones(tabIndex);
+
+            for (int i = 0; i < zones.size(); ++i)
+            {
+                if (zones.getReference(i).contains(point.x, point.y))
+                    return true;
+            }
+
+            return false;
+        }
+
         juce::Point<float> applySnapToPosition(juce::Point<float> position) const
         {
             auto& core = owner.getProcessor().getCore();
@@ -699,6 +1157,14 @@ namespace
 
             if (! juce::isPositiveAndBelow(tabIndex, core.getNumTabs()))
                 return position;
+
+            const auto& freeZones = core.getTabPointerFreeZones(tabIndex);
+
+            for (int i = 0; i < freeZones.size(); ++i)
+            {
+                if (freeZones.getReference(i).contains(position))
+                    return position;
+            }
 
             const auto& points = core.getTabPointerJumpPoints(tabIndex);
 
@@ -717,6 +1183,10 @@ namespace
                 for (int i = 0; i < points.size(); ++i)
                 {
                     const auto& point = points.getReference(i);
+
+                    if (isPointInsideAnyFreeZone(point))
+                        continue;
+
                     const float delta = std::abs(point.y - position.y);
 
                     if (delta <= rowTolerance && delta < bestDelta)
@@ -740,6 +1210,10 @@ namespace
                 for (int i = 0; i < points.size(); ++i)
                 {
                     const auto& point = points.getReference(i);
+
+                    if (isPointInsideAnyFreeZone(point))
+                        continue;
+
                     const float delta = std::abs(point.x - position.x);
 
                     if (delta <= columnTolerance && delta < bestDelta)
@@ -799,10 +1273,18 @@ namespace
         bool hasHoverPosition = false;
         bool previewActive = false;
         int pendingDeletePointIndex = -1;
+        bool freeZoneDragActive = false;
+        bool freeZonePreviewActive = false;
+        bool freeZoneClearCandidate = false;
+        int freeZoneClearIndex = -1;
+        juce::Point<float> freeZoneStart;
+        juce::Point<float> freeZoneEnd;
         bool snapXEnabled = false;
         bool snapYEnabled = false;
         bool hoverShowingSnapXHelp = false;
         bool hoverShowingSnapYHelp = false;
+        bool backMouseButtonWasDown = false;
+        bool forwardMouseButtonWasDown = false;
     };
 }
 
@@ -1116,7 +1598,19 @@ MainView::MainView(PolyHostPluginProcessor& processorIn)
 
     addAndMakeVisible(emptyLoadPluginButton);
     emptyLoadPluginButton.setButtonText("Click to Load Plugin...");
-    emptyLoadPluginButton.onClick = [this] { loadPluginIntoMainSlot(); };
+    emptyLoadPluginButton.onClick = [this]
+    {
+        auto& core = processor.getCore();
+        const int tabIndex = core.getSelectedTabIndex();
+
+        if (core.tabHasMissingPluginIssue(tabIndex))
+        {
+            locateMissingPluginsNow();
+            return;
+        }
+
+        loadPluginIntoMainSlot();
+    };
     emptyLoadPluginButton.setColour(juce::TextButton::buttonColourId, juce::Colour(0xFF5A5A64));
     emptyLoadPluginButton.setColour(juce::TextButton::textColourOffId, juce::Colours::whitesmoke);
 
@@ -1133,6 +1627,20 @@ MainView::MainView(PolyHostPluginProcessor& processorIn)
     contentPlaceholder.setColour(juce::Label::textColourId, juce::Colours::lightgrey);
     contentPlaceholder.setFont(juce::Font(juce::FontOptions(18.0f, juce::Font::bold)));
     contentPlaceholder.setInterceptsMouseClicks(false, false);
+
+    addAndMakeVisible(pluginIssueMessageEditor);
+    pluginIssueMessageEditor.setMultiLine(true, true);
+    pluginIssueMessageEditor.setReadOnly(true);
+    pluginIssueMessageEditor.setScrollbarsShown(false);
+    pluginIssueMessageEditor.setCaretVisible(false);
+    pluginIssueMessageEditor.setJustification(juce::Justification::centred);
+    pluginIssueMessageEditor.setColour(juce::TextEditor::backgroundColourId, juce::Colours::transparentBlack);
+    pluginIssueMessageEditor.setColour(juce::TextEditor::outlineColourId, juce::Colours::transparentBlack);
+    pluginIssueMessageEditor.setColour(juce::TextEditor::focusedOutlineColourId, juce::Colours::transparentBlack);
+    pluginIssueMessageEditor.setColour(juce::TextEditor::textColourId, juce::Colour(0xFFFF6B6B));
+    pluginIssueMessageEditor.applyFontToAllText(juce::Font(juce::FontOptions(15.0f, juce::Font::bold)));
+    pluginIssueMessageEditor.setInterceptsMouseClicks(false, false);
+    pluginIssueMessageEditor.setVisible(false);
 
     statusMeters = std::make_unique<StatusMetersComponent>(*this);
     addAndMakeVisible(*statusMeters);
@@ -1239,6 +1747,11 @@ MainView::MainView(PolyHostPluginProcessor& processorIn)
     routingView.onShowMidiAssignments = [this](int tabIndex, juce::Component* anchorComponent)
     {
         showMidiAssignmentsPopup(tabIndex, anchorComponent);
+    };
+
+    routingView.onShowPluginInfo = [this](int tabIndex, juce::Component*)
+    {
+        showPluginDiagnosticsDialog(tabIndex);
     };
 
     routingView.onRefreshMidiDevices = [this]
@@ -1369,15 +1882,29 @@ MainView::MainView(PolyHostPluginProcessor& processorIn)
                                   appSettings.getPointerControlYSnapWeight());
     pointerControl.setLaneTolerance(30.0f);
 
+    processor.getCore().refreshAvailableMidiInputs();
+
     startTimer(60);
     refreshFromCore();
     syncManualBypassStatesFromCore();
     updateSaveButtonColours();
 
-    // Prompt for missing plugins that were detected during state restore
-    // (happens when host loads preset before editor is opened)
-    if (! processor.getCore().getMissingPlugins().isEmpty())
+    // Prompt for restore issues that were detected before the editor was opened
+    // (happens when the host restores plugin state before the UI exists).
+    bool hasDeferredRestoreIssues = ! processor.getCore().getMissingPlugins().isEmpty();
+
+    for (int i = 0; i < processor.getCore().getNumTabs(); ++i)
     {
+        if (processor.getCore().tabNeedsAttention(i))
+        {
+            hasDeferredRestoreIssues = true;
+            break;
+        }
+    }
+
+    if (hasDeferredRestoreIssues)
+    {
+        buildAndStoreCurrentSessionPresetLoadReport();
         pendingMissingPluginPrompt = true;
         pendingMissingPluginPromptDelayTicks = 0;
     }
@@ -1508,6 +2035,8 @@ juce::PopupMenu MainView::getMenuForIndex(int topLevelMenuIndex,
         }
 
         case 3:
+            menu.addItem(commandPresetLoadReport, "Preset Load Report...");
+            menu.addSeparator();
             menu.addItem(9005, "About PolyHost...");
             break;
 
@@ -1560,6 +2089,7 @@ void MainView::menuItemSelected(int menuItemID,
         case commandMidiMonitor:
             if (midiMonitorWindow == nullptr)
                 midiMonitorWindow = std::make_unique<VstMidiMonitorWindow>(processor,
+                                                                          appSettings,
                                                                           getWindowCenterTarget());
 
             midiMonitorWindow->setVisible(true);
@@ -1665,6 +2195,10 @@ void MainView::menuItemSelected(int menuItemID,
             repaint();
             break;
 
+        case commandPresetLoadReport:
+            showPresetLoadReportDialog(true);
+            break;
+
         case 9005:
             showAboutDialog();
             break;
@@ -1736,8 +2270,8 @@ void MainView::timerCallback()
 
     if (pendingMissingPluginPrompt && isShowing())
     {
-        // Wait ~2 seconds (timer fires at ~60ms, so 33 ticks ≈ 2 seconds)
-        // This gives the host's context menu time to appear and be dismissed
+        // Wait ~2 seconds (timer fires at ~60ms, so 33 ticks ≈ 2 seconds).
+        // This lets the host finish opening the editor before the report panel appears.
         if (pendingMissingPluginPromptDelayTicks < 33)
         {
             ++pendingMissingPluginPromptDelayTicks;
@@ -1747,39 +2281,11 @@ void MainView::timerCallback()
             pendingMissingPluginPrompt = false;
             pendingMissingPluginPromptDelayTicks = 0;
 
-            auto& missing = processor.getCore().getMissingPlugins();
+            if (! processor.getCore().hasLastPresetLoadReport())
+                buildAndStoreCurrentSessionPresetLoadReport();
 
-            if (! missing.isEmpty())
-            {
-                juce::String message;
-                message << missing.size() << " plugin(s) could not be found:\n\n";
-
-                for (int i = 0; i < missing.size(); ++i)
-                    message << "  - " << missing.getReference(i).pluginName << "\n";
-
-                message << "\nWould you like to locate them now?";
-
-                const bool locate = juce::AlertWindow::showOkCancelBox(
-                    juce::AlertWindow::WarningIcon,
-                    "Missing Plugins",
-                    message,
-                    "Locate Now",
-                    "Later",
-                    getWindowCenterTarget());
-
-                if (locate)
-                {
-                    locateMissingPluginsNow();
-                }
-                else
-                {
-                    // User chose Later — do not prompt again this session.
-                    // The missing plugins list is preserved so File > Locate
-                    // Missing Plugins... still works, but the auto-prompt
-                    // will not reappear until the preset is reloaded.
-                    processor.getCore().clearMissingPlugins();
-                }
-            }
+            if (processor.getCore().lastPresetLoadReportHadIssues())
+                showPresetLoadReportDialog(false);
         }
     }
 
@@ -1861,6 +2367,8 @@ void MainView::createNewPreset()
     auto& core = processor.getCore();
     core.resetForNewPreset();
     presetController.clearForNewPreset();
+    pendingMissingPluginPrompt = false;
+    pendingMissingPluginPromptDelayTicks = 0;
     showingRoutingView = false;
 
     auto* parentEditor = findParentComponentOfClass<PolyHostPluginEditor>();
@@ -2206,6 +2714,8 @@ void MainView::refreshPointerControlTarget()
         }
 
         pointerControl.setJumpPoints(convertedPoints, hostedEditor->getLocalBounds());
+        pointerControl.setFreeZones(core.getTabPointerFreeZones(tabIndex),
+                                    hostedEditor->getLocalBounds());
         lastPointerTargetTabIndex = tabIndex;
         lastPointerJumpPointCount = storedPoints.size();
     }
@@ -2631,6 +3141,8 @@ void MainView::processPendingPointerMidi()
 
 void MainView::rebuildTabButtons()
 {
+    const auto previousViewPosition = tabButtonsViewport.getViewPosition();
+
     tabButtons.clear();
 
     auto& tabModel = processor.getCore().getTabModel();
@@ -2642,7 +3154,10 @@ void MainView::rebuildTabButtons()
     {
         const auto& tab = tabModel.getTab(i);
 
-        auto* button = tabButtons.add(new TabButton(tab.name, tab.type, tab.selected));
+        auto* button = tabButtons.add(new TabButton(tab.name,
+                                                   tab.type,
+                                                   tab.selected,
+                                                   processor.getCore().tabNeedsAttention(i)));
         button->setTriggeredOnMouseDown(true);
 
         button->onClick = [this, i, button]
@@ -2666,28 +3181,7 @@ void MainView::rebuildTabButtons()
     addAndMakeVisible(scrollTabsRightButton);
     addAndMakeVisible(addTabButton);
 
-    auto& core = processor.getCore();
-    const int selectedTab = core.getSelectedTabIndex();
-
-    if (juce::isPositiveAndBelow(selectedTab, tabButtons.size()))
-    {
-        if (auto* selectedButton = tabButtons[selectedTab])
-        {
-            auto viewPos = tabButtonsViewport.getViewPosition();
-            auto viewArea = tabButtonsViewport.getViewArea();
-            auto buttonBounds = selectedButton->getBounds();
-
-            if (buttonBounds.getX() < viewArea.getX())
-            {
-                tabButtonsViewport.setViewPosition(buttonBounds.getX(), viewPos.getY());
-            }
-            else if (buttonBounds.getRight() > viewArea.getRight())
-            {
-                tabButtonsViewport.setViewPosition(buttonBounds.getRight() - viewArea.getWidth(),
-                                                   viewPos.getY());
-            }
-        }
-    }
+    tabButtonsViewport.setViewPosition(previousViewPosition);
 
     updateTabScrollButtonState();
 }
@@ -2927,6 +3421,9 @@ void MainView::rebuildRoutingView()
         entry.midiAssignmentCount = core.getTabMidiAssignmentCount(i);
         entry.routingTooltip = core.getRoutingTooltipForTab(i);
         entry.pointerAdjustMethodOverride = core.getTabPointerAdjustMethodOverride(i);
+        entry.needsAttention = core.tabNeedsAttention(i);
+        entry.isMissingPlugin = core.tabHasMissingPluginIssue(i);
+        entry.attentionMessage = core.getTabAttentionMessage(i);
 
         modules.add(entry);
     }
@@ -2971,6 +3468,7 @@ void MainView::showTabContextMenuAsync(int tabIndex, juce::Component* anchor)
     auto& core = processor.getCore();
     const bool canCloseTab = core.getNumTabs() > 1;
     const bool canReloadPlugin = juce::isPositiveAndBelow(tabIndex, core.getNumTabs())
+                              && ! core.tabNeedsAttention(tabIndex)
                               && core.getTabModel().getTab(tabIndex).type != PluginSlotType::Empty;
 
     juce::PopupMenu menu;
@@ -3193,6 +3691,95 @@ void MainView::closeCurrentTab()
     }
 }
 
+std::unique_ptr<juce::PluginDescription> MainView::choosePluginDescriptionForFile(const juce::File& file)
+{
+    auto& core = processor.getCore();
+
+    juce::OwnedArray<juce::PluginDescription> descriptions;
+    juce::String errorMessage;
+
+    if (! core.scanPluginDescriptionsForFile(file.getFullPathName(), descriptions, errorMessage))
+    {
+        juce::AlertWindow::showMessageBoxAsync(
+            juce::AlertWindow::WarningIcon,
+            "Plugin Load Failed",
+            errorMessage.isNotEmpty() ? errorMessage : "No plugin type found in file.",
+            "OK",
+            getWindowCenterTarget());
+
+        return {};
+    }
+
+    if (descriptions.size() == 1)
+        return std::make_unique<juce::PluginDescription>(*descriptions[0]);
+
+    juce::AlertWindow pluginChooser("Select Shell Plugin",
+                                    "This plugin file contains multiple plugins.\n\nChoose which one to load:",
+                                    juce::AlertWindow::QuestionIcon);
+
+    juce::StringArray emptyItems;
+    pluginChooser.addComboBox("pluginChoice", emptyItems, "Plugin:");
+
+    auto* combo = pluginChooser.getComboBoxComponent("pluginChoice");
+
+    if (combo == nullptr)
+        return std::make_unique<juce::PluginDescription>(*descriptions[0]);
+
+    for (int i = 0; i < descriptions.size(); ++i)
+    {
+        const auto& description = *descriptions[i];
+
+        juce::String displayName = description.name.trim();
+
+        if (displayName.isEmpty())
+            displayName = description.descriptiveName.trim();
+
+        if (displayName.isEmpty())
+            displayName = "Plugin " + juce::String(i + 1);
+
+        if (description.manufacturerName.trim().isNotEmpty()
+            && ! displayName.startsWithIgnoreCase(description.manufacturerName.trim()))
+        {
+            displayName = description.manufacturerName.trim() + " - " + displayName;
+        }
+
+        displayName += description.isInstrument ? " [Synth]" : " [FX]";
+
+        if (description.pluginFormatName.trim().isNotEmpty())
+            displayName += " [" + description.pluginFormatName.trim() + "]";
+
+        combo->addItem(displayName, i + 1);
+    }
+
+    combo->setSelectedId(1, juce::dontSendNotification);
+
+    pluginChooser.addButton("Load", 1, juce::KeyPress(juce::KeyPress::returnKey));
+    pluginChooser.addButton("Cancel", 0, juce::KeyPress(juce::KeyPress::escapeKey));
+    pluginChooser.centreAroundComponent(getWindowCenterTarget(), 400, 300);
+
+    if (pluginChooser.runModalLoop() != 1)
+        return {};
+
+    const int selectedIndex = combo->getSelectedId() - 1;
+
+    if (! juce::isPositiveAndBelow(selectedIndex, descriptions.size()))
+        return {};
+
+    return std::make_unique<juce::PluginDescription>(*descriptions[selectedIndex]);
+}
+
+bool MainView::loadPluginFileIntoSelectedTabWithShellChoice(const juce::File& file)
+{
+    auto description = choosePluginDescriptionForFile(file);
+
+    if (description == nullptr)
+        return false;
+
+    clearHostedEditor();
+
+    return processor.getCore().loadMainSlotPluginFromDescription(*description);
+}
+
 void MainView::loadPluginIntoMainSlot()
 {
     DebugLog::write("[Plugin] loadPluginIntoMainSlot opened chooser");
@@ -3212,12 +3799,10 @@ void MainView::loadPluginIntoMainSlot()
 
     if (chooser.browseForFileToOpen())
     {
-        clearHostedEditor();
-
         auto chosenFile = chooser.getResult();
         auto& core = processor.getCore();
 
-        const bool ok = core.loadMainSlotPluginFromPath(chosenFile.getFullPathName());
+        const bool ok = loadPluginFileIntoSelectedTabWithShellChoice(chosenFile);
 
         if (ok)
         {
@@ -3295,6 +3880,8 @@ void MainView::deleteCurrentPreset()
 
         auto& core = processor.getCore();
         core.resetForNewPreset();
+        pendingMissingPluginPrompt = false;
+        pendingMissingPluginPromptDelayTicks = 0;
         core.setStatusText("Preset deleted");
 
         auto* parentEditor = findParentComponentOfClass<PolyHostPluginEditor>();
@@ -3501,8 +4088,22 @@ bool MainView::loadSessionFromFile(const juce::File& file)
     {
         DebugLog::write("[Preset] loadSessionFromFile failed during parse/load");
 
+        buildAndStorePresetLoadReport(file,
+                                      sessionData,
+                                      warnings,
+                                      false,
+                                      "The preset file could not be read or was not a valid PolyHost preset.");
+
         processor.getCore().setStatusText("Preset load failed");
         refreshDirtyUiOnly();
+
+        juce::Component::SafePointer<MainView> safeThis(this);
+        juce::MessageManager::callAsync([safeThis]
+        {
+            if (safeThis != nullptr)
+                safeThis->showPresetLoadReportDialog(false);
+        });
+
         return false;
     }
 
@@ -3523,8 +4124,14 @@ bool MainView::loadSessionFromFile(const juce::File& file)
     repaint();
     juce::MessageManager::getInstance()->runDispatchLoopUntil(10);
 
-    if (processor.getCore().restoreSessionData(sessionData, warnings))
+    juce::StringArray restoreWarnings;
+
+    if (processor.getCore().restoreSessionData(sessionData, restoreWarnings))
     {
+        warnings.addArray(restoreWarnings);
+
+        buildAndStorePresetLoadReport(file, sessionData, warnings, true, {});
+
         if (warnings.size() > 0)
             DebugLog::write("[Preset] loadSessionFromFile success with warnings | count=" + juce::String(warnings.size()));
         else
@@ -3542,11 +4149,17 @@ bool MainView::loadSessionFromFile(const juce::File& file)
         repaint();
         syncManualBypassStatesFromCore();
 
-        // Flag for timer to pick up — deferred so MuLab's init thread doesn't block it
-        if (! processor.getCore().getMissingPlugins().isEmpty())
+        pendingMissingPluginPrompt = false;
+        pendingMissingPluginPromptDelayTicks = 0;
+
+        if (processor.getCore().lastPresetLoadReportHadIssues())
         {
-            pendingMissingPluginPrompt = true;
-            pendingMissingPluginPromptDelayTicks = 0;
+            juce::Component::SafePointer<MainView> safeThis(this);
+            juce::MessageManager::callAsync([safeThis]
+            {
+                if (safeThis != nullptr)
+                    safeThis->showPresetLoadReportDialog(false);
+            });
         }
 
         return true;
@@ -3554,9 +4167,24 @@ bool MainView::loadSessionFromFile(const juce::File& file)
 
     DebugLog::write("[Preset] loadSessionFromFile failed during restoreSessionData");
 
+    warnings.addArray(restoreWarnings);
+    buildAndStorePresetLoadReport(file,
+                                  sessionData,
+                                  warnings,
+                                  false,
+                                  "The preset was parsed, but the session could not be restored.");
+
     processor.getCore().setStatusText("Preset load failed");
     refreshFromCore();
     repaint();
+
+    juce::Component::SafePointer<MainView> safeThis(this);
+    juce::MessageManager::callAsync([safeThis]
+    {
+        if (safeThis != nullptr)
+            safeThis->showPresetLoadReportDialog(false);
+    });
+
     return false;
 }
 
@@ -3648,6 +4276,7 @@ void MainView::refreshHostedEditor()
         hostedEditor->toFront(true);
 
         contentPlaceholder.setVisible(false);
+        pluginIssueMessageEditor.setVisible(false);
         emptyLoadPluginButton.setVisible(false);
 
         juce::MessageManager::callAsync([safePtr = juce::Component::SafePointer<MainView>(this)]
@@ -3697,9 +4326,10 @@ void MainView::recoverCurrentTabAfterWindowReopen()
     if (! juce::isPositiveAndBelow(tabIndex, core.getNumTabs()))
         return;
 
-    if (core.getTabModel().getTab(tabIndex).type == PluginSlotType::Empty)
+    if (core.tabNeedsAttention(tabIndex)
+        || core.getTabModel().getTab(tabIndex).type == PluginSlotType::Empty)
     {
-        DebugLog::writeAdvanced("[Window] selected tab is empty, refreshing hosted editor only");
+        DebugLog::writeAdvanced("[Window] selected tab is empty or needs attention, refreshing hosted editor only");
         refreshHostedEditorForWindowReopen();
         return;
     }
@@ -3808,18 +4438,23 @@ void MainView::refreshFromCore()
     auto& slot = core.getMainSlot();
 
     juce::String contentText;
+    juce::String pluginIssueText;
 
     if (showingRoutingView || showingMacroMappingsView)
     {
         emptyLoadPluginButton.setVisible(false);
+        pluginIssueMessageEditor.setVisible(false);
+        contentPlaceholder.setColour(juce::Label::textColourId, juce::Colours::lightgrey);
         contentText.clear();
     }
     else if (slot.isPluginLoaded())
     {
         emptyLoadPluginButton.setVisible(false);
+        pluginIssueMessageEditor.setVisible(false);
 
         if (hostedEditor == nullptr)
         {
+            contentPlaceholder.setColour(juce::Label::textColourId, juce::Colours::lightgrey);
             contentText = "Hosted plugin instantiated\n\n"
                           "Slot: " + slot.getSlotName() + "\n"
                           "Status: " + slot.getStatusText() + "\n\n"
@@ -3832,12 +4467,37 @@ void MainView::refreshFromCore()
     }
     else
     {
+        const int selectedTab = core.getSelectedTabIndex();
+
         emptyLoadPluginButton.setVisible(true);
         emptyLoadPluginButton.toFront(false);
-        contentText = "Empty slot - drop or click to load";
+
+        if (core.tabHasMissingPluginIssue(selectedTab))
+        {
+            emptyLoadPluginButton.setButtonText("Locate Missing Plugin...");
+            contentPlaceholder.setColour(juce::Label::textColourId, juce::Colours::lightgrey);
+            contentText = "Missing plugin - locate to repair";
+            pluginIssueText = core.getTabAttentionMessage(selectedTab);
+        }
+        else if (core.tabHasFailedPluginIssue(selectedTab))
+        {
+            emptyLoadPluginButton.setButtonText("Click to Load Plugin...");
+            contentPlaceholder.setColour(juce::Label::textColourId, juce::Colours::lightgrey);
+            contentText = "Empty slot - drop or click to load";
+            pluginIssueText = core.getTabAttentionMessage(selectedTab);
+        }
+        else
+        {
+            emptyLoadPluginButton.setButtonText("Click to Load Plugin...");
+            contentPlaceholder.setColour(juce::Label::textColourId, juce::Colours::lightgrey);
+            contentText = "Empty slot - drop or click to load";
+        }
     }
 
     contentPlaceholder.setText(contentText, juce::dontSendNotification);
+    pluginIssueMessageEditor.setText(pluginIssueText, juce::dontSendNotification);
+    pluginIssueMessageEditor.applyFontToAllText(juce::Font(juce::FontOptions(15.0f, juce::Font::bold)));
+    pluginIssueMessageEditor.setVisible(pluginIssueText.isNotEmpty());
 
     routingView.setVisible(showingRoutingView);
     macroMappingsView.setVisible(showingMacroMappingsView);
@@ -3984,15 +4644,30 @@ void MainView::resized()
     routingView.setBounds(contentBounds);
     macroMappingsView.setBounds(contentBounds);
 
-    auto emptyTextBounds = juce::Rectangle<int>(contentBounds.getX(),
-                                                contentBounds.getY() + contentBounds.getHeight() / 2 - 90,
-                                                contentBounds.getWidth(),
-                                                80);
+    auto emptyLayoutArea = contentBounds.reduced(24, 0);
+
+    const bool isLoadingPresetMessage =
+        contentPlaceholder.getText().containsIgnoreCase("Loading Preset");
+
+    const int placeholderHeight = isLoadingPresetMessage ? 110 : 32;
+    const int groupTop = contentBounds.getCentreY() - (isLoadingPresetMessage ? 60 : 115);
+
+    auto emptyTextBounds = juce::Rectangle<int>(emptyLayoutArea.getX(),
+                                                groupTop,
+                                                emptyLayoutArea.getWidth(),
+                                                placeholderHeight);
     contentPlaceholder.setBounds(emptyTextBounds);
 
     auto centredButtonBounds = juce::Rectangle<int>(240, 42)
-        .withCentre(contentBounds.getCentre().translated(0, 10));
+        .withCentre(juce::Point<int>(contentBounds.getCentreX(),
+                                     groupTop + placeholderHeight + 12 + 21));
     emptyLoadPluginButton.setBounds(centredButtonBounds);
+
+    auto issueMessageBounds = juce::Rectangle<int>(emptyLayoutArea.getX() + 20,
+                                                   groupTop + placeholderHeight + 12 + 42 + 16,
+                                                   emptyLayoutArea.getWidth() - 40,
+                                                   150);
+    pluginIssueMessageEditor.setBounds(issueMessageBounds);
 
     if (hostedEditor != nullptr)
         hostedEditor->setTopLeftPosition(0, 0);
@@ -4063,6 +4738,321 @@ void MainView::showMidiAssignmentsPopup(int tabIndex, juce::Component* anchorCom
                                                             nullptr);
 
     midiAssignmentsCallout = &callout;
+}
+
+void MainView::buildAndStorePresetLoadReport(const juce::File& file,
+                                             const SessionData& sessionData,
+                                             const juce::StringArray& warnings,
+                                             bool loadSucceeded,
+                                             const juce::String& failureReason)
+{
+    auto& core = processor.getCore();
+
+    const int tabCount = loadSucceeded ? core.getNumTabs()
+                                       : sessionData.tabs.size();
+
+    int savedPluginCount = 0;
+    int loadedPluginCount = 0;
+    int missingPluginCount = 0;
+    int failedPluginCount = 0;
+    int globalPointerMapCount = 0;
+    int presetPointerMapCount = 0;
+    int noPointerMapCount = 0;
+    int freeZoneCount = 0;
+
+    for (int i = 0; i < tabCount; ++i)
+    {
+        const bool tabExistsInSavedData = juce::isPositiveAndBelow(i, sessionData.tabs.size());
+        const bool savedHadPlugin = tabExistsInSavedData && sessionData.tabs.getReference(i).hasPlugin;
+
+        if (savedHadPlugin)
+            ++savedPluginCount;
+
+        if (loadSucceeded && juce::isPositiveAndBelow(i, core.getNumTabs()))
+        {
+            const bool missing = core.tabHasMissingPluginIssue(i);
+            const bool failed = core.tabHasFailedPluginIssue(i);
+
+            if (missing)
+                ++missingPluginCount;
+
+            if (failed)
+                ++failedPluginCount;
+
+            if (savedHadPlugin && ! missing && ! failed)
+                ++loadedPluginCount;
+
+            const auto pointerMapSource = core.getActivePointerMapSourceText(i);
+
+            if (pointerMapSource == "Global")
+                ++globalPointerMapCount;
+            else if (pointerMapSource == "Preset")
+                ++presetPointerMapCount;
+            else
+                ++noPointerMapCount;
+
+            freeZoneCount += core.getTabPointerFreeZones(i).size();
+        }
+    }
+
+    missingPluginCount = juce::jmax(missingPluginCount, core.getMissingPlugins().size());
+
+    const bool hasIssues = ! loadSucceeded
+                        || missingPluginCount > 0
+                        || failedPluginCount > 0
+                        || warnings.size() > 0;
+
+    auto getTabName = [&sessionData](int tabIndex)
+    {
+        if (juce::isPositiveAndBelow(tabIndex, sessionData.tabs.size()))
+        {
+            const auto& tab = sessionData.tabs.getReference(tabIndex);
+
+            if (tab.hasPlugin)
+            {
+                auto pluginName = tab.plugin.pluginName.trim();
+
+                if (pluginName.isEmpty())
+                    pluginName = tab.plugin.pluginDescriptiveName.trim();
+
+                if (pluginName.isEmpty())
+                    pluginName = juce::File(tab.plugin.pluginPath).getFileNameWithoutExtension();
+
+                if (pluginName.isNotEmpty())
+                    return pluginName;
+            }
+
+            auto name = tab.tabName.trim();
+
+            if (name.isNotEmpty()
+                && ! name.equalsIgnoreCase("Main")
+                && ! name.startsWithIgnoreCase("Tab ")
+                && ! name.equalsIgnoreCase("Empty"))
+            {
+                return name;
+            }
+        }
+
+        return juce::String("Tab ") + juce::String(tabIndex + 1);
+    };
+
+    auto makeMissingPluginName = [](const PluginCore::MissingPluginEntry& entry)
+    {
+        auto name = entry.pluginName.trim();
+
+        if (name.isEmpty())
+            name = juce::File(entry.pluginPath).getFileNameWithoutExtension();
+
+        if (name.isEmpty())
+            name = "Unknown Plugin";
+
+        auto manufacturer = entry.pluginManufacturer.trim();
+
+        if (manufacturer.isNotEmpty())
+            return manufacturer + " - " + name;
+
+        return name;
+    };
+
+    juce::String report;
+    report << "Preset Load Report\n";
+    report << "==================\n\n";
+
+    if (file.existsAsFile())
+        report << "Preset: " << file.getFullPathName() << "\n";
+    else if (file.getFullPathName().isNotEmpty())
+        report << "Preset: " << file.getFullPathName() << "\n";
+    else
+        report << "Preset: Current host/session state\n";
+
+    if (loadSucceeded)
+        report << "Result: " << (hasIssues ? "Loaded with issues" : "Loaded cleanly") << "\n\n";
+    else
+        report << "Result: Load failed\n\n";
+
+    report << "Summary\n";
+    report << "-------\n";
+    report << "Tabs loaded: " << tabCount << "\n";
+    report << "Plugins in preset: " << savedPluginCount << "\n";
+
+    if (loadSucceeded)
+        report << "Plugins loaded: " << loadedPluginCount << "\n";
+
+    report << "Missing plugins: " << missingPluginCount << "\n";
+    report << "Failed/quarantined plugins: " << failedPluginCount << "\n";
+    report << "Global pointer maps used: " << globalPointerMapCount << "\n";
+    report << "Preset pointer maps used: " << presetPointerMapCount << "\n";
+    report << "Tabs with no pointer map: " << noPointerMapCount << "\n";
+    report << "Pointer free zones: " << freeZoneCount << "\n";
+    report << "Warnings: " << warnings.size() << "\n";
+
+    if (! loadSucceeded && failureReason.trim().isNotEmpty())
+    {
+        report << "\nFailure\n";
+        report << "-------\n";
+        report << failureReason.trim() << "\n";
+    }
+
+    if (! core.getMissingPlugins().isEmpty())
+    {
+        report << "\nMissing Plugins\n";
+        report << "---------------\n";
+
+        const auto& missing = core.getMissingPlugins();
+
+        for (int i = 0; i < missing.size(); ++i)
+        {
+            const auto& entry = missing.getReference(i);
+            report << "- Tab " << (entry.tabIndex + 1) << ": " << makeMissingPluginName(entry) << "\n";
+
+            if (entry.pluginPath.trim().isNotEmpty())
+                report << "  Saved path: " << entry.pluginPath.trim() << "\n";
+        }
+    }
+
+    if (failedPluginCount > 0)
+    {
+        report << "\nFailed / Quarantined Plugins\n";
+        report << "----------------------------\n";
+
+        for (int i = 0; i < core.getNumTabs(); ++i)
+        {
+            if (! core.tabHasFailedPluginIssue(i))
+                continue;
+
+            auto title = core.getTabAttentionTitle(i).trim();
+
+            if (title.isEmpty())
+                title = getTabName(i);
+
+            report << "- Tab " << (i + 1) << ": " << title << "\n";
+
+            auto message = core.getTabAttentionMessage(i).trim();
+
+            if (message.isNotEmpty())
+                report << "  " << message.replace("\n", "\n  ") << "\n";
+        }
+    }
+
+    if (globalPointerMapCount > 0 || presetPointerMapCount > 0 || noPointerMapCount > 0)
+    {
+        report << "\nPointer Maps\n";
+        report << "------------\n";
+
+        for (int i = 0; i < core.getNumTabs(); ++i)
+        {
+            const auto source = core.getActivePointerMapSourceText(i);
+
+            if (source == "None")
+                continue;
+
+            report << "- Tab " << (i + 1) << " (" << getTabName(i) << "): " << source << "\n";
+        }
+    }
+
+    if (warnings.size() > 0)
+    {
+        report << "\nWarnings\n";
+        report << "--------\n";
+
+        for (int i = 0; i < warnings.size(); ++i)
+            report << "- " << warnings[i].trim().replace("\n", "\n  ") << "\n";
+    }
+
+    if (! hasIssues)
+    {
+        report << "\nNo restore issues were detected.\n";
+    }
+    else
+    {
+        report << "\nUse Help > Preset Load Report... to reopen this report until another preset is loaded or a new preset is created.\n";
+    }
+
+    core.setLastPresetLoadReport(report, hasIssues);
+}
+
+void MainView::buildAndStoreCurrentSessionPresetLoadReport()
+{
+    juce::StringArray warnings;
+    buildAndStorePresetLoadReport(presetController.getCurrentFile(),
+                                  processor.getCore().buildSessionData(),
+                                  warnings,
+                                  true,
+                                  {});
+}
+
+void MainView::showPresetLoadReportDialog(bool manualRequest)
+{
+    DebugLog::write("[UI] showPresetLoadReportDialog requested | manual="
+                    + juce::String(manualRequest ? "true" : "false"));
+
+    auto& core = processor.getCore();
+
+    if (manualRequest && ! core.hasLastPresetLoadReport())
+    {
+        DebugLog::write("[UI] showPresetLoadReportDialog | no stored report, building current-session report");
+        buildAndStoreCurrentSessionPresetLoadReport();
+    }
+
+    auto reportText = core.getLastPresetLoadReport();
+
+    if (reportText.trim().isEmpty())
+    {
+        reportText = "Preset Load Report\n"
+                     "==================\n\n"
+                     "No preset load report is available yet.\n\n"
+                     "Load or restore a preset first.";
+    }
+
+    const bool canLocateMissingPlugins = ! core.getMissingPlugins().isEmpty();
+    juce::Component::SafePointer<MainView> safeThis(this);
+
+    auto content = std::make_unique<PresetLoadReportDialogContent>(
+        reportText,
+        canLocateMissingPlugins,
+        [safeThis]
+        {
+            if (safeThis != nullptr)
+                safeThis->locateMissingPluginsNow();
+        });
+
+    const int dialogWidth = content->getWidth();
+    const int dialogHeight = content->getHeight();
+
+    juce::DialogWindow::LaunchOptions options;
+    options.content.setOwned(content.release());
+    options.dialogTitle = "Preset Load Report";
+    options.dialogBackgroundColour = juce::Colour(0xFF1D2230);
+    options.escapeKeyTriggersCloseButton = true;
+    options.useNativeTitleBar = true;
+    options.resizable = true;
+    options.componentToCentreAround = getWindowCenterTarget();
+
+    if (auto* window = options.launchAsync())
+        window->centreAroundComponent(getWindowCenterTarget(), dialogWidth, dialogHeight);
+}
+
+void MainView::showPluginDiagnosticsDialog(int tabIndex)
+{
+    DebugLog::write("[UI] showPluginDiagnosticsDialog requested | tabIndex=" + juce::String(tabIndex));
+
+    auto diagnosticsText = processor.getCore().buildPluginDiagnosticsText(tabIndex);
+
+    auto content = std::make_unique<PluginDiagnosticsDialogContent>(diagnosticsText);
+    const int dialogWidth = content->getWidth();
+    const int dialogHeight = content->getHeight();
+
+    juce::DialogWindow::LaunchOptions options;
+    options.content.setOwned(content.release());
+    options.dialogTitle = "Plugin Diagnostics";
+    options.dialogBackgroundColour = juce::Colour(0xFF1D2230);
+    options.escapeKeyTriggersCloseButton = true;
+    options.useNativeTitleBar = true;
+    options.resizable = true;
+    options.componentToCentreAround = getWindowCenterTarget();
+
+    if (auto* window = options.launchAsync())
+        window->centreAroundComponent(getWindowCenterTarget(), dialogWidth, dialogHeight);
 }
 
 void MainView::showAboutDialog()
@@ -4189,9 +5179,7 @@ bool MainView::loadDroppedPluginInNewTab(const juce::File& file)
     refreshFromCore();
     repaint();
 
-    clearHostedEditor();
-
-    if (core.loadMainSlotPluginFromPath(file.getFullPathName()))
+    if (loadPluginFileIntoSelectedTabWithShellChoice(file))
     {
         core.refreshTabModel();
         core.getTabModel().selectTab(core.getSelectedTabIndex());
@@ -4239,9 +5227,7 @@ bool MainView::handleDroppedPluginFile(const juce::File& file, int targetTabInde
         core.setSelectedTabIndex(targetTabIndex);
         core.getTabModel().selectTab(targetTabIndex);
 
-        clearHostedEditor();
-
-        if (core.loadMainSlotPluginFromPath(file.getFullPathName()))
+        if (loadPluginFileIntoSelectedTabWithShellChoice(file))
         {
             DebugLog::write("[DragDrop] plugin loaded into empty tab");
             core.refreshTabModel();
@@ -4272,9 +5258,7 @@ bool MainView::handleDroppedPluginFile(const juce::File& file, int targetTabInde
         core.setSelectedTabIndex(targetTabIndex);
         core.getTabModel().selectTab(targetTabIndex);
 
-        clearHostedEditor();
-
-        if (core.loadMainSlotPluginFromPath(file.getFullPathName()))
+        if (loadPluginFileIntoSelectedTabWithShellChoice(file))
         {
             DebugLog::write("[DragDrop] plugin replaced successfully");
             core.refreshTabModel();
@@ -4424,9 +5408,7 @@ bool MainView::tryRepairMissingPlugin(int tabIndex,
     core.setSelectedTabIndex(tabIndex);
     core.getTabModel().selectTab(tabIndex);
 
-    clearHostedEditor();
-
-    if (! core.loadMainSlotPluginFromPath(replacementFile.getFullPathName()))
+    if (! loadPluginFileIntoSelectedTabWithShellChoice(replacementFile))
     {
         core.setSelectedTabIndex(previousSelected);
         core.getTabModel().selectTab(previousSelected);

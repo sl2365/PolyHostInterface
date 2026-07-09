@@ -79,6 +79,8 @@ namespace
             configureTipLabel(tipRgb, "Point RGB: Saved point colour.\nPreview RGB: Point colour on mouse down.");
             configureTipLabel(tipCrosshairRgba, "Crosshair colour and alpha.");
 
+            addAndMakeVisible(separatorAfterTabCooldown);
+            addAndMakeVisible(separatorAfterRightMouse);
             addAndMakeVisible(separatorAfterAdjustMethod);
             addAndMakeVisible(separatorAfterAdjustSensitivity);
             addAndMakeVisible(separatorAfterWeights);
@@ -162,7 +164,7 @@ namespace
                     dw->exitModalState(0);
             };
 
-            setSize(460, 965);
+            setSize(920, 496);
         }
 
         void apply()
@@ -254,82 +256,95 @@ namespace
 
         void resized() override
         {
-            auto area = getLocalBounds().reduced(16);
-            area.removeFromTop(4);
+            auto bounds = getLocalBounds().reduced(10);
+
+            auto buttonRow = bounds.removeFromBottom(30);
+            bounds.removeFromBottom(8);
+            bounds.removeFromBottom(2);
+
+            constexpr int panelGap = 18;
+            auto leftPanel = bounds.removeFromLeft((bounds.getWidth() - panelGap) / 2);
+            bounds.removeFromLeft(panelGap);
+            auto rightPanel = bounds;
+
+            auto leftArea = leftPanel.reduced(10, 12);
+            auto rightArea = rightPanel.reduced(10, 12);
 
             constexpr int rowHeight = 28;
-            constexpr int rowGap = 6;
-            constexpr int labelWidth = 100;
+            constexpr int rowGap = 4;
+            constexpr int labelWidth = 104;
             constexpr int fieldWidth = 60;
-            constexpr int infoGap = 8;
-            constexpr int infoWidth = 220;
+            constexpr int infoGap = 10;
             constexpr int rgbFieldWidth = 40;
             constexpr int separatorHeight = 8;
 
-            auto layoutStandardRow = [&](juce::Label& label,
+            auto layoutStandardRow = [&](juce::Rectangle<int>& columnArea,
+                                         juce::Label& label,
                                          juce::TextEditor& editor,
                                          juce::Label* tip = nullptr)
             {
-                auto row = area.removeFromTop(rowHeight);
+                auto row = columnArea.removeFromTop(rowHeight);
                 label.setBounds(row.removeFromLeft(labelWidth));
                 editor.setBounds(row.removeFromLeft(fieldWidth));
 
                 if (tip != nullptr)
                 {
                     row.removeFromLeft(infoGap);
-                    tip->setBounds(row.removeFromLeft(infoWidth));
+                    tip->setBounds(row);
                 }
 
-                area.removeFromTop(rowGap);
+                columnArea.removeFromTop(rowGap);
             };
 
-            auto layoutSeparator = [&](juce::Component& separator)
+            auto layoutSeparator = [&](juce::Rectangle<int>& columnArea,
+                                       juce::Component& separator)
             {
-                auto row = area.removeFromTop(separatorHeight);
+                auto row = columnArea.removeFromTop(separatorHeight);
                 separator.setBounds(row.withTrimmedLeft(labelWidth)
                                        .withTrimmedRight(8)
                                        .withSizeKeepingCentre(row.getWidth() - labelWidth - 8, 1));
-                area.removeFromTop(rowGap);
+                columnArea.removeFromTop(rowGap);
             };
 
-            layoutStandardRow(xCcLabel, xCcEditor, &tipXcc);
-            layoutStandardRow(yCcLabel, yCcEditor, &tipYcc);
-            layoutStandardRow(adjustCcLabel, adjustCcEditor, &tipAdjustCc);
-            layoutStandardRow(tabCcLabel, tabCcEditor, &tipTabCc);
-            layoutStandardRow(tabCooldownLabel, tabCooldownEditor, &tipTabCooldown);
-            layoutStandardRow(leftMouseCcLabel, leftMouseCcEditor, &tipLeftMouseCc);
-            layoutStandardRow(middleMouseCcLabel, middleMouseCcEditor, &tipMiddleMouseCc);
-            layoutStandardRow(rightMouseCcLabel, rightMouseCcEditor, &tipRightMouseCc);
-            layoutStandardRow(cursorUpKeyCcLabel, cursorUpKeyCcEditor, &tipCursorUpKeyCc);
-            layoutStandardRow(cursorDownKeyCcLabel, cursorDownKeyCcEditor, &tipCursorDownKeyCc);
-            layoutStandardRow(enterKeyCcLabel, enterKeyCcEditor, &tipEnterKeyCc);
-            layoutStandardRow(adjustModeLabel, adjustModeEditor, &tipAdjustMode);
-            layoutStandardRow(adjustMethodLabel, adjustMethodEditor, &tipAdjustMethod);
-            layoutSeparator(separatorAfterAdjustMethod);
+            layoutStandardRow(leftArea, xCcLabel, xCcEditor, &tipXcc);
+            layoutStandardRow(leftArea, yCcLabel, yCcEditor, &tipYcc);
+            layoutStandardRow(leftArea, adjustCcLabel, adjustCcEditor, &tipAdjustCc);
+            layoutStandardRow(leftArea, tabCcLabel, tabCcEditor, &tipTabCc);
+            layoutStandardRow(leftArea, tabCooldownLabel, tabCooldownEditor, &tipTabCooldown);
+            layoutSeparator(leftArea, separatorAfterTabCooldown);
+            layoutStandardRow(leftArea, leftMouseCcLabel, leftMouseCcEditor, &tipLeftMouseCc);
+            layoutStandardRow(leftArea, middleMouseCcLabel, middleMouseCcEditor, &tipMiddleMouseCc);
+            layoutStandardRow(leftArea, rightMouseCcLabel, rightMouseCcEditor, &tipRightMouseCc);
+            layoutSeparator(leftArea, separatorAfterRightMouse);
+            layoutStandardRow(leftArea, cursorUpKeyCcLabel, cursorUpKeyCcEditor, &tipCursorUpKeyCc);
+            layoutStandardRow(leftArea, cursorDownKeyCcLabel, cursorDownKeyCcEditor, &tipCursorDownKeyCc);
+            layoutStandardRow(leftArea, enterKeyCcLabel, enterKeyCcEditor, &tipEnterKeyCc);
+            layoutStandardRow(leftArea, adjustModeLabel, adjustModeEditor, &tipAdjustMode);
+            layoutStandardRow(leftArea, adjustMethodLabel, adjustMethodEditor, &tipAdjustMethod);
 
             {
-                auto row = area.removeFromTop(rowHeight);
+                auto row = rightArea.removeFromTop(rowHeight);
                 toleranceCcLabel.setBounds(row.removeFromLeft(labelWidth));
                 toleranceCcEditor.setBounds(row.removeFromLeft(fieldWidth));
                 row.removeFromLeft(infoGap);
 
-                auto infoArea = row.removeFromLeft(infoWidth);
+                auto infoArea = row;
                 auto topHalf = infoArea.removeFromTop(14);
                 auto bottomHalf = infoArea.removeFromTop(14);
 
                 currentToleranceInfoLabel.setBounds(topHalf);
                 currentToleranceLineLabel.setBounds(bottomHalf);
 
-                area.removeFromTop(rowGap);
+                rightArea.removeFromTop(rowGap);
             }
 
-            layoutStandardRow(sensitivityCcLabel, sensitivityCcEditor, &tipSensitivityCc);
-            layoutStandardRow(adjustSensitivityLabel, adjustSensitivityEditor, &tipAdjustSensitivity);
-            layoutStandardRow(dragReturnDelayLabel, dragReturnDelayEditor, &tipDragReturnDelay);
-            layoutSeparator(separatorAfterAdjustSensitivity);
+            layoutStandardRow(rightArea, sensitivityCcLabel, sensitivityCcEditor, &tipSensitivityCc);
+            layoutStandardRow(rightArea, adjustSensitivityLabel, adjustSensitivityEditor, &tipAdjustSensitivity);
+            layoutStandardRow(rightArea, dragReturnDelayLabel, dragReturnDelayEditor, &tipDragReturnDelay);
+            rightArea.removeFromTop(6);
 
             {
-                auto combinedArea = area.removeFromTop(rowHeight * 2 + rowGap);
+                auto combinedArea = rightArea.removeFromTop(rowHeight * 2 + rowGap);
                 auto combinedBounds = combinedArea;
 
                 auto topRow = combinedArea.removeFromTop(rowHeight);
@@ -343,32 +358,31 @@ namespace
                 yWeightEditor.setBounds(secondRow.removeFromLeft(fieldWidth));
 
                 const int tipX = combinedBounds.getX() + labelWidth + fieldWidth + infoGap;
-                const int tipRightMargin = 4;
-                const int tipWidth = combinedBounds.getRight() - tipX - tipRightMargin;
+                const int tipWidth = combinedBounds.getRight() - tipX;
 
                 tipWeights.setBounds(tipX,
                                      combinedBounds.getY(),
                                      juce::jmax(0, tipWidth),
                                      rowHeight * 2 + rowGap);
 
-                area.removeFromTop(rowGap);
+                rightArea.removeFromTop(rowGap);
             }
 
-            layoutSeparator(separatorAfterWeights);
-            layoutStandardRow(overlayTransparencyLabel, overlayTransparencyEditor, &tipOverlay);
-            layoutStandardRow(pointSizeLabel, pointSizeEditor, &tipPointSize);
+            layoutSeparator(rightArea, separatorAfterWeights);
+            layoutStandardRow(rightArea, overlayTransparencyLabel, overlayTransparencyEditor, &tipOverlay);
+            layoutStandardRow(rightArea, pointSizeLabel, pointSizeEditor, &tipPointSize);
 
             {
-                auto row = area.removeFromTop(rowHeight);
+                auto row = rightArea.removeFromTop(rowHeight);
                 showCrosshairLabel.setBounds(row.removeFromLeft(labelWidth));
                 showCrosshairToggle.setBounds(row.removeFromLeft(24));
                 row.removeFromLeft(infoGap);
-                tipShowCrosshair.setBounds(row.removeFromLeft(infoWidth));
-                area.removeFromTop(rowGap);
+                tipShowCrosshair.setBounds(row);
+                rightArea.removeFromTop(rowGap);
             }
 
             {
-                auto row = area.removeFromTop(rowHeight);
+                auto row = rightArea.removeFromTop(rowHeight);
                 crosshairRgbaLabel.setBounds(row.removeFromLeft(labelWidth));
                 crosshairColourREditor.setBounds(row.removeFromLeft(rgbFieldWidth));
                 row.removeFromLeft(4);
@@ -378,12 +392,12 @@ namespace
                 row.removeFromLeft(4);
                 crosshairColourAEditor.setBounds(row.removeFromLeft(rgbFieldWidth));
                 row.removeFromLeft(infoGap);
-                tipCrosshairRgba.setBounds(row.removeFromLeft(infoWidth));
-                area.removeFromTop(rowGap);
+                tipCrosshairRgba.setBounds(row);
+                rightArea.removeFromTop(rowGap);
             }
 
             {
-                auto combinedArea = area.removeFromTop(rowHeight * 2 + rowGap);
+                auto combinedArea = rightArea.removeFromTop(rowHeight * 2 + rowGap);
                 auto combinedBounds = combinedArea;
 
                 auto topRow = combinedArea.removeFromTop(rowHeight);
@@ -404,15 +418,17 @@ namespace
                 secondRow.removeFromLeft(4);
                 previewColourBEditor.setBounds(secondRow.removeFromLeft(rgbFieldWidth));
 
-                tipRgb.setBounds(combinedBounds.getX() + labelWidth + (rgbFieldWidth * 3) + 8 + 8,
+                const int tipX = combinedBounds.getX() + labelWidth + (rgbFieldWidth * 3) + 8 + infoGap;
+                const int tipWidth = combinedBounds.getRight() - tipX;
+
+                tipRgb.setBounds(tipX,
                                  combinedBounds.getY(),
-                                 infoWidth,
+                                 juce::jmax(0, tipWidth),
                                  rowHeight * 2 + rowGap);
 
-                area.removeFromTop(rowGap);
+                rightArea.removeFromTop(rowGap);
             }
 
-            auto buttonRow = area.removeFromBottom(30);
             cancelButton.setBounds(buttonRow.removeFromRight(90));
             buttonRow.removeFromRight(8);
             okButton.setBounds(buttonRow.removeFromRight(90));
@@ -424,29 +440,41 @@ namespace
         {
             g.fillAll(juce::Colour(0xFF4A4A4A));
 
-            auto panelBounds = getLocalBounds().withTrimmedLeft(10)
-                                               .withTrimmedTop(10)
-                                               .withTrimmedRight(10)
-                                               .withTrimmedBottom(52);
+            auto bounds = getLocalBounds().reduced(10);
+            bounds.removeFromBottom(30);
+            bounds.removeFromBottom(8);
+            bounds.removeFromBottom(2);
 
-            g.setColour(juce::Colour(0xFF575757));
-            g.fillRect(panelBounds);
+            constexpr int panelGap = 18;
+            auto leftPanel = bounds.removeFromLeft((bounds.getWidth() - panelGap) / 2);
+            bounds.removeFromLeft(panelGap);
+            auto rightPanel = bounds;
 
-            g.setColour(juce::Colours::white.withAlpha(0.18f));
-            g.drawRect(panelBounds, 1);
+            auto drawPanel = [&](const juce::Rectangle<int>& panelBounds)
+            {
+                g.setColour(juce::Colour(0xFF575757));
+                g.fillRect(panelBounds);
+
+                g.setColour(juce::Colours::white.withAlpha(0.18f));
+                g.drawRect(panelBounds, 1);
+            };
+
+            drawPanel(leftPanel);
+            drawPanel(rightPanel);
 
             g.setColour(juce::Colours::white.withAlpha(0.16f));
 
-            for (auto* separator : { &separatorAfterAdjustMethod,
-                                     &separatorAfterAdjustSensitivity,
+            for (auto* separator : { &separatorAfterTabCooldown,
+                                     &separatorAfterRightMouse,
                                      &separatorAfterWeights })
             {
-                auto bounds = separator->getBounds();
+                auto separatorBounds = separator->getBounds();
 
-                if (! bounds.isEmpty())
-                    g.fillRect(bounds.withHeight(1));
+                if (! separatorBounds.isEmpty())
+                    g.fillRect(separatorBounds.withHeight(1));
             }
         }
+
 
     private:
         class ScrollableTextEditor : public juce::TextEditor
@@ -739,6 +767,8 @@ namespace
         ScrollableTextEditor overlayTransparencyEditor, pointSizeEditor;
         juce::ToggleButton showCrosshairToggle;
 
+        juce::Component separatorAfterTabCooldown;
+        juce::Component separatorAfterRightMouse;
         juce::Component separatorAfterAdjustMethod;
         juce::Component separatorAfterAdjustSensitivity;
         juce::Component separatorAfterWeights;
@@ -766,7 +796,6 @@ namespace PointerSettingsDialogue
         options.resizable = false;
         options.componentToCentreAround = centreAroundComponent;
 
-        if (auto* dialog = options.launchAsync())
-            dialog->centreAroundComponent(centreAroundComponent, 460, 965);
+        options.launchAsync();
     }
 }

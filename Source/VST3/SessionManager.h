@@ -47,6 +47,7 @@ struct SessionTabData
     bool hasCustomPointerMap = false;
     bool preferGlobalPointerMap = false;
     juce::Array<PointerJumpPoint> pointerJumpPoints;
+    juce::Array<juce::Rectangle<float>> pointerFreeZones;
     bool hasPlugin = false;
     SessionPluginData plugin;
 };

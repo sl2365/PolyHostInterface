@@ -81,6 +81,13 @@ RoutingView::ModuleRow::ModuleRow()
         if (onMoveDown)
             onMoveDown(entry.tabIndex);
     };
+
+    infoButton.onClick = [this]
+    {
+        if (onShowPluginInfo)
+            onShowPluginInfo(entry.tabIndex, &infoButton);
+    };
+
     closeButton.onClick = [this]
     {
         if (onCloseTab)
@@ -101,9 +108,16 @@ void RoutingView::ModuleRow::setModule(const ModuleEntry& newEntry)
 
     const bool isInactive = entry.isMutedBySolo || (entry.isBypassed && ! entry.isSoloed);
 
-    nameLabel.setColour(juce::Label::textColourId,
-                        isInactive ? juce::Colours::lightgrey.withAlpha(0.65f)
-                                   : juce::Colours::white);
+    if (entry.needsAttention)
+    {
+        nameLabel.setColour(juce::Label::textColourId, juce::Colour(0xFFFF6B6B));
+    }
+    else
+    {
+        nameLabel.setColour(juce::Label::textColourId,
+                            isInactive ? juce::Colours::lightgrey.withAlpha(0.65f)
+                                       : juce::Colours::white);
+    }
     adjustMethodEditor.setMethodOverride(entry.pointerAdjustMethodOverride);
     juce::String infoTooltip = entry.routingTooltip.isNotEmpty()
                                    ? entry.routingTooltip
@@ -112,9 +126,12 @@ void RoutingView::ModuleRow::setModule(const ModuleEntry& newEntry)
     if (entry.isMutedBySolo)
         infoTooltip << "\n\nMuted by Solo";
 
-    infoButton.setTooltip(infoTooltip);
-    infoButton.setVisible(entry.routingTooltip.isNotEmpty());
-    infoButton.setEnabled(entry.routingTooltip.isNotEmpty());
+    if (entry.needsAttention && entry.attentionMessage.isNotEmpty())
+        infoTooltip << "\n\nAttention required:\n" << entry.attentionMessage;
+
+    infoButton.setTooltip(infoTooltip + "\n\nClick for plugin diagnostics.");
+    infoButton.setVisible(true);
+    infoButton.setEnabled(true);
 
     if (entry.type == PluginSlotType::Synth)
     {
@@ -154,7 +171,12 @@ void RoutingView::ModuleRow::paint(juce::Graphics& g)
 
     const bool isInactive = entry.isMutedBySolo || (entry.isBypassed && ! entry.isSoloed);
 
-    if (isInactive)
+    if (entry.needsAttention)
+    {
+        fill = juce::Colour(0xFF4A1F1F);
+        outline = juce::Colour(0xFFFF6B6B).withAlpha(0.80f);
+    }
+    else if (isInactive)
     {
         fill = fill.darker(0.35f);
         outline = outline.withAlpha(0.55f);
@@ -288,6 +310,12 @@ void RoutingView::rebuildModuleRows()
         {
             if (onShowMidiAssignments)
                 onShowMidiAssignments(tabIndex, anchorComponent);
+        };
+
+        row->onShowPluginInfo = [this](int tabIndex, juce::Component* anchorComponent)
+        {
+            if (onShowPluginInfo)
+                onShowPluginInfo(tabIndex, anchorComponent);
         };
 
         row->onToggleBypass = [this](int tabIndex)

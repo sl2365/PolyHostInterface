@@ -130,6 +130,43 @@ public:
     bool getPointerControlSnapYEnabled() const;
     void setPointerControlSnapYEnabled(bool shouldEnable);
 
+    int getMidiMonitorWindowWidth() const;
+    int getMidiMonitorWindowHeight() const;
+    void setMidiMonitorWindowSize(int width, int height);
+
+    bool getMidiMonitorHideClock() const;
+    bool getMidiMonitorHideActiveSense() const;
+    bool getMidiMonitorShowNote() const;
+    bool getMidiMonitorShowPitchBend() const;
+    bool getMidiMonitorShowCc() const;
+    bool getMidiMonitorShowNrpnRpn() const;
+    bool getMidiMonitorShowProgramChange() const;
+    bool getMidiMonitorShowAftertouch() const;
+    bool getMidiMonitorShowSysEx() const;
+    bool getMidiMonitorShowRealtime() const;
+    bool getMidiMonitorShowSystemCommon() const;
+
+    void setMidiMonitorFilterSettings(bool hideClock,
+                                      bool hideActiveSense,
+                                      bool showNote,
+                                      bool showPitchBend,
+                                      bool showCc,
+                                      bool showNrpnRpn,
+                                      bool showProgramChange,
+                                      bool showAftertouch,
+                                      bool showSysEx,
+                                      bool showRealtime,
+                                      bool showSystemCommon);
+
+    int getMidiMonitorColumnWidth(int columnId, int fallbackWidth) const;
+    void setMidiMonitorColumnWidths(int timeWidth,
+                                    int sourceWidth,
+                                    int typeWidth,
+                                    int channelWidth,
+                                    int data1Width,
+                                    int data2Width,
+                                    int descriptionWidth);
+
     juce::Colour getPointerControlCrosshairColour() const;
     void setPointerControlCrosshairColour(juce::Colour colour);
 

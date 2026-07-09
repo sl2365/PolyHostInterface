@@ -52,16 +52,41 @@ public:
     void setTabPointerAdjustSensitivity(int tabIndex, int sensitivity);
     bool tabHasCustomPointerMap(int tabIndex) const;
     bool tabHasGlobalPointerMap(int tabIndex) const;
+    juce::String getGlobalPointerMapIdentityText(int tabIndex) const;
+    bool globalPointerMapNeedsUserLabel(int tabIndex) const;
     bool getTabPreferGlobalPointerMap(int tabIndex) const;
     void setTabPreferGlobalPointerMap(int tabIndex, bool shouldPreferGlobal);
     bool loadGlobalPointerMapForTab(int tabIndex);
-    bool saveCurrentPointerMapToGlobalFile(int tabIndex);
+    bool saveCurrentPointerMapToGlobalFile(int tabIndex, const juce::String& userLabel = {});
     juce::String getActivePointerMapSourceText(int tabIndex) const;
     void saveCurrentPointerMapToPreset(int tabIndex);
     void clearCurrentPresetPointerMap(int tabIndex);
     const juce::Array<SessionTabData::PointerJumpPoint>& getTabPointerJumpPoints(int tabIndex) const;
     void setTabPointerJumpPoints(int tabIndex, const juce::Array<SessionTabData::PointerJumpPoint>& points);
+    bool tabHasPointerFreeZone(int tabIndex) const;
+    bool tabHasPointerFreeZones(int tabIndex) const;
+    juce::Rectangle<float> getTabPointerFreeZone(int tabIndex) const;
+    const juce::Array<juce::Rectangle<float>>& getTabPointerFreeZones(int tabIndex) const;
+    void setTabPointerFreeZone(int tabIndex, juce::Rectangle<float> freeZone);
+    void setTabPointerFreeZones(int tabIndex, const juce::Array<juce::Rectangle<float>>& freeZones);
+    void addTabPointerFreeZone(int tabIndex, juce::Rectangle<float> freeZone);
+    bool removeTabPointerFreeZoneAt(int tabIndex, int freeZoneIndex);
+    void clearTabPointerFreeZone(int tabIndex);
     juce::String getRoutingTooltipForTab(int tabIndex) const;
+    bool tabNeedsAttention(int tabIndex) const;
+    bool tabHasMissingPluginIssue(int tabIndex) const;
+    bool tabHasFailedPluginIssue(int tabIndex) const;
+    juce::String getTabAttentionTitle(int tabIndex) const;
+    juce::String getTabAttentionMessage(int tabIndex) const;
+    juce::String buildPluginDiagnosticsText(int tabIndex) const;
+    void clearPluginQuarantine();
+    juce::String getPluginQuarantineReport() const;
+
+    void setLastPresetLoadReport(const juce::String& reportText, bool hadIssues);
+    void clearLastPresetLoadReport();
+    bool hasLastPresetLoadReport() const;
+    bool lastPresetLoadReportHadIssues() const;
+    juce::String getLastPresetLoadReport() const;
 
     const juce::StringArray& getAvailableMidiInputNames() const;
     int getTabMidiAssignmentCount(int tabIndex) const;
@@ -79,6 +104,10 @@ public:
     SlotModel& getMainSlot();
     const SlotModel& getMainSlot() const;
 
+    bool scanPluginDescriptionsForFile(const juce::String& pluginPath,
+                                       juce::OwnedArray<juce::PluginDescription>& typesFound,
+                                       juce::String& errorMessage);
+    bool loadMainSlotPluginFromDescription(const juce::PluginDescription& description);
     bool loadMainSlotPluginFromPath(const juce::String& pluginPath);
     void unloadMainSlotPlugin();
     void resetForNewPreset();
@@ -147,8 +176,18 @@ private:
         bool preferGlobalPointerMap = false;
         juce::Array<SessionTabData::PointerJumpPoint> pointerJumpPoints;
         juce::Array<SessionTabData::PointerJumpPoint> presetPointerJumpPoints;
+        juce::Array<juce::Rectangle<float>> pointerFreeZones;
+        juce::Array<juce::Rectangle<float>> presetPointerFreeZones;
         float pointerLaneTolerance = 30.0f;
         int pointerAdjustSensitivity = 1;
+        bool restoreIssueActive = false;
+        bool restoreIssueMissingPlugin = false;
+        bool restoreIssueFailedPlugin = false;
+        juce::String restoreIssueTitle;
+        juce::String restoreIssueMessage;
+        PluginSlotType restoreIssueType = PluginSlotType::Empty;
+        bool restoreIssueHasPluginData = false;
+        SessionPluginData restoreIssuePluginData;
     };
 
     void audioProcessorParameterChanged(juce::AudioProcessor* processor,
@@ -167,6 +206,22 @@ private:
     bool restoreTabFromSessionData(int tabIndex,
                                    const SessionTabData& tabData,
                                    juce::StringArray& warnings);
+    bool loadMainSlotPluginFromPathMatchingSessionData(const juce::String& pluginPath,
+                                                       const SessionPluginData& pluginData);
+
+    static juce::String makePluginQuarantineKey(const SessionPluginData& pluginData);
+    static juce::String makePluginQuarantineDisplayName(const SessionPluginData& pluginData);
+    bool isPluginQuarantined(const SessionPluginData& pluginData, juce::String* reason = nullptr) const;
+    void quarantinePlugin(const SessionPluginData& pluginData, const juce::String& reason);
+    void clearPluginQuarantine(const SessionPluginData& pluginData);
+    void clearTabRestoreIssue(HostedTabState& tab);
+    void setTabRestoreIssue(int tabIndex,
+                            const SessionPluginData& pluginData,
+                            bool isMissingPlugin,
+                            const juce::String& message);
+    void beginPluginLoadCrashMarker(const SessionPluginData& pluginData, int tabIndex);
+    void clearPluginLoadCrashMarker();
+    void importUnclosedPluginLoadCrashMarker(juce::StringArray& warnings);
 
     void captureLastTouchedParameter(juce::AudioProcessor* processor,
                                      int parameterIndex,
@@ -194,6 +249,8 @@ private:
     static juce::String makeSafePointerMapFileName(const juce::String& pluginName,
                                                    const juce::String& manufacturer);
     juce::File getGlobalPointerMapFileForTab(int tabIndex) const;
+    juce::File getWritableGlobalPointerMapFileForTab(int tabIndex,
+                                                     const juce::String& userLabel = {}) const;
 
 public:
     struct MissingPluginEntry
@@ -218,14 +275,19 @@ private:
     TabModel tabModel;
     juce::OwnedArray<HostedTabState> hostedTabs;
     juce::Array<MissingPluginEntry> missingPlugins;
+    juce::StringPairArray pluginQuarantineReasons;
+    juce::String lastPresetLoadReportText;
+    bool lastPresetLoadReportHadProblems = false;
     int selectedTabIndex = 0;
     juce::String statusText { "Ready" };
 
     juce::AudioPluginFormatManager formatManager;
+    bool pluginFormatsInitialised = false;
+    void ensurePluginFormatsInitialised();
 
     double currentSampleRate = 44100.0;
     int currentBlockSize = 512;
-    bool playbackPrepared = false;
+    std::atomic<bool> playbackPrepared { false };
 
     int routingViewWidth = 800;
     int routingViewHeight = 500;

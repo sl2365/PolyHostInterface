@@ -19,6 +19,9 @@ public:
         int midiAssignmentCount = 0;
         juce::String routingTooltip;
         int pointerAdjustMethodOverride = 0;
+        bool needsAttention = false;
+        bool isMissingPlugin = false;
+        juce::String attentionMessage;
     };
 
     RoutingView();
@@ -32,6 +35,7 @@ public:
     std::function<void(int tabIndex)> onSelectTab;
     std::function<void(int tabIndex)> onCloseTab;
     std::function<void(int tabIndex, juce::Component* anchorComponent)> onShowMidiAssignments;
+    std::function<void(int tabIndex, juce::Component* anchorComponent)> onShowPluginInfo;
     std::function<void()> onRefreshMidiDevices;
     std::function<void(int tabIndex, int methodOverride)> onSetPointerAdjustMethodOverride;
 
@@ -54,6 +58,7 @@ private:
         std::function<void(int tabIndex)> onSelectTab;
         std::function<void(int tabIndex)> onCloseTab;
         std::function<void(int tabIndex, juce::Component* anchorComponent)> onShowMidiAssignments;
+        std::function<void(int tabIndex, juce::Component* anchorComponent)> onShowPluginInfo;
         std::function<void(int tabIndex, int methodOverride)> onSetPointerAdjustMethodOverride;
 
         void paint(juce::Graphics& g) override;

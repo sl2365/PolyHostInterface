@@ -1,6 +1,7 @@
 #include "PointerControl.h"
 #include "DebugLog.h"
 #include <cmath>
+#include <limits>
 
 #if JUCE_WINDOWS
  #include <windows.h>
@@ -77,6 +78,7 @@ void PointerControl::clearTarget()
 
     targetScreenBounds = {};
     jumpPoints.clear();
+    freeZones.clear();
     selectedJumpPoint = -1;
     lastMoveAxis = LastMoveAxis::none;
     hasLockedLaneX = false;
@@ -153,6 +155,50 @@ void PointerControl::setJumpPoints(const juce::Array<JumpPoint>& newJumpPoints,
     updateJumpSelection();
 }
 
+void PointerControl::setFreeZones(const juce::Array<juce::Rectangle<float>>& sourceFreeZones,
+                                  juce::Rectangle<int> sourceBounds)
+{
+    freeZones.clear();
+
+    if (targetScreenBounds.isEmpty() || sourceBounds.isEmpty())
+        return;
+
+    const float scaleX = (float) targetScreenBounds.getWidth() / (float) sourceBounds.getWidth();
+    const float scaleY = (float) targetScreenBounds.getHeight() / (float) sourceBounds.getHeight();
+
+    for (int i = 0; i < sourceFreeZones.size(); ++i)
+    {
+        const auto& sourceFreeZone = sourceFreeZones.getReference(i);
+
+        if (sourceFreeZone.isEmpty())
+            continue;
+
+        auto zone = juce::Rectangle<float>(
+            (float) targetScreenBounds.getX() + sourceFreeZone.getX() * scaleX,
+            (float) targetScreenBounds.getY() + sourceFreeZone.getY() * scaleY,
+            sourceFreeZone.getWidth() * scaleX,
+            sourceFreeZone.getHeight() * scaleY);
+
+        if (! zone.isEmpty())
+            freeZones.add(zone);
+    }
+
+    if (hasJumpPoints())
+        updateJumpSelection();
+}
+
+void PointerControl::setFreeZone(bool shouldHaveFreeZone,
+                                 juce::Rectangle<float> sourceFreeZone,
+                                 juce::Rectangle<int> sourceBounds)
+{
+    juce::Array<juce::Rectangle<float>> zones;
+
+    if (shouldHaveFreeZone && ! sourceFreeZone.isEmpty())
+        zones.add(sourceFreeZone);
+
+    setFreeZones(zones, sourceBounds);
+}
+
 void PointerControl::panX(int midiValue)
 {
     if (!hasTarget())
@@ -166,6 +212,12 @@ void PointerControl::panX(int midiValue)
     lockedLaneX = virtualX;
     hasLockedLaneX = true;
     lastMoveAxis = LastMoveAxis::x;
+
+    if (isCurrentVirtualPositionInFreeZone())
+    {
+        moveFreelyToVirtualPosition();
+        return;
+    }
 
     if (hasJumpPoints())
     {
@@ -196,6 +248,12 @@ void PointerControl::panXRelative(int delta)
     hasLockedLaneX = true;
     lastMoveAxis = LastMoveAxis::x;
 
+    if (isCurrentVirtualPositionInFreeZone())
+    {
+        moveFreelyToVirtualPosition();
+        return;
+    }
+
     if (hasJumpPoints())
     {
         updateJumpSelection();
@@ -221,6 +279,12 @@ void PointerControl::panY(int midiValue)
     lockedLaneY = virtualY;
     hasLockedLaneY = true;
     lastMoveAxis = LastMoveAxis::y;
+
+    if (isCurrentVirtualPositionInFreeZone())
+    {
+        moveFreelyToVirtualPosition();
+        return;
+    }
 
     if (hasJumpPoints())
     {
@@ -251,6 +315,12 @@ void PointerControl::panYRelative(int delta)
     hasLockedLaneY = true;
     lastMoveAxis = LastMoveAxis::y;
 
+    if (isCurrentVirtualPositionInFreeZone())
+    {
+        moveFreelyToVirtualPosition();
+        return;
+    }
+
     if (hasJumpPoints())
     {
         updateJumpSelection();
@@ -265,6 +335,16 @@ void PointerControl::panYRelative(int delta)
 
 void PointerControl::updateJumpSelection()
 {
+    if (isCurrentVirtualPositionInFreeZone())
+    {
+        const auto adjusted = getFreeZoneAdjustedVirtualPosition();
+
+        selectedJumpPoint = -1;
+        currentX = (int) std::round(adjusted.x);
+        currentY = (int) std::round(adjusted.y);
+        return;
+    }
+
     if (!hasJumpPoints())
     {
         selectedJumpPoint = -1;
@@ -285,6 +365,9 @@ void PointerControl::updateJumpSelection()
         for (int i = 0; i < jumpPoints.size(); ++i)
         {
             const auto& point = jumpPoints.getReference(i);
+
+            if (isPointInFreeZone(point.x, point.y))
+                continue;
 
             const float rowDistance = std::abs(point.y - rowY);
             if (rowDistance > sameRowTolerance)
@@ -309,6 +392,9 @@ void PointerControl::updateJumpSelection()
         {
             const auto& point = jumpPoints.getReference(i);
 
+            if (isPointInFreeZone(point.x, point.y))
+                continue;
+
             const float columnDistance = std::abs(point.x - columnX);
             if (columnDistance > sameColumnTolerance)
                 continue;
@@ -329,6 +415,10 @@ void PointerControl::updateJumpSelection()
         for (int i = 0; i < jumpPoints.size(); ++i)
         {
             const auto& point = jumpPoints.getReference(i);
+
+            if (isPointInFreeZone(point.x, point.y))
+                continue;
+
             const float dx = point.x - virtualX;
             const float dy = point.y - virtualY;
             const float dist = (dx * dx * xSnapWeight) + (dy * dy * ySnapWeight);
@@ -343,9 +433,15 @@ void PointerControl::updateJumpSelection()
 
     if (bestIndex < 0)
     {
+        bestPrimary = (std::numeric_limits<float>::max)();
+
         for (int i = 0; i < jumpPoints.size(); ++i)
         {
             const auto& point = jumpPoints.getReference(i);
+
+            if (isPointInFreeZone(point.x, point.y))
+                continue;
+
             const float dx = point.x - virtualX;
             const float dy = point.y - virtualY;
             const float dist = (dx * dx * xSnapWeight) + (dy * dy * ySnapWeight);
@@ -366,6 +462,11 @@ void PointerControl::updateJumpSelection()
         currentX = (int) std::round(point.x);
         currentY = (int) std::round(point.y);
     }
+    else
+    {
+        currentX = (int) std::round(virtualX);
+        currentY = (int) std::round(virtualY);
+    }
 }
 
 int PointerControl::findNearestJumpPointInCurrentLane() const
@@ -382,6 +483,9 @@ int PointerControl::findNearestJumpPointInCurrentLane() const
     for (int i = 0; i < jumpPoints.size(); ++i)
     {
         const auto& point = jumpPoints.getReference(i);
+
+        if (isPointInFreeZone(point.x, point.y))
+            continue;
 
         if (lastMoveAxis == LastMoveAxis::x)
         {
@@ -412,6 +516,165 @@ int PointerControl::findNearestJumpPointInCurrentLane() const
     }
 
     return bestIndex;
+}
+
+bool PointerControl::isPointInFreeZone(float x, float y) const
+{
+    for (int i = 0; i < freeZones.size(); ++i)
+    {
+        if (freeZones.getReference(i).contains(x, y))
+            return true;
+    }
+
+    return false;
+}
+
+int PointerControl::findFreeZoneForCurrentAxis() const
+{
+    if (freeZones.isEmpty())
+        return -1;
+
+    const float captureMargin = juce::jlimit(2.0f, 64.0f, laneTolerance);
+
+    int bestIndex = -1;
+    float bestPrimary = (std::numeric_limits<float>::max)();
+    float bestArea = -1.0f;
+
+    for (int i = 0; i < freeZones.size(); ++i)
+    {
+        const auto& zone = freeZones.getReference(i);
+
+        if (zone.isEmpty())
+            continue;
+
+        const float left = zone.getX();
+        const float right = zone.getRight();
+        const float top = zone.getY();
+        const float bottom = zone.getBottom();
+
+        bool candidate = false;
+        float primary = (std::numeric_limits<float>::max)();
+
+        if (lastMoveAxis == LastMoveAxis::x)
+        {
+            const float laneY = hasLockedLaneY ? lockedLaneY : virtualY;
+
+            if (laneY >= top
+                && laneY <= bottom
+                && virtualX >= left - captureMargin
+                && virtualX <= right + captureMargin)
+            {
+                candidate = true;
+
+                if (virtualX < left)
+                    primary = left - virtualX;
+                else if (virtualX > right)
+                    primary = virtualX - right;
+                else
+                    primary = 0.0f;
+            }
+        }
+        else if (lastMoveAxis == LastMoveAxis::y)
+        {
+            const float laneX = hasLockedLaneX ? lockedLaneX : virtualX;
+
+            if (laneX >= left
+                && laneX <= right
+                && virtualY >= top - captureMargin
+                && virtualY <= bottom + captureMargin)
+            {
+                candidate = true;
+
+                if (virtualY < top)
+                    primary = top - virtualY;
+                else if (virtualY > bottom)
+                    primary = virtualY - bottom;
+                else
+                    primary = 0.0f;
+            }
+        }
+        else if (virtualX >= left
+                 && virtualX <= right
+                 && virtualY >= top
+                 && virtualY <= bottom)
+        {
+            candidate = true;
+            primary = 0.0f;
+        }
+
+        if (! candidate)
+            continue;
+
+        const float area = zone.getWidth() * zone.getHeight();
+
+        if (primary < bestPrimary
+            || (juce::approximatelyEqual(primary, bestPrimary) && area > bestArea))
+        {
+            bestPrimary = primary;
+            bestArea = area;
+            bestIndex = i;
+        }
+    }
+
+    return bestIndex;
+}
+
+bool PointerControl::shouldUseFreeZoneForCurrentAxis() const
+{
+    return findFreeZoneForCurrentAxis() >= 0;
+}
+
+bool PointerControl::isCurrentVirtualPositionInFreeZone() const
+{
+    return shouldUseFreeZoneForCurrentAxis();
+}
+
+juce::Point<float> PointerControl::getFreeZoneAdjustedVirtualPosition() const
+{
+    const int zoneIndex = findFreeZoneForCurrentAxis();
+
+    if (! juce::isPositiveAndBelow(zoneIndex, freeZones.size()))
+        return { virtualX, virtualY };
+
+    const auto& zone = freeZones.getReference(zoneIndex);
+
+    const float left = zone.getX();
+    const float right = zone.getRight();
+    const float top = zone.getY();
+    const float bottom = zone.getBottom();
+
+    if (lastMoveAxis == LastMoveAxis::x)
+    {
+        const float laneY = hasLockedLaneY ? lockedLaneY : virtualY;
+
+        return { juce::jlimit(left, right, virtualX),
+                 juce::jlimit(top, bottom, laneY) };
+    }
+
+    if (lastMoveAxis == LastMoveAxis::y)
+    {
+        const float laneX = hasLockedLaneX ? lockedLaneX : virtualX;
+
+        return { juce::jlimit(left, right, laneX),
+                 juce::jlimit(top, bottom, virtualY) };
+    }
+
+    return { juce::jlimit(left, right, virtualX),
+             juce::jlimit(top, bottom, virtualY) };
+}
+
+void PointerControl::moveFreelyToVirtualPosition()
+{
+    const auto adjusted = getFreeZoneAdjustedVirtualPosition();
+
+    currentX = (int) std::round(juce::jlimit((float) targetScreenBounds.getX(),
+                                            (float) targetScreenBounds.getRight(),
+                                            adjusted.x));
+    currentY = (int) std::round(juce::jlimit((float) targetScreenBounds.getY(),
+                                            (float) targetScreenBounds.getBottom(),
+                                            adjusted.y));
+    selectedJumpPoint = -1;
+    moveCursorToCurrentPosition();
 }
 
 void PointerControl::setMouseButtonState(MouseButton button, bool shouldBeDown)

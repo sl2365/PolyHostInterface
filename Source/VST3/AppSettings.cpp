@@ -58,6 +58,26 @@ static constexpr auto kPointerControlAdjustMethod           = "pointerControlAdj
 static constexpr auto kPointerControlDragReturnDelayMs      = "pointerControlDragReturnDelayMs";
 static constexpr auto kPointerControlSnapXEnabled           = "pointerControlSnapXEnabled";
 static constexpr auto kPointerControlSnapYEnabled           = "pointerControlSnapYEnabled";
+static constexpr auto kMidiMonitorWindowWidth               = "midiMonitorWindowWidth";
+static constexpr auto kMidiMonitorWindowHeight              = "midiMonitorWindowHeight";
+static constexpr auto kMidiMonitorHideClock                 = "midiMonitorHideClock";
+static constexpr auto kMidiMonitorHideActiveSense           = "midiMonitorHideActiveSense";
+static constexpr auto kMidiMonitorShowNote                  = "midiMonitorShowNote";
+static constexpr auto kMidiMonitorShowPitchBend             = "midiMonitorShowPitchBend";
+static constexpr auto kMidiMonitorShowCc                    = "midiMonitorShowCc";
+static constexpr auto kMidiMonitorShowNrpnRpn               = "midiMonitorShowNrpnRpn";
+static constexpr auto kMidiMonitorShowProgramChange         = "midiMonitorShowProgramChange";
+static constexpr auto kMidiMonitorShowAftertouch            = "midiMonitorShowAftertouch";
+static constexpr auto kMidiMonitorShowSysEx                 = "midiMonitorShowSysEx";
+static constexpr auto kMidiMonitorShowRealtime              = "midiMonitorShowRealtime";
+static constexpr auto kMidiMonitorShowSystemCommon          = "midiMonitorShowSystemCommon";
+static constexpr auto kMidiMonitorColumnTime                = "midiMonitorColumnTime";
+static constexpr auto kMidiMonitorColumnSource              = "midiMonitorColumnSource";
+static constexpr auto kMidiMonitorColumnType                = "midiMonitorColumnType";
+static constexpr auto kMidiMonitorColumnChannel             = "midiMonitorColumnChannel";
+static constexpr auto kMidiMonitorColumnData1               = "midiMonitorColumnData1";
+static constexpr auto kMidiMonitorColumnData2               = "midiMonitorColumnData2";
+static constexpr auto kMidiMonitorColumnDescription         = "midiMonitorColumnDescription";
 
 bool AppSettings::getDebugLoggingEnabled() const
 {
@@ -811,3 +831,140 @@ void AppSettings::setPointerControlSnapYEnabled(bool shouldEnable)
     save();
 }
 
+int AppSettings::getMidiMonitorWindowWidth() const
+{
+    return juce::jlimit(500, 2000, xml->getIntAttribute(kMidiMonitorWindowWidth, 800));
+}
+
+int AppSettings::getMidiMonitorWindowHeight() const
+{
+    return juce::jlimit(260, 1400, xml->getIntAttribute(kMidiMonitorWindowHeight, 384));
+}
+
+void AppSettings::setMidiMonitorWindowSize(int width, int height)
+{
+    xml->setAttribute(kMidiMonitorWindowWidth, juce::jlimit(500, 2000, width));
+    xml->setAttribute(kMidiMonitorWindowHeight, juce::jlimit(260, 1400, height));
+    save();
+}
+
+bool AppSettings::getMidiMonitorHideClock() const
+{
+    return xml->getBoolAttribute(kMidiMonitorHideClock, false);
+}
+
+bool AppSettings::getMidiMonitorHideActiveSense() const
+{
+    return xml->getBoolAttribute(kMidiMonitorHideActiveSense, false);
+}
+
+bool AppSettings::getMidiMonitorShowNote() const
+{
+    return xml->getBoolAttribute(kMidiMonitorShowNote, false);
+}
+
+bool AppSettings::getMidiMonitorShowPitchBend() const
+{
+    return xml->getBoolAttribute(kMidiMonitorShowPitchBend, false);
+}
+
+bool AppSettings::getMidiMonitorShowCc() const
+{
+    return xml->getBoolAttribute(kMidiMonitorShowCc, false);
+}
+
+bool AppSettings::getMidiMonitorShowNrpnRpn() const
+{
+    return xml->getBoolAttribute(kMidiMonitorShowNrpnRpn, false);
+}
+
+bool AppSettings::getMidiMonitorShowProgramChange() const
+{
+    return xml->getBoolAttribute(kMidiMonitorShowProgramChange, false);
+}
+
+bool AppSettings::getMidiMonitorShowAftertouch() const
+{
+    return xml->getBoolAttribute(kMidiMonitorShowAftertouch, false);
+}
+
+bool AppSettings::getMidiMonitorShowSysEx() const
+{
+    return xml->getBoolAttribute(kMidiMonitorShowSysEx, false);
+}
+
+bool AppSettings::getMidiMonitorShowRealtime() const
+{
+    return xml->getBoolAttribute(kMidiMonitorShowRealtime, false);
+}
+
+bool AppSettings::getMidiMonitorShowSystemCommon() const
+{
+    return xml->getBoolAttribute(kMidiMonitorShowSystemCommon, false);
+}
+
+void AppSettings::setMidiMonitorFilterSettings(bool hideClock,
+                                               bool hideActiveSense,
+                                               bool showNote,
+                                               bool showPitchBend,
+                                               bool showCc,
+                                               bool showNrpnRpn,
+                                               bool showProgramChange,
+                                               bool showAftertouch,
+                                               bool showSysEx,
+                                               bool showRealtime,
+                                               bool showSystemCommon)
+{
+    xml->setAttribute(kMidiMonitorHideClock, hideClock);
+    xml->setAttribute(kMidiMonitorHideActiveSense, hideActiveSense);
+    xml->setAttribute(kMidiMonitorShowNote, showNote);
+    xml->setAttribute(kMidiMonitorShowPitchBend, showPitchBend);
+    xml->setAttribute(kMidiMonitorShowCc, showCc);
+    xml->setAttribute(kMidiMonitorShowNrpnRpn, showNrpnRpn);
+    xml->setAttribute(kMidiMonitorShowProgramChange, showProgramChange);
+    xml->setAttribute(kMidiMonitorShowAftertouch, showAftertouch);
+    xml->setAttribute(kMidiMonitorShowSysEx, showSysEx);
+    xml->setAttribute(kMidiMonitorShowRealtime, showRealtime);
+    xml->setAttribute(kMidiMonitorShowSystemCommon, showSystemCommon);
+    save();
+}
+
+int AppSettings::getMidiMonitorColumnWidth(int columnId, int fallbackWidth) const
+{
+    const char* attribute = nullptr;
+
+    switch (columnId)
+    {
+        case 1: attribute = kMidiMonitorColumnTime; break;
+        case 2: attribute = kMidiMonitorColumnSource; break;
+        case 3: attribute = kMidiMonitorColumnType; break;
+        case 4: attribute = kMidiMonitorColumnChannel; break;
+        case 5: attribute = kMidiMonitorColumnData1; break;
+        case 6: attribute = kMidiMonitorColumnData2; break;
+        case 7: attribute = kMidiMonitorColumnDescription; break;
+        default: break;
+    }
+
+    if (attribute == nullptr)
+        return fallbackWidth;
+
+    return juce::jlimit(24, 1000, xml->getIntAttribute(attribute, fallbackWidth));
+}
+
+void AppSettings::setMidiMonitorColumnWidths(int timeWidth,
+                                             int sourceWidth,
+                                             int typeWidth,
+                                             int channelWidth,
+                                             int data1Width,
+                                             int data2Width,
+                                             int descriptionWidth)
+{
+    xml->setAttribute(kMidiMonitorColumnTime, juce::jlimit(24, 1000, timeWidth));
+    xml->setAttribute(kMidiMonitorColumnSource, juce::jlimit(24, 1000, sourceWidth));
+    xml->setAttribute(kMidiMonitorColumnType, juce::jlimit(24, 1000, typeWidth));
+    xml->setAttribute(kMidiMonitorColumnChannel, juce::jlimit(24, 1000, channelWidth));
+    xml->setAttribute(kMidiMonitorColumnData1, juce::jlimit(24, 1000, data1Width));
+    xml->setAttribute(kMidiMonitorColumnData2, juce::jlimit(24, 1000, data2Width));
+    xml->setAttribute(kMidiMonitorColumnDescription, juce::jlimit(24, 1000, descriptionWidth));
+    save();
+}
