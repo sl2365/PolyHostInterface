@@ -12,10 +12,10 @@ See the demos at the bottom of the page for a better idea of what it does...
 
 ## Feature Status
 
-| Feature | Status - Some features only in APP or VST3 * |
+| Feature | Status - Some features only in APP or VST3 |
 |---|---|
-| VST3 x64 | ✅ Working |
-| CLAP x64 | ✅ Working * - May be buggy - Requires CLAP SDK to build — see below |
+| VST3 x64 | ✅ Working - Also supports Shell VST's|
+| CLAP x64 | ✅ Working - May be buggy - Requires CLAP SDK to build — see below |
 | VST2 x64 | ✅ Working - Requires Steinberg VST2 SDK to build — see below |
 | VST2 **32-bit** in 64-bit host | 🔴 Needs plugin bridge — see below - planned |
 | MIDI 1.0 | ✅ Working |
@@ -25,9 +25,9 @@ See the demos at the bottom of the page for a better idea of what it does...
 | Portable settings (no AppData/registry) | ✅ Working |
 | Audio / MIDI recording | 🔲 Planned for standalone |
 | Pointer Control functionality | ✅ Working - Absolute (1) and Relative (3) knob modes|
-| Mouse button emulation | ✅ Working * (Left, Middle, Right buttons) |
-| Keyboard emulation | ✅ Working * (Limited to: Up, Down, Enter) |
-| MIDI Macros | ✅ Working * |
+| Mouse button emulation | ✅ Working (Left, Middle, Right buttons) |
+| Keyboard emulation | ✅ Working (Limited to: Up, Down, Enter) |
+| MIDI Macros | ✅ Working |
 | Plugin Repair - locates missing plugins | ✅ Working |
 | Standalone App | ✅ Working |
 | VST3 Plugin for use in other hosts | ✅ Working |
@@ -45,6 +45,7 @@ The Routing View provides a structured overview of all tabs in the current prese
 - solo state
 - MIDI assignment count
 - per-tab pointer adjust mode override
+- detailed plugin info report
 
 Tabs can be reordered, soloed, bypassed, and selected directly from this view.
 
@@ -99,6 +100,7 @@ Pointer Control allows MIDI-driven control of the mouse cursor over the currentl
 
 This includes:
 - X/Y pointer movement by MIDI CC
+- Use Mouse Back/Forward buttons to toggle Snap X and Y
 - wheel-style parameter adjustment
 - drag-style parameter adjustment
 - lane tolerance control
@@ -106,21 +108,36 @@ This includes:
 - optional point snapping
 - editable jump-point maps per plugin tab
 
- Further extended to include Left, Middle, Right mouse button emulation to reduce reliance on mouse when using MIDI hardware to control and edit plugins.
- 
- Also added simple Keyboard support for the same reason. Now you can use your MIDI device to control mouse position, mouse clicks and then select items from menus, etc.
+Further extended to include Left, Middle, Right mouse button emulation to reduce reliance on mouse when using MIDI hardware to control and edit plugins.
+
+Also added simple Keyboard support for the same reason. Now you can use your MIDI device to control mouse position, mouse clicks and then select items from menus, etc.
 
 ### Pointer Edit Overlay
 Pointer Edit Mode displays an overlay over the hosted plugin editor so jump points can be created, previewed, removed, and visually aligned.
 
 The overlay supports:
 - live point placement
-- optional X snap
-- optional Y snap
+- optional X snap (Snaps to other points along X axis)
+- optional Y snap (Snaps to other points along Y axis)
 - preview point display before release
 - optional crosshair display
 - per-tab lane tolerance feedback
 - global/preset map source indication
+- allow using a preset map to be saved that overrides global one
+- right click and drag to set a rectangular area where snapping is disabled:
+
+--  Up to 8 pointer free zones per tab.
+- Right-drag adds a new rectangle.
+- Existing rectangles stay in place.
+- Overlapping rectangles are allowed.
+- Right-click inside a rectangle removes one rectangle.
+- If rectangles overlap, deletion removes the smallest rectangle under the cursor.
+- If overlapping rectangles are the same size, deletion removes the newest one.
+- Bottom bar now shows: Free Zones: N
+- Preset and global pointer-map XML now save/load multiple zones.
+- Old single-zone XML is still loaded for compatibility.
+- Edge snapping/free movement now works against the list of zones.
+
 
 > [!NOTE]
 > **Implementation Note: Pointer Edit Overlay**
@@ -132,6 +149,8 @@ The overlay supports:
 > - match the hosted editor bounds exactly
 > - avoid title bar chrome and popup layout constraints
 > - refresh dynamically when switching tabs
+>
+> - NOTE: It can reside over other windows too, which is an unfortunate consequence
 
 ### Global and Preset Pointer Maps
 Pointer jump-point maps can be stored in two ways:
@@ -179,7 +198,7 @@ PolyHostInterface supports:
 - plugin path recovery for missing plugins
 
 ### Missing Plugin Repair
-If a plugin cannot be found when loading a preset, PolyHostInterface can prompt you to locate the replacement file and restore the tab.
+If a plugin cannot be found when loading a preset, PolyHostInterface can prompt you to locate the replacement file and restore the tab. Tabs will turn red to display there is an error with loading the plugin. Routing View will also turn a row red as a visual clue as well.
 
 ### MIDI Monitor
 A built-in MIDI monitor can be used to inspect incoming MIDI events, including:
@@ -189,6 +208,7 @@ A built-in MIDI monitor can be used to inspect incoming MIDI events, including:
 - aftertouch
 - system messages
 - clock / active sensing filtering
+- filter specific events
 
 ## Project Folder Structure
 
