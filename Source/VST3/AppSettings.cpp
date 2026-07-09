@@ -50,6 +50,10 @@ static constexpr auto kPointerControlPointColourB           = "pointerControlPoi
 static constexpr auto kPointerControlPreviewColourR         = "pointerControlPreviewColourR";
 static constexpr auto kPointerControlPreviewColourG         = "pointerControlPreviewColourG";
 static constexpr auto kPointerControlPreviewColourB         = "pointerControlPreviewColourB";
+static constexpr auto kPointerControlFreeZoneColourR        = "pointerControlFreeZoneColourR";
+static constexpr auto kPointerControlFreeZoneColourG        = "pointerControlFreeZoneColourG";
+static constexpr auto kPointerControlFreeZoneColourB        = "pointerControlFreeZoneColourB";
+static constexpr auto kPointerControlFreeZoneColourA        = "pointerControlFreeZoneColourA";
 static constexpr auto kPointerControlToleranceCcNumber      = "pointerControlToleranceCcNumber";
 static constexpr auto kPointerControlSensitivityCcNumber    = "pointerControlSensitivityCcNumber";
 static constexpr auto kPointerControlAdjustSensitivity      = "pointerControlAdjustSensitivity";
@@ -78,6 +82,7 @@ static constexpr auto kMidiMonitorColumnChannel             = "midiMonitorColumn
 static constexpr auto kMidiMonitorColumnData1               = "midiMonitorColumnData1";
 static constexpr auto kMidiMonitorColumnData2               = "midiMonitorColumnData2";
 static constexpr auto kMidiMonitorColumnDescription         = "midiMonitorColumnDescription";
+static constexpr auto kMidiMonitorColumnRawHex              = "midiMonitorColumnRawHex";
 
 bool AppSettings::getDebugLoggingEnabled() const
 {
@@ -732,6 +737,27 @@ void AppSettings::setPointerControlPreviewColour(juce::Colour colour)
     save();
 }
 
+juce::Colour AppSettings::getPointerControlFreeZoneColour() const
+{
+    const auto r = juce::jlimit(0, 255, xml->getIntAttribute(kPointerControlFreeZoneColourR, 255));
+    const auto g = juce::jlimit(0, 255, xml->getIntAttribute(kPointerControlFreeZoneColourG, 48));
+    const auto b = juce::jlimit(0, 255, xml->getIntAttribute(kPointerControlFreeZoneColourB, 48));
+    const auto a = juce::jlimit(0, 255, xml->getIntAttribute(kPointerControlFreeZoneColourA, 255));
+    return juce::Colour::fromRGBA((juce::uint8) r,
+                                  (juce::uint8) g,
+                                  (juce::uint8) b,
+                                  (juce::uint8) a);
+}
+
+void AppSettings::setPointerControlFreeZoneColour(juce::Colour colour)
+{
+    xml->setAttribute(kPointerControlFreeZoneColourR, (int) colour.getRed());
+    xml->setAttribute(kPointerControlFreeZoneColourG, (int) colour.getGreen());
+    xml->setAttribute(kPointerControlFreeZoneColourB, (int) colour.getBlue());
+    xml->setAttribute(kPointerControlFreeZoneColourA, (int) colour.getAlpha());
+    save();
+}
+
 int AppSettings::getPointerControlToleranceCcNumber() const
 {
     return juce::jlimit(0, 127, xml->getIntAttribute(kPointerControlToleranceCcNumber, 22));
@@ -942,6 +968,7 @@ int AppSettings::getMidiMonitorColumnWidth(int columnId, int fallbackWidth) cons
         case 5: attribute = kMidiMonitorColumnData1; break;
         case 6: attribute = kMidiMonitorColumnData2; break;
         case 7: attribute = kMidiMonitorColumnDescription; break;
+        case 8: attribute = kMidiMonitorColumnRawHex; break;
         default: break;
     }
 
@@ -957,7 +984,8 @@ void AppSettings::setMidiMonitorColumnWidths(int timeWidth,
                                              int channelWidth,
                                              int data1Width,
                                              int data2Width,
-                                             int descriptionWidth)
+                                             int descriptionWidth,
+                                             int rawHexWidth)
 {
     xml->setAttribute(kMidiMonitorColumnTime, juce::jlimit(24, 1000, timeWidth));
     xml->setAttribute(kMidiMonitorColumnSource, juce::jlimit(24, 1000, sourceWidth));
@@ -966,5 +994,6 @@ void AppSettings::setMidiMonitorColumnWidths(int timeWidth,
     xml->setAttribute(kMidiMonitorColumnData1, juce::jlimit(24, 1000, data1Width));
     xml->setAttribute(kMidiMonitorColumnData2, juce::jlimit(24, 1000, data2Width));
     xml->setAttribute(kMidiMonitorColumnDescription, juce::jlimit(24, 1000, descriptionWidth));
+    xml->setAttribute(kMidiMonitorColumnRawHex, juce::jlimit(24, 1000, rawHexWidth));
     save();
 }

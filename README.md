@@ -26,7 +26,8 @@ See the demos at the bottom of the page for a better idea of what it does...
 | Audio / MIDI recording | 🔲 Planned for standalone |
 | Pointer Control functionality | ✅ Working - Absolute (1) and Relative (3) knob modes|
 | Mouse button emulation | ✅ Working (Left, Middle, Right buttons) |
-| Keyboard emulation | ✅ Working (Limited to: Up, Down, Enter) |
+| Keyboard emulation | ✅ Working (Limited to: Up, Down, Enter, mainly for menu navigation) |
+| MIDI Monitor | ✅ Working |
 | MIDI Macros | ✅ Working |
 | Plugin Repair - locates missing plugins | ✅ Working |
 | Standalone App | ✅ Working |

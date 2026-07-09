@@ -165,7 +165,8 @@ public:
                                     int channelWidth,
                                     int data1Width,
                                     int data2Width,
-                                    int descriptionWidth);
+                                    int descriptionWidth,
+                                    int rawHexWidth);
 
     juce::Colour getPointerControlCrosshairColour() const;
     void setPointerControlCrosshairColour(juce::Colour colour);
@@ -175,6 +176,9 @@ public:
 
     juce::Colour getPointerControlPreviewColour() const;
     void setPointerControlPreviewColour(juce::Colour colour);
+
+    juce::Colour getPointerControlFreeZoneColour() const;
+    void setPointerControlFreeZoneColour(juce::Colour colour);
 
     juce::StringArray getPluginScanFolders() const;
     void setPluginScanFolders(const juce::StringArray& folders);

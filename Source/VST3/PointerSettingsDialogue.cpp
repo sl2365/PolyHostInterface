@@ -47,6 +47,7 @@ namespace
             configureLabel(crosshairRgbaLabel, "Crosshair RGBA:", juce::Justification::centredRight);
             configureLabel(pointRgbLabel, "Point RGB:", juce::Justification::centredRight);
             configureLabel(previewRgbLabel, "Preview RGB:", juce::Justification::centredRight);
+            configureLabel(freeZoneRgbaLabel, "Free Zone RGBA:", juce::Justification::centredRight);
 
             configureTipLabel(currentToleranceInfoLabel, "Adjusts X/Y tolerance. Higher values = wider snapping.");
             configureTipLabel(currentToleranceLineLabel,
@@ -78,6 +79,7 @@ namespace
             configureTipLabel(tipShowCrosshair, "Shows full-width and full-height guide lines.");
             configureTipLabel(tipRgb, "Point RGB: Saved point colour.\nPreview RGB: Point colour on mouse down.");
             configureTipLabel(tipCrosshairRgba, "Crosshair colour and alpha.");
+            configureTipLabel(tipFreeZoneRgba, "Free-zone rectangle colour and alpha.");
 
             addAndMakeVisible(separatorAfterTabCooldown);
             addAndMakeVisible(separatorAfterRightMouse);
@@ -122,6 +124,7 @@ namespace
             auto pointColour = settings.getPointerControlPointColour();
             auto previewColour = settings.getPointerControlPreviewColour();
             auto crosshairColour = settings.getPointerControlCrosshairColour();
+            auto freeZoneColour = settings.getPointerControlFreeZoneColour();
 
             configureIntegerEditor(pointColourREditor, (int) pointColour.getRed());
             configureIntegerEditor(pointColourGEditor, (int) pointColour.getGreen());
@@ -135,6 +138,11 @@ namespace
             configureIntegerEditor(crosshairColourGEditor, (int) crosshairColour.getGreen());
             configureIntegerEditor(crosshairColourBEditor, (int) crosshairColour.getBlue());
             configureIntegerEditor(crosshairColourAEditor, (int) crosshairColour.getAlpha());
+
+            configureIntegerEditor(freeZoneColourREditor, (int) freeZoneColour.getRed());
+            configureIntegerEditor(freeZoneColourGEditor, (int) freeZoneColour.getGreen());
+            configureIntegerEditor(freeZoneColourBEditor, (int) freeZoneColour.getBlue());
+            configureIntegerEditor(freeZoneColourAEditor, (int) freeZoneColour.getAlpha());
 
             addAndMakeVisible(resetButton);
             addAndMakeVisible(okButton);
@@ -151,11 +159,7 @@ namespace
 
             okButton.onClick = [this]
             {
-                apply();
-                DebugLog::write("[PointerControl] settings applied");
-
-                if (auto* dw = findParentComponentOfClass<juce::DialogWindow>())
-                    dw->exitModalState(1);
+                confirmAndClose();
             };
 
             cancelButton.onClick = [this]
@@ -164,6 +168,7 @@ namespace
                     dw->exitModalState(0);
             };
 
+            setWantsKeyboardFocus(true);
             setSize(920, 496);
         }
 
@@ -209,6 +214,12 @@ namespace
                 (juce::uint8) parseInt(crosshairColourGEditor.getText(), 100, 0, 255),
                 (juce::uint8) parseInt(crosshairColourBEditor.getText(), 100, 0, 255),
                 (juce::uint8) parseInt(crosshairColourAEditor.getText(), 200, 0, 255)));
+
+            settings.setPointerControlFreeZoneColour(juce::Colour::fromRGBA(
+                (juce::uint8) parseInt(freeZoneColourREditor.getText(), 255, 0, 255),
+                (juce::uint8) parseInt(freeZoneColourGEditor.getText(), 48, 0, 255),
+                (juce::uint8) parseInt(freeZoneColourBEditor.getText(), 48, 0, 255),
+                (juce::uint8) parseInt(freeZoneColourAEditor.getText(), 255, 0, 255)));
         }
 
         void resetToDefaults()
@@ -252,6 +263,31 @@ namespace
             crosshairColourGEditor.setText("100", juce::dontSendNotification);
             crosshairColourBEditor.setText("100", juce::dontSendNotification);
             crosshairColourAEditor.setText("200", juce::dontSendNotification);
+
+            freeZoneColourREditor.setText("255", juce::dontSendNotification);
+            freeZoneColourGEditor.setText("48", juce::dontSendNotification);
+            freeZoneColourBEditor.setText("48", juce::dontSendNotification);
+            freeZoneColourAEditor.setText("255", juce::dontSendNotification);
+        }
+
+        void confirmAndClose()
+        {
+            apply();
+            DebugLog::write("[PointerControl] settings applied");
+
+            if (auto* dw = findParentComponentOfClass<juce::DialogWindow>())
+                dw->exitModalState(1);
+        }
+
+        bool keyPressed(const juce::KeyPress& key) override
+        {
+            if (key == juce::KeyPress::returnKey)
+            {
+                confirmAndClose();
+                return true;
+            }
+
+            return juce::Component::keyPressed(key);
         }
 
         void resized() override
@@ -429,6 +465,21 @@ namespace
                 rightArea.removeFromTop(rowGap);
             }
 
+            {
+                auto row = rightArea.removeFromTop(rowHeight);
+                freeZoneRgbaLabel.setBounds(row.removeFromLeft(labelWidth));
+                freeZoneColourREditor.setBounds(row.removeFromLeft(rgbFieldWidth));
+                row.removeFromLeft(4);
+                freeZoneColourGEditor.setBounds(row.removeFromLeft(rgbFieldWidth));
+                row.removeFromLeft(4);
+                freeZoneColourBEditor.setBounds(row.removeFromLeft(rgbFieldWidth));
+                row.removeFromLeft(4);
+                freeZoneColourAEditor.setBounds(row.removeFromLeft(rgbFieldWidth));
+                row.removeFromLeft(infoGap);
+                tipFreeZoneRgba.setBounds(row);
+                rightArea.removeFromTop(rowGap);
+            }
+
             cancelButton.setBounds(buttonRow.removeFromRight(90));
             buttonRow.removeFromRight(8);
             okButton.setBounds(buttonRow.removeFromRight(90));
@@ -590,6 +641,10 @@ namespace
             ed.setColour(juce::TextEditor::backgroundColourId, juce::Colour(0xFF33404A));
             ed.setColour(juce::TextEditor::textColourId, juce::Colours::white);
             ed.setColour(juce::TextEditor::outlineColourId, juce::Colours::lightgrey.withAlpha(0.35f));
+            ed.onReturnKey = [this]
+            {
+                confirmAndClose();
+            };
         }
 
         void configureCcEditor(ScrollableTextEditor& ed, int value)
@@ -688,12 +743,12 @@ namespace
         juce::Label xCcLabel, yCcLabel, adjustCcLabel, tabCcLabel, tabCooldownLabel, leftMouseCcLabel, middleMouseCcLabel, rightMouseCcLabel, cursorUpKeyCcLabel, cursorDownKeyCcLabel, enterKeyCcLabel, adjustModeLabel, toleranceCcLabel, sensitivityCcLabel, adjustMethodLabel;
         juce::Label xWeightLabel, yWeightLabel, adjustSensitivityLabel, dragReturnDelayLabel;
         juce::Label overlayTransparencyLabel, pointSizeLabel, showCrosshairLabel;
-        juce::Label pointRgbLabel, previewRgbLabel, crosshairRgbaLabel;
+        juce::Label pointRgbLabel, previewRgbLabel, crosshairRgbaLabel, freeZoneRgbaLabel;
 
         juce::Label currentToleranceInfoLabel, currentToleranceLineLabel;
 
         juce::Label tipXcc, tipYcc, tipAdjustCc, tipTabCc, tipTabCooldown, tipLeftMouseCc, tipMiddleMouseCc, tipRightMouseCc, tipCursorUpKeyCc, tipCursorDownKeyCc, tipEnterKeyCc, tipAdjustMode, tipAdjustSensitivity, tipSensitivityCc, tipAdjustMethod, tipDragReturnDelay;
-        juce::Label tipWeights, tipOverlay, tipPointSize, tipShowCrosshair, tipRgb, tipCrosshairRgba;
+        juce::Label tipWeights, tipOverlay, tipPointSize, tipShowCrosshair, tipRgb, tipCrosshairRgba, tipFreeZoneRgba;
 
         ScrollableTextEditor xCcEditor, yCcEditor, adjustCcEditor, tabCcEditor, tabCooldownEditor, leftMouseCcEditor, middleMouseCcEditor, rightMouseCcEditor, cursorUpKeyCcEditor, cursorDownKeyCcEditor, enterKeyCcEditor, toleranceCcEditor, sensitivityCcEditor;
         class AdjustModeEditor final : public ScrollableTextEditor
@@ -776,6 +831,7 @@ namespace
         ScrollableTextEditor pointColourREditor, pointColourGEditor, pointColourBEditor;
         ScrollableTextEditor previewColourREditor, previewColourGEditor, previewColourBEditor;
         ScrollableTextEditor crosshairColourREditor, crosshairColourGEditor, crosshairColourBEditor, crosshairColourAEditor;
+        ScrollableTextEditor freeZoneColourREditor, freeZoneColourGEditor, freeZoneColourBEditor, freeZoneColourAEditor;
 
         juce::TextButton resetButton, okButton, cancelButton;
     };

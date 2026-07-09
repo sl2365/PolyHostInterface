@@ -1088,10 +1088,11 @@ namespace
             if (zone.isEmpty())
                 return;
 
-            const auto fillColour = preview ? juce::Colour(0x55FF3030)
-                                            : juce::Colour(0x22FF3030);
-            const auto lineColour = preview ? juce::Colour(0xFFFF5050)
-                                            : juce::Colour(0xFFFF3030);
+            const auto baseColour = owner.getAppSettings().getPointerControlFreeZoneColour();
+            const float baseAlpha = baseColour.getFloatAlpha();
+
+            const auto fillColour = baseColour.withAlpha(baseAlpha * (preview ? 0.33f : 0.13f));
+            const auto lineColour = (preview ? baseColour.brighter(0.12f) : baseColour).withAlpha(baseAlpha);
 
             g.setColour(fillColour);
             g.fillRect(zone);
@@ -1982,6 +1983,7 @@ juce::PopupMenu MainView::getMenuForIndex(int topLevelMenuIndex,
                          presetController.hasCurrentFile());
             menu.addSeparator();
             menu.addItem(commandOpenPresetsFolder, "Open Presets Folder");
+            menu.addItem(commandPresetBackup, "Presets Backup");
             break;
         }
 
@@ -2112,6 +2114,10 @@ void MainView::menuItemSelected(int menuItemID,
 
         case commandOpenPresetsFolder:
             openPresetsFolder();
+            break;
+
+        case commandPresetBackup:
+            backupPresetsToZip();
             break;
 
         case commandReplacePlugin:
@@ -3847,6 +3853,105 @@ void MainView::openPresetsFolder()
     DebugLog::write("[Preset] openPresetsFolder requested");
     AppSettings::getPresetsDirectory().startAsProcess();
 }
+
+void MainView::backupPresetsToZip()
+{
+    auto presetsDir = AppSettings::getPresetsDirectory();
+
+    if (! presetsDir.isDirectory())
+    {
+        juce::AlertWindow::showMessageBoxAsync(juce::AlertWindow::WarningIcon,
+                                               "Presets Backup",
+                                               "The Presets folder could not be found.",
+                                               "OK",
+                                               getWindowCenterTarget());
+        return;
+    }
+
+    auto presetFiles = presetsDir.findChildFiles(juce::File::findFiles,
+                                                 true,
+                                                 "*.xml");
+
+    if (presetFiles.isEmpty())
+    {
+        juce::AlertWindow::showMessageBoxAsync(juce::AlertWindow::InfoIcon,
+                                               "Presets Backup",
+                                               "No preset XML files were found in:\n\n"
+                                                   + presetsDir.getFullPathName(),
+                                               "OK",
+                                               getWindowCenterTarget());
+        return;
+    }
+
+    const auto timestamp = juce::Time::getCurrentTime().formatted("%Y-%m-%d %H-%M-%S");
+    auto zipFile = presetsDir.getChildFile("PolyHost Presets Backup " + timestamp + ".zip");
+
+    juce::ZipFile::Builder builder;
+
+    for (const auto& presetFile : presetFiles)
+    {
+        auto storedPath = presetFile.getRelativePathFrom(presetsDir)
+            .replaceCharacter('\\', '/');
+
+        if (storedPath.isEmpty() || juce::File::isAbsolutePath(storedPath))
+            storedPath = presetFile.getFileName();
+
+        builder.addFile(presetFile, 9, storedPath);
+    }
+
+    juce::TemporaryFile tempFile(zipFile);
+
+    {
+        auto output = tempFile.getFile().createOutputStream();
+
+        if (output == nullptr || ! output->openedOk())
+        {
+            juce::AlertWindow::showMessageBoxAsync(juce::AlertWindow::WarningIcon,
+                                                   "Presets Backup Failed",
+                                                   "Could not create the backup file:\n\n"
+                                                       + zipFile.getFullPathName(),
+                                                   "OK",
+                                                   getWindowCenterTarget());
+            return;
+        }
+
+        if (! builder.writeToStream(*output, nullptr))
+        {
+            juce::AlertWindow::showMessageBoxAsync(juce::AlertWindow::WarningIcon,
+                                                   "Presets Backup Failed",
+                                                   "The ZIP file could not be written.",
+                                                   "OK",
+                                                   getWindowCenterTarget());
+            return;
+        }
+
+        output->flush();
+    }
+
+    if (! tempFile.overwriteTargetFileWithTemporary())
+    {
+        juce::AlertWindow::showMessageBoxAsync(juce::AlertWindow::WarningIcon,
+                                               "Presets Backup Failed",
+                                               "The completed backup could not replace the selected file:\n\n"
+                                                   + zipFile.getFullPathName(),
+                                               "OK",
+                                               getWindowCenterTarget());
+        return;
+    }
+
+    showTemporaryStatusMessage("Presets backup saved");
+
+    juce::AlertWindow::showMessageBoxAsync(juce::AlertWindow::InfoIcon,
+                                           "Presets Backup Complete",
+                                           "Backed up " + juce::String(presetFiles.size())
+                                               + " preset file"
+                                               + juce::String(presetFiles.size() == 1 ? "" : "s")
+                                               + " to:\n\n"
+                                               + zipFile.getFullPathName(),
+                                           "OK",
+                                           getWindowCenterTarget());
+}
+
 
 void MainView::deleteCurrentPreset()
 {

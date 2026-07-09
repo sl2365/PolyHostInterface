@@ -442,6 +442,7 @@ private:
         commandRecentPresetBase = 2100,
         commandDeleteCurrentPreset = 2200,
         commandOpenPresetsFolder = 2201,
+        commandPresetBackup = 2205,
         commandLocateMissingPlugins = 2202,
         commandReplacePlugin = 2203,
         commandNewPlugin = 2204,
@@ -530,6 +531,7 @@ private:
     void loadRecentPreset(int menuItemID);
 
     void openPresetsFolder();
+    void backupPresetsToZip();
     void deleteCurrentPreset();
     void replacePlugin();
     void newPlugin();

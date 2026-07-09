@@ -13,6 +13,7 @@ struct VstMidiMonitorEntry
     juce::String data1;
     juce::String data2;
     juce::String description;
+    juce::String rawHex;
     juce::Colour colour;
     int rawStatus = -1;
     int filterFlags = 0;
@@ -36,6 +37,23 @@ public:
         pauseButton.setButtonText("Pause");
         pauseButton.setClickingTogglesState(true);
         pauseButton.addListener(this);
+
+        addAndMakeVisible(freezeButton);
+        freezeButton.setButtonText("Freeze");
+        freezeButton.setClickingTogglesState(true);
+        freezeButton.addListener(this);
+
+        addAndMakeVisible(copyRowButton);
+        copyRowButton.setButtonText("Copy Row");
+        copyRowButton.addListener(this);
+
+        addAndMakeVisible(copyAllButton);
+        copyAllButton.setButtonText("Copy All");
+        copyAllButton.addListener(this);
+
+        addAndMakeVisible(exportButton);
+        exportButton.setButtonText("Export");
+        exportButton.addListener(this);
 
         addAndMakeVisible(hideClockButton);
         hideClockButton.setButtonText("Hide Clock");
@@ -94,6 +112,7 @@ public:
 
         addAndMakeVisible(table);
         table.setModel(this);
+        table.setMultipleSelectionEnabled(false);
 
         table.getHeader().addColumn("Time",        1, settings.getMidiMonitorColumnWidth(1, 80));
         table.getHeader().addColumn("Source",      2, settings.getMidiMonitorColumnWidth(2, 150));
@@ -102,12 +121,14 @@ public:
         table.getHeader().addColumn("Data 1",      5, settings.getMidiMonitorColumnWidth(5, 60));
         table.getHeader().addColumn("Data 2",      6, settings.getMidiMonitorColumnWidth(6, 60));
         table.getHeader().addColumn("Description", 7, settings.getMidiMonitorColumnWidth(7, 260));
+        table.getHeader().addColumn("Raw Hex",     8, settings.getMidiMonitorColumnWidth(8, 145));
 
         table.setColour(juce::ListBox::backgroundColourId, juce::Colours::black);
         table.setRowHeight(22);
 
         loadSettings();
         updateFilterButtonColours();
+        updateCaptureButtonColours();
 
         startTimerHz(20);
     }
@@ -134,7 +155,8 @@ public:
                                             table.getHeader().getColumnWidth(4),
                                             table.getHeader().getColumnWidth(5),
                                             table.getHeader().getColumnWidth(6),
-                                            table.getHeader().getColumnWidth(7));
+                                            table.getHeader().getColumnWidth(7),
+                                            table.getHeader().getColumnWidth(8));
     }
 
     void resized() override
@@ -142,13 +164,29 @@ public:
         auto area = getLocalBounds().reduced(8);
         auto topBar = area.removeFromTop(70);
 
-        auto mainControls = topBar.removeFromLeft(70);
-        auto clearRow = mainControls.removeFromTop(22);
-        mainControls.removeFromTop(2);
-        auto pauseRow = mainControls.removeFromTop(22);
+        auto actionColumn = topBar.removeFromLeft(78);
+        auto actionRow1 = actionColumn.removeFromTop(22);
+        actionColumn.removeFromTop(2);
+        auto actionRow2 = actionColumn.removeFromTop(22);
+        actionColumn.removeFromTop(2);
+        auto actionRow3 = actionColumn.removeFromTop(22);
 
-        clearButton.setBounds(clearRow.removeFromLeft(64));
-        pauseButton.setBounds(pauseRow.removeFromLeft(64));
+        copyRowButton.setBounds(actionRow1);
+        copyAllButton.setBounds(actionRow2);
+        exportButton.setBounds(actionRow3);
+
+        topBar.removeFromLeft(8);
+
+        auto captureColumn = topBar.removeFromLeft(70);
+        auto captureRow1 = captureColumn.removeFromTop(22);
+        captureColumn.removeFromTop(2);
+        auto captureRow2 = captureColumn.removeFromTop(22);
+        captureColumn.removeFromTop(2);
+        auto captureRow3 = captureColumn.removeFromTop(22);
+
+        clearButton.setBounds(captureRow1);
+        pauseButton.setBounds(captureRow2);
+        freezeButton.setBounds(captureRow3);
 
         topBar.removeFromLeft(8);
 
@@ -254,6 +292,7 @@ private:
             case 5: text = e.data1; break;
             case 6: text = e.data2; break;
             case 7: text = e.description; break;
+            case 8: text = e.rawHex; break;
             default: break;
         }
 
@@ -267,12 +306,11 @@ private:
 
     void timerCallback() override
     {
+        auto messages = processor.popPendingMidiMonitorEvents();
+
         if (pauseButton.getToggleState())
             return;
 
-        autoFollow = isScrolledToBottom();
-
-        auto messages = processor.popPendingMidiMonitorEvents();
         if (messages.isEmpty())
             return;
 
@@ -293,6 +331,11 @@ private:
         if (allEntries.size() > 1000)
             allEntries.removeRange(0, allEntries.size() - 1000);
 
+        if (freezeButton.getToggleState())
+            return;
+
+        autoFollow = isScrolledToBottom();
+
         rebuildVisibleEntries();
 
         table.updateContent();
@@ -310,6 +353,43 @@ private:
             allEntries.clear();
             entries.clear();
             table.updateContent();
+            repaint();
+            return;
+        }
+
+        if (button == &copyRowButton)
+        {
+            copySelectedRow();
+            return;
+        }
+
+        if (button == &copyAllButton)
+        {
+            copyAllVisibleRows();
+            return;
+        }
+
+        if (button == &exportButton)
+        {
+            exportVisibleRows();
+            return;
+        }
+
+        if (button == &pauseButton || button == &freezeButton)
+        {
+            updateCaptureButtonColours();
+
+            if (button == &freezeButton && ! freezeButton.getToggleState())
+            {
+                autoFollow = isScrolledToBottom();
+
+                rebuildVisibleEntries();
+                table.updateContent();
+
+                if (autoFollow && entries.size() > 0)
+                    table.scrollToEnsureRowIsOnscreen(entries.size() - 1);
+            }
+
             repaint();
             return;
         }
@@ -368,6 +448,159 @@ private:
         updateFilterButtonColour(showSysExButton);
         updateFilterButtonColour(showRealtimeButton);
         updateFilterButtonColour(showSystemCommonButton);
+    }
+
+    void updateCaptureButtonColours()
+    {
+        const auto inactiveText = juce::Colours::white;
+        const auto pauseActive = juce::Colour(0xFFFFA657);
+        const auto freezeActive = juce::Colour(0xFF58A6FF);
+
+        pauseButton.setColour(juce::ToggleButton::textColourId,
+                              pauseButton.getToggleState() ? pauseActive : inactiveText);
+        pauseButton.setColour(juce::ToggleButton::tickColourId, pauseActive);
+
+        freezeButton.setColour(juce::ToggleButton::textColourId,
+                               freezeButton.getToggleState() ? freezeActive : inactiveText);
+        freezeButton.setColour(juce::ToggleButton::tickColourId, freezeActive);
+    }
+
+    static juce::String makeRawHexString(const juce::MidiMessage& msg)
+    {
+        static constexpr const char* hex = "0123456789ABCDEF";
+
+        juce::String text;
+        const auto* data = msg.getRawData();
+        const int size = msg.getRawDataSize();
+
+        for (int i = 0; i < size; ++i)
+        {
+            if (i > 0)
+                text << " ";
+
+            const int value = (int) (unsigned char) data[i];
+            text << juce::String::charToString(hex[(value >> 4) & 0x0f]);
+            text << juce::String::charToString(hex[value & 0x0f]);
+        }
+
+        return text;
+    }
+
+    static juce::String makeTsvLine(const VstMidiMonitorEntry& e)
+    {
+        juce::String text;
+        text << e.time << "\t"
+             << e.device << "\t"
+             << e.type << "\t"
+             << e.channel << "\t"
+             << e.data1 << "\t"
+             << e.data2 << "\t"
+             << e.description << "\t"
+             << e.rawHex;
+        return text;
+    }
+
+    static juce::String csvEscape(juce::String text)
+    {
+        const bool needsQuotes = text.containsChar(',')
+                              || text.containsChar('"')
+                              || text.containsChar('\n')
+                              || text.containsChar('\r');
+
+        text = text.replace("\"", "\"\"");
+
+        if (needsQuotes)
+            return "\"" + text + "\"";
+
+        return text;
+    }
+
+    static juce::String makeCsvLine(const VstMidiMonitorEntry& e)
+    {
+        juce::String text;
+        text << csvEscape(e.time) << ","
+             << csvEscape(e.device) << ","
+             << csvEscape(e.type) << ","
+             << csvEscape(e.channel) << ","
+             << csvEscape(e.data1) << ","
+             << csvEscape(e.data2) << ","
+             << csvEscape(e.description) << ","
+             << csvEscape(e.rawHex);
+        return text;
+    }
+
+    static juce::String getTsvHeader()
+    {
+        return "Time\tSource\tType\tCh\tData 1\tData 2\tDescription\tRaw Hex";
+    }
+
+    static juce::String getCsvHeader()
+    {
+        return "Time,Source,Type,Ch,Data 1,Data 2,Description,Raw Hex";
+    }
+
+    juce::String buildVisibleRowsAsTsv(bool includeHeader) const
+    {
+        juce::String text;
+
+        if (includeHeader)
+            text << getTsvHeader() << "\n";
+
+        for (const auto& entry : entries)
+            text << makeTsvLine(entry) << "\n";
+
+        return text.trimEnd();
+    }
+
+    juce::String buildVisibleRowsAsCsv() const
+    {
+        juce::String text;
+        text << getCsvHeader() << "\n";
+
+        for (const auto& entry : entries)
+            text << makeCsvLine(entry) << "\n";
+
+        return text.trimEnd();
+    }
+
+    void copySelectedRow()
+    {
+        const int row = table.getSelectedRow();
+
+        if (! juce::isPositiveAndBelow(row, entries.size()))
+            return;
+
+        juce::SystemClipboard::copyTextToClipboard(makeTsvLine(entries.getReference(row)));
+    }
+
+    void copyAllVisibleRows()
+    {
+        juce::SystemClipboard::copyTextToClipboard(buildVisibleRowsAsTsv(true));
+    }
+
+    void exportVisibleRows()
+    {
+        auto defaultFile = AppSettings::getAppDirectory().getChildFile("midi-monitor-log.csv");
+
+        juce::FileChooser chooser("Export visible MIDI monitor rows",
+                                  defaultFile,
+                                  "*.csv;*.txt",
+                                  true);
+
+        if (! chooser.browseForFileToSave(true))
+            return;
+
+        auto file = chooser.getResult();
+
+        if (file.getFileExtension().isEmpty())
+            file = file.withFileExtension(".csv");
+
+        const bool exportAsText = file.getFileExtension().equalsIgnoreCase(".txt");
+
+        const auto text = exportAsText ? buildVisibleRowsAsTsv(true)
+                                       : buildVisibleRowsAsCsv();
+
+        file.replaceWithText(text);
     }
 
     bool anyTypeFilterEnabled() const
@@ -472,6 +705,7 @@ private:
         e.device = incoming.sourceName;
 
         const auto& msg = incoming.message;
+        e.rawHex = makeRawHexString(msg);
 
         if (msg.getRawDataSize() > 0)
             e.rawStatus = (int) (unsigned char) msg.getRawData()[0];
@@ -616,6 +850,10 @@ private:
     AppSettings& settings;
     juce::TextButton clearButton;
     juce::ToggleButton pauseButton;
+    juce::ToggleButton freezeButton;
+    juce::TextButton copyRowButton;
+    juce::TextButton copyAllButton;
+    juce::TextButton exportButton;
     juce::ToggleButton hideClockButton;
     juce::ToggleButton hideActiveSenseButton;
     juce::ToggleButton showNoteButton;
@@ -646,12 +884,13 @@ public:
     {
         setUsingNativeTitleBar(true);
         setResizable(true, true);
+        setResizeLimits(minimumWindowWidth, minimumWindowHeight, 2000, 1400);
 
         content = new VstMidiMonitorComponent(processor, settings);
         setContentOwned(content, true);
 
-        const int windowWidth = settings.getMidiMonitorWindowWidth();
-        const int windowHeight = settings.getMidiMonitorWindowHeight();
+        const int windowWidth = juce::jmax(minimumWindowWidth, settings.getMidiMonitorWindowWidth());
+        const int windowHeight = juce::jmax(minimumWindowHeight, settings.getMidiMonitorWindowHeight());
 
         if (componentToCentreAround != nullptr)
             centreAroundComponent(componentToCentreAround, windowWidth, windowHeight);
@@ -670,10 +909,14 @@ public:
     }
 
 private:
+    static constexpr int minimumWindowWidth = 940;
+    static constexpr int minimumWindowHeight = 384;
+
     void saveSettings()
     {
         if (content != nullptr)
-            content->saveSettings(getWidth(), getHeight());
+            content->saveSettings(juce::jmax(minimumWindowWidth, getWidth()),
+                                  juce::jmax(minimumWindowHeight, getHeight()));
     }
 
     AppSettings& settings;
