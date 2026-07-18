@@ -8,7 +8,7 @@ I always liked tools like TobyBear's MiniHost, SaviHost and Tone2's NanoHost. Bu
 
 The standalone version is an expanded version of the VST3 plugin code, adding features not required by a plugin. This makes it easier to maintain and keep functionality/preset compatibility consistent.
 
-See the demos at the bottom of the page for a better idea of what the Pointer Control in action...
+See the demos at the bottom of the page for a few gifs of the Pointer Control in action...
 
 ## Feature Status
 
@@ -49,6 +49,16 @@ The Routing View provides a structured overview of all tabs in the current prese
 - detailed plugin info report
 
 Tabs can be reordered, soloed, bypassed, and selected directly from this view.
+
+### Routing View Explained
+- Click the Synth/FX labels to close routing view and open the tab for that row. Next to which is the plugin name.
+- Adjust Method is used for setting the PointerControl mode. Global uses the setting specified in the PointerControlSettings panel. Drag sets only this tab/plugin to use drag method of adjustment. Scroll sets it to use mouse scroll as adjustment type. Setting this to Drag or Scroll allows a global setting to be used for every other tab/plugin, while allowing you to set specific setting per tab for independant plugin control. Then, in practise, usage is pretty seemless and invisible.
+- The MIDI buttons are used to designate the MIDI channel used for that plugin tab. ie, you may want to designate a keyboard to the synths, but have a MIDI controller to adjust FX so you may need to specify channel per device for each plugin.
+- The Green buttons are used to enable/disable the audio/MIDI for that tab/plugin so effectively making it a bypass/mute function.
+- Then comes the 'S' button, used to Solo each plugin tab. You can Solo any number of tabs. Bypass/Mute states are restored when the last Solo button is deactivated.
+- The next two buttons are the Up/Down arrows and are used to adjust the position in the chain so you can set up different chains for the same plugins, thereby saving different presets with different chains for different situations.
+- The next button is an info button, used more as a tooltip, but click it to see detailed plugin info. On hovering this button, it will show info about what FX a synth is outputting its audio to or which Synths an FX is receiving input from.
+- The last button is a Close Tab button to allow closing tabs from the routing view.
 
 ### Soloing
 Soloing temporarily isolates one or more tabs by muting all non-soloed tabs.
@@ -97,21 +107,19 @@ It allows:
 - Undo allows undoing the last action only
 
 ### Pointer Control
-Pointer Control allows MIDI-driven control of the mouse cursor over the currently selected hosted plugin editor. This function allows using only three hardware knobs to control all parameters that work via a scroll or drag operation via emulation of mouse actions. Much easier and quicker than traditional MIDI mapping as it allows using the mouse to move the cursor while using a single knob to adjust whatever is under the cursor. Much better than using the scroll wheel or dragging parameters with the mouse!
+The Pointer Control system is designed for a much speedier programming of any plugin using just a small handful of knobs and buttons on your MIDI controller, instead of assigning one knob/button per parameter. This means you spend less time assigning knobs to parameters. For synth programmers, this is likely far quicker than traditional methods.
+
+It allows MIDI-driven control of the mouse cursor over the currently selected hosted plugin editor. This function allows using only three hardware knobs to control all parameters that work via a scroll or drag operation via emulation of mouse actions. Much easier and quicker than traditional MIDI mapping as it allows using the mouse, or assigning knobs for cursor X/Y psoition, to move the cursor while using a single knob to adjust whatever is under the cursor. Much better than using the scroll wheel or dragging parameters with the mouse!
 
 This includes:
 - X/Y pointer movement by MIDI CC
+- X/Y lane tolerance control
 - Use Mouse Back/Forward buttons to toggle Snap X and Y
-- wheel-style parameter adjustment
-- drag-style parameter adjustment
-- lane tolerance control
-- adjust sensitivity control
+- wheel or drag-style parameter adjustment
+- Mouse button and keyboard emulation for menu navigation
+- 'adjust' sensitivity control
 - optional point snapping
-- editable jump-point maps per plugin tab
-
-Further extended to include Left, Middle, Right mouse button emulation to reduce reliance on mouse when using MIDI hardware to control and edit plugins.
-
-Also added simple Keyboard support for the same reason. Now you can use your MIDI device to control mouse position, mouse clicks and then select items from menus, etc.
+- create multiple editable jump-point maps per plugin tab
 
 ### Pointer Edit Overlay
 Pointer Edit Mode displays an overlay over the hosted plugin editor so jump points can be created, previewed, removed, and visually aligned.
@@ -123,8 +131,7 @@ The overlay supports:
 - preview point display before release
 - optional crosshair display
 - per-tab lane tolerance feedback
-- global/preset map source indication
-- allow using a preset map to be saved that overrides global one
+- map source indication
 - right click and drag to set a rectangular area where snapping is disabled:
   - Up to 8 pointer free zones per tab.
   - Right-drag adds a new rectangle.
@@ -133,10 +140,7 @@ The overlay supports:
   - Right-click inside a rectangle removes one rectangle.
   - If rectangles overlap, deletion removes the smallest rectangle under the cursor.
   - If overlapping rectangles are the same size, deletion removes the newest one.
-  - Bottom bar now shows: Free Zones: N
-  - Preset and global pointer-map XML now save/load multiple zones.
-  - Old single-zone XML is still loaded for compatibility.
-  - Edge snapping/free movement now works against the list of zones.
+  - Bottom bar shows: Free Zones: N
 
 
 > [!NOTE]
@@ -152,36 +156,25 @@ The overlay supports:
 >
 > - NOTE: It can reside over other windows too, which is an unfortunate consequence
 
-### Global and Preset Pointer Maps
-Pointer jump-point maps can be stored in two ways:
+### Pointer Maps
+Pointer jump-point maps are stored in the PointerMaps directory and are accessed via the combobox in the top right of the window. If a map for the currently selected plugin tab is detected, it will be shown here. If there are multiplt maps for a plugin, all will be shown here and are selectable via the combobox or via your mouse's Back/Forward buttons. This last function is dependant on the Pointer Editor Overlay NOT being active. If the Overlay is active, these buttons toggle snapping of X/Y.
 
-#### Global Pointer Maps
-A global pointer map is saved per plugin and can be reused across presets. It saves having to recreate the same map for every instance of a plugin.
+A pointer map is saved per plugin and can be reused across presets. It saves having to recreate the same map for every instance of a plugin.
 
 Use this when:
 - the same plugin layout is used repeatedly
 - you want one reusable default map for a plugin
 
-NOTE: As global maps are saved to a separate dedicated file as XML, they are also shareable online! So if this becomes popular enough, you may find maps available online. But I will eventually upload all of my own maps here when done, making it easier to get started.
+NOTE: As maps are saved to a separate dedicated file as XML, they are also shareable online! So if this becomes popular enough, you may find maps available online. But I will eventually upload all of my own maps here when done, making it easier to get started.
 
-#### Preset Pointer Maps
-A preset pointer map is stored inside the current preset file. Useful for plugins that have different ways of setting it up or different skins that rearrange a plugins layout.
+#### Additional Pointer Maps
+A different pointer map may be required for differetn skins of the same plugin, so you are free to select whichever is most suitable. Useful for plugins that have different ways of setting it up (Diva) or different skins that rearrange a plugins layout.
 
 Use this when:
-- a specific preset needs its own custom point layout
-- different tabs or sound setups need different point maps
+- a plugin needs its own custom point layout for each skin/theme/layout
+- a plugin has several tabs/pages, eg: Osc, Filter, LFO, etc...
 
-#### Map Source Behaviour
-Each tab can use:
-- a preset map
-- a global map
-- no map
-
-If a preset-specific map is cleared:
-- the global map will be used if one exists
-- otherwise no map remains active
-
-A tab can also be set to **Use Global**, which forces the global pointer map to be used instead of the preset-specific one.
+You are free to store maps in subfolders within the PointerMaps directory allowing for better organisation. As long as Maps are stored in that folder, they will be detected and shown in the combobox with all subfolders being searched recursively for any map files.
 
 ### MIDI Assignment Per Tab
 Each tab can maintain its own MIDI channel assignment set, allowing different hosted plugins to respond to different incoming MIDI sources/channels.
@@ -308,7 +301,7 @@ After that, builds are fully offline.
 The finished exe appears in dist\PolyHostInterface.exe
 
 ## Opening a Plugin
-1. Right-click any .vst2, .vst3 or .clap file in File Explorer
+1. Right-click any vst2, vst3 or clap file in File Explorer
 2. Open with > Choose another app
 3. Browse to PolyHostInterface.exe
 4. Tick "Always use this app" if you want it permanent
@@ -318,10 +311,6 @@ This means that anytime you then double-click a plugin in Explorer, it will auto
 If you have a copy of vstsdk2.4, place it here: {CMAKE_SOURCE_DIR}/tools/vstsdk2.4
 then run build.bat.
 
-## CLAP Support
-Download clap-main here: https://github.com/free-audio/clap
-Install to tools/clap/CMakeLists.txt
-
 ## Audio/MIDI Routing
 ```
 MIDI Device(s)    Audio In from DAW/Host
@@ -329,7 +318,7 @@ MIDI Device(s)    Audio In from DAW/Host
 ├── [Synth Tab 1] --+
 ├── [Synth Tab 2] --+  (summed)
 |                   |
-|              [FX Tab 1]
+|              [FX Tab 1] (If Bypassed/Muted FX is ignored)
 |                   |
 ├──----------- [FX Tab 2]
 |                   |
@@ -339,15 +328,7 @@ MIDI Device(s)    Audio In from DAW/Host
                     |
               [Audio Out]  ->  Output meter
 ```
-MIDI always wired in parallel. Synth and FX audio routing is partially flexible, where plugins are in series and routing can be modified by entering the Routing page. Click the Routing toolbar button and a list of all tabs appears, use Up and Down buttons to manage the processing order.
-
-- The Synth/FX labels are buttons that when clicked, close routing view and open the tab for that row. Next to which is the plugin name.
-- Adjust Method is used for setting the PointerControl mode. Global uses the settings in the PointerControlSettings panel. Drag sets only this tab/plugin to sue drag method of adjustment. Scroll sets it to use mouse scroll as adjustment type. Setting this to Drag or Scroll allows a global setting to be use for every other tab/plugin, while allowing you to use these specific settings per tab for independant plugin control.
-- The MIDI(#) buttons are used to designate which connected devices will be used for which loaded plugins. ie, you may want to designate a keyboard to the synths, but have a MIDI controller to adjust FX so you may need to specify on/off per device for each plugin.
-- The Green buttons are used to enable/disable the audio/MIDI for that tab/plugin so effectively making it a bypass/mute function.
-- The next two buttons are the Up/Down arrows and are used to adjust the position in the chain so you can set up different chains for the same plugins, thereby saving different presets with different chains for different situations.
-- The next button is an info button, used more as a tooltip than a clickable button. This just shows info about what FX a synth is outputting its audio to and which Synths an FX is receiving input from.
-- The last button is a Close Tab button to allow closing tabs from the routing view.
+MIDI is always wired in parallel. Synth and FX audio routing is partially flexible, where plugins are in series and routing can be modified by entering the Routing page. Click the Routing toolbar button and a list of all tabs appears, use Up and Down buttons to manage the processing order.
 
 ## Credits
 
