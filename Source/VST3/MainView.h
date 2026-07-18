@@ -1,12 +1,14 @@
 #pragma once
 
 #include <JuceHeader.h>
+#include <functional>
 #include "ButtonStyling.h"
 #include "SessionManager.h"
 #include "AppSettings.h"
 #include "RoutingView.h"
 #include "MacroMappingsView.h"
 #include "PointerControl.h"
+#include "PluginCore.h"
 #include "MidiMonitorWindow.h"
 
 class PolyHostPluginProcessor;
@@ -17,7 +19,50 @@ class MainView : public juce::Component,
                  private juce::Timer
 {
 public:
-    explicit MainView(PolyHostPluginProcessor& processorIn);
+    class MenuExtension
+    {
+    public:
+        virtual ~MenuExtension() = default;
+
+        virtual juce::StringArray getAdditionalMenuNames() const = 0;
+        virtual juce::PopupMenu getAdditionalMenuForName(const juce::String& menuName) = 0;
+        virtual void addAdditionalItemsToMenu(const juce::String& menuName,
+                                              juce::PopupMenu& menu) = 0;
+        virtual bool handleAdditionalMenuCommand(int menuItemID) = 0;
+
+        virtual juce::Component* getMenuBarRightComponent()
+        {
+            return nullptr;
+        }
+
+        virtual int getMenuBarRightComponentWidth() const
+        {
+            return 0;
+        }
+
+        virtual int getMenuBarHeight() const
+        {
+            return 24;
+        }
+
+        virtual double getCurrentHostTempoBpm() const
+        {
+            return 120.0;
+        }
+
+        virtual double getDefaultHostTempoBpm() const
+        {
+            return 120.0;
+        }
+
+        virtual void setCurrentHostTempoBpm(double bpm)
+        {
+            juce::ignoreUnused(bpm);
+        }
+    };
+
+    explicit MainView(PolyHostPluginProcessor& processorIn,
+                      MenuExtension* menuExtensionIn = nullptr);
     ~MainView() override;
 
     AppSettings& getAppSettings() { return appSettings; }
@@ -28,6 +73,9 @@ public:
     bool isInterestedInFileDrag(const juce::StringArray& files) override;
     void filesDropped(const juce::StringArray& files, int x, int y) override;
 
+    bool openPluginPath(const juce::String& pluginPath,
+                        bool openInNewTab);
+
     void paint(juce::Graphics& g) override;
     void resized() override;
     bool keyPressed(const juce::KeyPress& key) override;
@@ -36,7 +84,9 @@ public:
     void clearHostedEditorForWindowClose();
     void recoverCurrentTabAfterWindowReopen();
     void showTemporaryStatusMessage(const juce::String& text);
-    bool saveCurrentTabPointerMapToCurrentPresetFile();
+    void refreshPointerMapSelector();
+    void selectAdjacentPointerMap(int direction);
+    void closePointerEditOverlayFromMouse();
     juce::Component* getWindowCenterTarget() const;
     void mouseWheelMove(const juce::MouseEvent& event,
                         const juce::MouseWheelDetails& wheel) override;
@@ -180,6 +230,21 @@ private:
                              getLocalBounds(),
                              juce::Justification::centred,
                              1);
+        }
+    };
+
+    class PointerMapComboBox final : public juce::ComboBox
+    {
+    public:
+        std::function<void(const juce::MouseWheelDetails&)> onWheel;
+
+        void mouseWheelMove(const juce::MouseEvent& event,
+                            const juce::MouseWheelDetails& wheel) override
+        {
+            juce::ignoreUnused(event);
+
+            if (onWheel)
+                onWheel(wheel);
         }
     };
 
@@ -463,7 +528,8 @@ private:
         commandClearPluginScanFolders = 2603,
         commandLocateMissingPluginsNow = 2604,
 
-        commandPresetLoadReport = 2700
+        commandPresetLoadReport = 2700,
+        commandInstructions = 2701
     };
 
     juce::StringArray getMenuBarNames() override;
@@ -480,7 +546,11 @@ private:
     void loadPluginIntoMainSlot();
     void handlePresetSelection();
     void resizeParentEditorToFitHostedPlugin();
+    void monitorHostedEditorSizeChanges();
     void rebuildPresetDropdown();
+    void rebuildPointerMapDropdown();
+    void handlePointerMapSelection();
+    void pollPointerMapMouseButtonSwitching();
     void rebuildTabButtons();
     void rebuildRoutingView();
     void updateTabScrollButtonState();
@@ -547,6 +617,7 @@ private:
                                 const juce::String& pluginStateBase64);
 
     PolyHostPluginProcessor& processor;
+    MenuExtension* menuExtension = nullptr;
 
     AppSettings appSettings;
     PresetSessionController presetController;
@@ -557,12 +628,19 @@ private:
 
     std::unique_ptr<StatusMetersComponent> statusMeters;
     std::unique_ptr<juce::MenuBarComponent> menuBar;
+    juce::Component* menuBarRightComponent = nullptr;
     juce::TooltipWindow tooltipWindow { this };
     juce::Toolbar toolbar;
     ButtonStyling::ToolbarIconButton* savePresetToolbarButton = nullptr;
     ButtonStyling::ToolbarIconButton* savePresetAsToolbarButton = nullptr;
 
     juce::ComboBox presetDropdown;
+    PointerMapComboBox pointerMapDropdown;
+    juce::Array<PluginCore::PointerMapChoice> pointerMapChoices;
+    bool updatingPointerMapDropdown = false;
+    bool pointerMapBackMouseButtonWasDown = false;
+    bool pointerMapForwardMouseButtonWasDown = false;
+    juce::uint32 lastPointerMapDropdownWheelMs = 0;
     juce::OwnedArray<TabButton> tabButtons;
     juce::Component tabButtonsContainer;
     juce::Viewport tabButtonsViewport;
@@ -573,6 +651,9 @@ private:
 
     juce::Component editorHolder;
     std::unique_ptr<juce::AudioProcessorEditor> hostedEditor;
+    int lastObservedHostedEditorWidth = 0;
+    int lastObservedHostedEditorHeight = 0;
+    juce::uint32 lastHostedEditorAutoResizeMs = 0;
     juce::Label contentPlaceholder;
     juce::TextEditor pluginIssueMessageEditor;
     RoutingView routingView;

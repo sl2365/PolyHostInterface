@@ -1,9 +1,10 @@
 #include "PluginEditor.h"
 
-PolyHostPluginEditor::PolyHostPluginEditor(PolyHostPluginProcessor& p)
+PolyHostPluginEditor::PolyHostPluginEditor(PolyHostPluginProcessor& p,
+                                           MainView::MenuExtension* menuExtension)
     : AudioProcessorEditor(&p),
       audioProcessor(p),
-      mainView(p)
+      mainView(p, menuExtension)
 {
     addAndMakeVisible(mainView);
     setResizable(true, false);

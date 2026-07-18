@@ -7,7 +7,8 @@
 class PolyHostPluginEditor : public juce::AudioProcessorEditor
 {
 public:
-    explicit PolyHostPluginEditor(PolyHostPluginProcessor&);
+    explicit PolyHostPluginEditor(PolyHostPluginProcessor&,
+                                  MainView::MenuExtension* menuExtension = nullptr);
     ~PolyHostPluginEditor() override;
 
     void paint(juce::Graphics&) override;

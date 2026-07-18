@@ -14,18 +14,14 @@
 :: If tools\vstsdk2.4 is present, VST2 support is compiled in
 :: automatically -- no editing of CMakeLists.txt required.
 ::
-:: JUCE and clap-juce-extensions are downloaded into build\ on
-:: the first run (needs internet). All subsequent builds are
-:: fully offline.
-:: ============================================================
-
-:: Requires:
-::   - Desktop development with C++
-:: PolyHost VST3 Plugin Build Script - Portable
 :: Requires:
 ::   ..\_Tools\cmake\bin\cmake.exe
 ::   Visual Studio 2026 Build Tools
 ::   Desktop development with C++
+::
+:: The finished VST3 binary is copied directly into dist beside
+:: PolyHostInterface.exe. No other dist files or folders are removed.
+:: ============================================================
 
 @echo off
 setlocal
@@ -34,9 +30,11 @@ set "ROOT=%~dp0"
 set "TOOLS=%ROOT%..\_Tools"
 set "CMAKE=%TOOLS%\cmake\bin\cmake.exe"
 set "BUILD_DIR=%ROOT%build-VST3"
-set "FINAL_VST3_DIR=%ROOT%dist"
+set "DIST_DIR=%ROOT%dist"
 set "PLUGIN_NAME=PolyHostInterface.vst3"
-set "PLUGIN_BINARY=%FINAL_VST3_DIR%\%PLUGIN_NAME%\Contents\x86_64-win\%PLUGIN_NAME%"
+set "BUILT_BUNDLE=%BUILD_DIR%\PolyHostPlugin_artefacts\Release\VST3\%PLUGIN_NAME%"
+set "BUILT_BINARY=%BUILT_BUNDLE%\Contents\x86_64-win\%PLUGIN_NAME%"
+set "FINAL_PLUGIN=%DIST_DIR%\%PLUGIN_NAME%"
 set "APP_NAME=savihost3x64.exe"
 
 echo.
@@ -95,39 +93,46 @@ if errorlevel 1 (
 )
 
 echo.
-echo Preparing final VST3 output folder...
-if not exist "%FINAL_VST3_DIR%" mkdir "%FINAL_VST3_DIR%"
+echo Copying VST3 binary directly to dist...
+if not exist "%DIST_DIR%" mkdir "%DIST_DIR%"
 
-echo.
-echo Copying VST3 plugin to simplified output path...
-if exist "%BUILD_DIR%\PolyHostPlugin_artefacts\Release\VST3\%PLUGIN_NAME%" (
-    if exist "%FINAL_VST3_DIR%\%PLUGIN_NAME%" rmdir /s /q "%FINAL_VST3_DIR%\%PLUGIN_NAME%"
-    xcopy /E /I /Y "%BUILD_DIR%\PolyHostPlugin_artefacts\Release\VST3\%PLUGIN_NAME%" "%FINAL_VST3_DIR%\%PLUGIN_NAME%" >nul
-    echo Copied VST3 to:
-    echo %FINAL_VST3_DIR%\%PLUGIN_NAME%
-) else (
-    echo ERROR: VST3 plugin not found at expected path:
-    echo %BUILD_DIR%\PolyHostPlugin_artefacts\Release\VST3\%PLUGIN_NAME%
+if not exist "%BUILT_BINARY%" (
+    echo ERROR: Built VST3 binary not found at:
+    echo %BUILT_BINARY%
     echo.
     echo The build may have succeeded, but JUCE may have used a different artefacts path.
-    echo Please check inside the build folder for the generated .vst3 bundle.
     pause
     exit /b 1
 )
 
-if not exist "%PLUGIN_BINARY%" (
+:: Remove only an older PolyHostInterface.vst3 target.
+:: This also cleans up the previous directory-bundle copy if present.
+if exist "%FINAL_PLUGIN%\NUL" rmdir /s /q "%FINAL_PLUGIN%"
+if exist "%FINAL_PLUGIN%" del /f /q "%FINAL_PLUGIN%"
+
+copy /Y "%BUILT_BINARY%" "%FINAL_PLUGIN%" >nul
+if errorlevel 1 (
+    echo ERROR: Failed to copy VST3 binary to:
+    echo %FINAL_PLUGIN%
+    pause
+    exit /b 1
+)
+
+if not exist "%FINAL_PLUGIN%" (
     echo ERROR: Final VST3 binary was not copied successfully:
-    echo %PLUGIN_BINARY%
+    echo %FINAL_PLUGIN%
     pause
     exit /b 1
 )
 
-:: Close cmd and Launch plugin
+echo Copied VST3 to:
+echo %FINAL_PLUGIN%
+
+:: Close cmd and launch plugin
 echo.
 echo ======================================================================
 echo VST3 Build complete. Launching %PLUGIN_NAME% in 2 seconds...
 echo ======================================================================
-rem pause
 timeout /t 2 /nobreak >nul
-start "" "%PLUGIN_BINARY%"
+start "" "%FINAL_PLUGIN%"
 exit /b 0

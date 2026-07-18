@@ -44,10 +44,8 @@ struct SessionTabData
     float pointerLaneTolerance = 30.0f;
     int pointerAdjustSensitivity = 1;
     int pointerAdjustMethodOverride = 0;
-    bool hasCustomPointerMap = false;
-    bool preferGlobalPointerMap = false;
-    juce::Array<PointerJumpPoint> pointerJumpPoints;
-    juce::Array<juce::Rectangle<float>> pointerFreeZones;
+    juce::String selectedGlobalPointerMapRelativePath;
+    juce::String selectedGlobalPointerMapName;
     bool hasPlugin = false;
     SessionPluginData plugin;
 };

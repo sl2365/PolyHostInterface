@@ -3,6 +3,7 @@
 #include "PluginProcessor.h"
 #include "PluginEditor.h"
 #include "PointerSettingsDialogue.h"
+#include "Instructions.h"
 #include <functional>
 #include <limits>
 
@@ -33,7 +34,7 @@ namespace
             versionLabel.setColour(juce::Label::textColourId, juce::Colours::lightgrey);
             addAndMakeVisible(versionLabel);
 
-            infoLabel.setText("A lightweight tabbed plugin host for:\nVST3.\n\nCLAP 64 and VST2 32-bit bridging planned.\n\nBuilt with JUCE.\n\n- sl23 -",
+            infoLabel.setText("A lightweight tabbed plugin host for:\nVST2 and VST3 x64.\n\nCLAP 64 and VST2 32-bit bridging planned.\n\nBuilt with JUCE.\n\n- sl23 -",
                               juce::dontSendNotification);
             infoLabel.setJustificationType(juce::Justification::centred);
             infoLabel.setColour(juce::Label::textColourId, juce::Colours::lightgrey);
@@ -292,62 +293,31 @@ namespace
             snapYEnabled = owner.getAppSettings().getPointerControlSnapYEnabled();
 
             addAndMakeVisible(saveGlobalButton);
-            addAndMakeVisible(savePresetButton);
-            addAndMakeVisible(clearPresetButton);
-            addAndMakeVisible(useGlobalToggle);
+            addAndMakeVisible(saveAsGlobalButton);
+            addAndMakeVisible(deleteMapButton);
 
-            saveGlobalButton.setTooltip("Save current pointer map as a global plugin map");
-            savePresetButton.setTooltip("Save current pointer map to the current preset");
-            clearPresetButton.setTooltip("Clear preset pointer map so global fallback can be used");
+            saveGlobalButton.setTooltip("Save current pointer map to the selected map");
+            saveAsGlobalButton.setTooltip("Save current pointer map as a new map file");
+            deleteMapButton.setTooltip("Delete the selected pointer map file");
 
             saveGlobalButton.onHoverStart = [this]
             {
-                owner.showTemporaryStatusMessage("Save current pointer map as the global plugin map");
+                owner.showTemporaryStatusMessage("Save current pointer map to the selected map");
             };
 
-            savePresetButton.onHoverStart = [this]
+            saveAsGlobalButton.onHoverStart = [this]
             {
-                owner.showTemporaryStatusMessage("Save current pointer map into the current preset");
+                owner.showTemporaryStatusMessage("Save current pointer map as a new map file");
             };
 
-            clearPresetButton.onHoverStart = [this]
+            deleteMapButton.onHoverStart = [this]
             {
-                owner.showTemporaryStatusMessage("Clear preset pointer map so global fallback can be used");
+                owner.showTemporaryStatusMessage("Delete the selected pointer map file");
             };
 
             saveGlobalButton.onHoverEnd = [] {};
-            savePresetButton.onHoverEnd = [] {};
-            clearPresetButton.onHoverEnd = [] {};
-
-            useGlobalToggle.setButtonText("Use Global");
-            useGlobalToggle.setColour(juce::ToggleButton::textColourId, juce::Colours::white);
-            useGlobalToggle.setTooltip("Ignore preset point data and use the global point map instead");
-
-            useGlobalToggle.onStateChange = [this]
-            {
-                if (useGlobalToggle.isMouseOver(true))
-                {
-                    owner.showTemporaryStatusMessage(
-                        "Ignore preset point data and use the global point map instead");
-                }
-            };
-
-            useGlobalToggle.onClick = [this]
-            {
-                auto& core = owner.getProcessor().getCore();
-                const int tabIndex = core.getSelectedTabIndex();
-
-                if (! juce::isPositiveAndBelow(tabIndex, core.getNumTabs()))
-                    return;
-
-                core.setTabPreferGlobalPointerMap(tabIndex, useGlobalToggle.getToggleState());
-
-                owner.showTemporaryStatusMessage(useGlobalToggle.getToggleState()
-                    ? "Using global pointer map"
-                    : "Using preset/global automatic pointer map selection");
-
-                repaint();
-            };
+            saveAsGlobalButton.onHoverEnd = [] {};
+            deleteMapButton.onHoverEnd = [] {};
 
             saveGlobalButton.onClick = [this]
             {
@@ -357,118 +327,205 @@ namespace
                 if (! juce::isPositiveAndBelow(tabIndex, core.getNumTabs()))
                     return;
 
-                juce::String userLabel;
-
-                if (core.globalPointerMapNeedsUserLabel(tabIndex))
+                if (! core.tabHasGlobalPointerMap(tabIndex))
                 {
-                    juce::AlertWindow labelPrompt("Name Global Pointer Map",
-                                                  "This plugin did not provide enough reliable name information.\n\n"
-                                                  "Enter a clear map name, for example:\n"
-                                                  "u-he Diva",
-                                                  juce::AlertWindow::QuestionIcon);
-
-                    labelPrompt.addTextEditor("mapName",
-                                              core.getGlobalPointerMapIdentityText(tabIndex),
-                                              "Map Name:");
-
-                    labelPrompt.addButton("Save", 1, juce::KeyPress(juce::KeyPress::returnKey));
-                    labelPrompt.addButton("Cancel", 0, juce::KeyPress(juce::KeyPress::escapeKey));
-
-                    if (labelPrompt.runModalLoop() != 1)
+                    if (core.saveCurrentPointerMapToGlobalFile(
+                            tabIndex))
                     {
-                        owner.showTemporaryStatusMessage("Global pointer map save cancelled");
-                        repaint();
-                        return;
+                        owner.showTemporaryStatusMessage(
+                            "New pointer map saved: "
+                            + core.getSelectedGlobalPointerMapDisplayName(
+                                tabIndex));
+
+                        owner.refreshPointerMapSelector();
+                    }
+                    else
+                    {
+                        owner.showTemporaryStatusMessage(
+                            "Failed to save new pointer map");
                     }
 
-                    userLabel = labelPrompt.getTextEditorContents("mapName").trim();
-
-                    if (userLabel.isEmpty())
-                    {
-                        owner.showTemporaryStatusMessage("Global pointer map needs a name");
-                        repaint();
-                        return;
-                    }
+                    repaint();
+                    return;
                 }
 
-                if (core.tabHasGlobalPointerMap(tabIndex))
-                {
-                    const bool confirmed = juce::AlertWindow::showOkCancelBox(
-                        juce::AlertWindow::WarningIcon,
-                        "Overwrite Global Pointer Map",
-                        "A global pointer map already exists for:\n\n"
-                            + core.getGlobalPointerMapIdentityText(tabIndex)
-                            + "\n\nOverwrite it?",
-                        "Overwrite",
-                        "Cancel",
-                        owner.getWindowCenterTarget());
+                auto mapName = core.getSelectedGlobalPointerMapDisplayName(tabIndex).trim();
+                const auto relativePath = core.getSelectedGlobalPointerMapRelativePath(tabIndex).trim();
 
-                    if (! confirmed)
-                    {
-                        owner.showTemporaryStatusMessage("Global pointer map save cancelled");
-                        repaint();
-                        return;
-                    }
-                }
+                if (mapName.isEmpty())
+                    mapName = "selected pointer map";
 
-                if (core.saveCurrentPointerMapToGlobalFile(tabIndex, userLabel))
-                    owner.showTemporaryStatusMessage("Global pointer map saved");
-                else
-                    owner.showTemporaryStatusMessage("Failed to save global pointer map");
+                juce::String message;
+                message << "Overwrite this pointer map file?\n\n";
+                message << "Map: " << mapName;
 
-                repaint();
-            };
-
-            savePresetButton.onClick = [this]
-            {
-                auto& core = owner.getProcessor().getCore();
-                const int tabIndex = core.getSelectedTabIndex();
-
-                if (! juce::isPositiveAndBelow(tabIndex, core.getNumTabs()))
-                    return;
-
-                core.saveCurrentPointerMapToPreset(tabIndex);
-
-                if (owner.saveCurrentTabPointerMapToCurrentPresetFile())
-                    owner.showTemporaryStatusMessage("Pointer map saved to current preset");
-                else
-                    owner.showTemporaryStatusMessage("No preset file exists. Save a preset first.");
-
-                repaint();
-            };
-
-            clearPresetButton.onClick = [this]
-            {
-                auto& core = owner.getProcessor().getCore();
-                const int tabIndex = core.getSelectedTabIndex();
-
-                if (! juce::isPositiveAndBelow(tabIndex, core.getNumTabs()))
-                    return;
-
-                const bool hasGlobalFallback = core.tabHasGlobalPointerMap(tabIndex);
-
-                juce::String message =
-                    "Clear the preset pointer map for this tab?\n\n"
-                    "This removes the preset-specific point map.";
-
-                if (hasGlobalFallback)
-                    message += "\n\nAfter clearing, the global point map will be used.";
-                else
-                    message += "\n\nAfter clearing, no point map will remain active.";
+                if (relativePath.isNotEmpty())
+                    message << "\nFile: " << relativePath;
 
                 const bool confirmed = juce::AlertWindow::showOkCancelBox(
                     juce::AlertWindow::WarningIcon,
-                    "Clear Preset Pointer Map",
+                    "Overwrite Pointer Map",
                     message,
-                    "Clear Preset",
+                    "Overwrite",
+                    "Cancel",
+                    owner.getWindowCenterTarget());
+
+                if (! confirmed)
+                {
+                    owner.showTemporaryStatusMessage("Pointer map save cancelled");
+                    repaint();
+                    return;
+                }
+
+                if (core.saveCurrentPointerMapToGlobalFile(tabIndex))
+                {
+                    owner.showTemporaryStatusMessage("Pointer map saved: "
+                                                     + core.getSelectedGlobalPointerMapDisplayName(tabIndex));
+                    owner.refreshPointerMapSelector();
+                }
+                else
+                {
+                    owner.showTemporaryStatusMessage("Failed to save pointer map");
+                }
+
+                repaint();
+            };
+
+            saveAsGlobalButton.onClick = [this]
+            {
+                auto& core = owner.getProcessor().getCore();
+                const int tabIndex = core.getSelectedTabIndex();
+
+                if (! juce::isPositiveAndBelow(tabIndex, core.getNumTabs()))
+                    return;
+
+                auto suggestedName = core.getSelectedGlobalPointerMapDisplayName(tabIndex).trim();
+
+                if (suggestedName.isEmpty())
+                    suggestedName = "New Pointer Map";
+
+                for (;;)
+                {
+                    juce::AlertWindow namePrompt("Save New Pointer Map",
+                                                 "Enter a filename for the new external pointer map.\n\n"
+                                                 "Example: Sylenth1 - Original Skin\n\n"
+                                                 "The file will be saved in the PointerMaps folder.",
+                                                 juce::AlertWindow::QuestionIcon);
+
+                    namePrompt.addTextEditor("mapFileName", suggestedName, "Filename:");
+                    namePrompt.addButton("Save", 1, juce::KeyPress(juce::KeyPress::returnKey));
+                    namePrompt.addButton("Cancel", 0, juce::KeyPress(juce::KeyPress::escapeKey));
+
+                    if (namePrompt.runModalLoop() != 1)
+                    {
+                        owner.showTemporaryStatusMessage("New pointer map save cancelled");
+                        repaint();
+                        return;
+                    }
+
+                    const auto mapFileName = namePrompt.getTextEditorContents("mapFileName").trim();
+
+                    if (mapFileName.isEmpty())
+                    {
+                        owner.showTemporaryStatusMessage("Pointer map filename cannot be empty");
+                        suggestedName = "New Pointer Map";
+                        continue;
+                    }
+
+                    const bool fileAlreadyExists = core.pointerMapFileNameExists(mapFileName);
+                    bool allowOverwriteExisting = false;
+
+                    if (fileAlreadyExists)
+                    {
+                        juce::String message;
+                        message << "A pointer map file with this name already exists:\n\n";
+                        message << mapFileName << "\n\n";
+                        message << "Overwrite the existing file?";
+
+                        const bool confirmedOverwrite = juce::AlertWindow::showOkCancelBox(
+                            juce::AlertWindow::WarningIcon,
+                            "Overwrite Existing Pointer Map",
+                            message,
+                            "Overwrite",
+                            "Choose Another Name",
+                            owner.getWindowCenterTarget());
+
+                        if (! confirmedOverwrite)
+                        {
+                            suggestedName = mapFileName;
+                            continue;
+                        }
+
+                        allowOverwriteExisting = true;
+                    }
+
+                    if (core.saveCurrentPointerMapAsNewGlobalFile(tabIndex,
+                                                                  mapFileName,
+                                                                  allowOverwriteExisting))
+                    {
+                        owner.showTemporaryStatusMessage((allowOverwriteExisting ? "Pointer map overwritten: "
+                                                                                 : "New pointer map saved: ")
+                                                         + core.getSelectedGlobalPointerMapDisplayName(tabIndex));
+                        owner.refreshPointerMapSelector();
+                    }
+                    else
+                    {
+                        owner.showTemporaryStatusMessage("Failed to save new pointer map");
+                    }
+
+                    repaint();
+                    return;
+                }
+            };
+
+            deleteMapButton.onClick = [this]
+            {
+                auto& core = owner.getProcessor().getCore();
+                const int tabIndex = core.getSelectedTabIndex();
+
+                if (! juce::isPositiveAndBelow(tabIndex, core.getNumTabs()))
+                    return;
+
+                auto mapName = core.getSelectedGlobalPointerMapDisplayName(tabIndex).trim();
+                const auto relativePath = core.getSelectedGlobalPointerMapRelativePath(tabIndex).trim();
+
+                if (mapName.isEmpty())
+                    mapName = "selected pointer map";
+
+                juce::String message;
+                message << "Delete this pointer map file?\n\n";
+                message << "Map: " << mapName;
+
+                if (relativePath.isNotEmpty())
+                    message << "\nFile: " << relativePath;
+
+                message << "\n\nThis permanently deletes the map XML file from the PointerMaps folder.";
+
+                const bool confirmed = juce::AlertWindow::showOkCancelBox(
+                    juce::AlertWindow::WarningIcon,
+                    "Delete Pointer Map",
+                    message,
+                    "Delete Map",
                     "Cancel",
                     owner.getWindowCenterTarget());
 
                 if (! confirmed)
                     return;
 
-                core.clearCurrentPresetPointerMap(tabIndex);
-                owner.showTemporaryStatusMessage("Preset pointer map cleared");
+                juce::String deletedMapName;
+
+                if (core.deleteSelectedGlobalPointerMapFile(tabIndex, &deletedMapName))
+                {
+                    owner.showTemporaryStatusMessage("Pointer map deleted: "
+                                                     + (deletedMapName.isNotEmpty() ? deletedMapName : mapName));
+                    owner.refreshPointerMapSelector();
+                    owner.repaint();
+                }
+                else
+                {
+                    owner.showTemporaryStatusMessage("No selected pointer map file was deleted");
+                }
+
                 repaint();
             };
         }
@@ -476,26 +533,20 @@ namespace
         void resized() override
         {
             saveGlobalButton.setBounds(getSaveGlobalButtonBounds());
-            savePresetButton.setBounds(getSavePresetButtonBounds());
-            clearPresetButton.setBounds(getClearPresetButtonBounds());
-            useGlobalToggle.setBounds(getUseGlobalToggleBounds());
+            saveAsGlobalButton.setBounds(getSaveAsGlobalButtonBounds());
+            deleteMapButton.setBounds(getDeleteMapButtonBounds());
         }
 
         void paint(juce::Graphics& g) override
         {
             saveGlobalButton.setBounds(getSaveGlobalButtonBounds());
-            savePresetButton.setBounds(getSavePresetButtonBounds());
-            clearPresetButton.setBounds(getClearPresetButtonBounds());
-            useGlobalToggle.setBounds(getUseGlobalToggleBounds());
+            saveAsGlobalButton.setBounds(getSaveAsGlobalButtonBounds());
+            deleteMapButton.setBounds(getDeleteMapButtonBounds());
 
             auto& core = owner.getProcessor().getCore();
             const int tabIndex = core.getSelectedTabIndex();
 
             saveGlobalButton.setActiveState(core.tabHasGlobalPointerMap(tabIndex));
-            savePresetButton.setActiveState(core.tabHasCustomPointerMap(tabIndex));
-
-            useGlobalToggle.setToggleState(core.getTabPreferGlobalPointerMap(tabIndex),
-                                           juce::dontSendNotification);
 
             const auto overlayAlpha = (juce::uint8) juce::jlimit(0, 150,
                 owner.getAppSettings().getPointerControlOverlayTransparency());
@@ -591,15 +642,13 @@ namespace
             g.setFont(juce::Font(juce::FontOptions(12.0f, juce::Font::plain)));
 
             const juce::String infoText =
-                "Map: " + core.getActivePointerMapSourceText(selectedTabIndex)
-                + "  |  Placement: " + getSnapModeText()
-                + "  |  Free Zones: " + juce::String(core.getTabPointerFreeZones(selectedTabIndex).size())
+                "Free Zones: " + juce::String(core.getTabPointerFreeZones(selectedTabIndex).size())
                 + "  |  Tol (CC"
                 + juce::String(owner.getAppSettings().getPointerControlToleranceCcNumber())
                 + "): " + juce::String(currentTolerance, 1);
 
             auto textLayoutBar = bottomBar.reduced(8, 0);
-            auto infoArea = textLayoutBar.removeFromRight(440);
+            auto infoArea = textLayoutBar.removeFromRight(230);
 
             g.drawText(infoText,
                        infoArea,
@@ -656,6 +705,22 @@ namespace
             repaint();
         }
 
+        void mouseWheelMove(const juce::MouseEvent& event,
+                            const juce::MouseWheelDetails& wheel) override
+        {
+            if (getLocalBounds().contains(event.position.toInt()))
+            {
+                const float delta = wheel.deltaY != 0.0f ? wheel.deltaY : wheel.deltaX;
+
+                if (delta != 0.0f)
+                    owner.selectAdjacentPointerMap(delta < 0.0f ? 1 : -1);
+
+                return;
+            }
+
+            juce::Component::mouseWheelMove(event, wheel);
+        }
+
         void timerCallback() override
         {
            #if JUCE_WINDOWS
@@ -685,6 +750,12 @@ namespace
 
         void mouseDown(const juce::MouseEvent& event) override
         {
+            if (event.mods.isMiddleButtonDown())
+            {
+                owner.closePointerEditOverlayFromMouse();
+                return;
+            }
+
             if (getSnapXButtonBounds().contains(event.position.toInt()))
             {
                 snapXEnabled = !snapXEnabled;
@@ -1004,31 +1075,23 @@ namespace
         {
             auto bar = getBottomBarBounds();
             bar.removeFromLeft(152);
-            auto bounds = bar.removeFromLeft(76);
-            return bounds.reduced(0, 2);
-        }
-
-        juce::Rectangle<int> getSavePresetButtonBounds() const
-        {
-            auto bar = getBottomBarBounds();
-            bar.removeFromLeft(233);
-            auto bounds = bar.removeFromLeft(76);
-            return bounds.reduced(0, 2);
-        }
-
-        juce::Rectangle<int> getClearPresetButtonBounds() const
-        {
-            auto bar = getBottomBarBounds();
-            bar.removeFromLeft(314);
             auto bounds = bar.removeFromLeft(24);
             return bounds.reduced(0, 2);
         }
 
-        juce::Rectangle<int> getUseGlobalToggleBounds() const
+        juce::Rectangle<int> getSaveAsGlobalButtonBounds() const
         {
             auto bar = getBottomBarBounds();
-            bar.removeFromLeft(343);
-            auto bounds = bar.removeFromLeft(92);
+            bar.removeFromLeft(181);
+            auto bounds = bar.removeFromLeft(24);
+            return bounds.reduced(0, 2);
+        }
+
+        juce::Rectangle<int> getDeleteMapButtonBounds() const
+        {
+            auto bar = getBottomBarBounds();
+            bar.removeFromLeft(210);
+            auto bounds = bar.removeFromLeft(24);
             return bounds.reduced(0, 2);
         }
 
@@ -1260,15 +1323,14 @@ namespace
         MainView& owner;
         OverlayActionButton saveGlobalButton { "SaveGlobal",
                                                ButtonStyling::Glyphs::save(),
-                                               "Global" };
-        OverlayActionButton savePresetButton { "SavePreset",
-                                               ButtonStyling::Glyphs::save(),
-                                               "Preset" };
-        OverlayActionButton clearPresetButton { "ClearPreset",
+                                               "" };
+        OverlayActionButton saveAsGlobalButton { "SaveAsGlobal",
+                                                 ButtonStyling::Glyphs::saveAs(),
+                                                 "" };
+        OverlayActionButton deleteMapButton { "DeleteMap",
                                                 ButtonStyling::Glyphs::close(),
                                                 "",
                                                 true };
-        juce::ToggleButton useGlobalToggle;
         juce::Point<float> hoverPosition;
         juce::Point<float> previewPosition;
         bool hasHoverPosition = false;
@@ -1539,8 +1601,10 @@ void MainView::MidiAssignmentsPopup::buttonClicked(juce::Button* button)
     }
 }
 
-MainView::MainView(PolyHostPluginProcessor& processorIn)
+MainView::MainView(PolyHostPluginProcessor& processorIn,
+                   MenuExtension* menuExtensionIn)
     : processor(processorIn),
+      menuExtension(menuExtensionIn),
       presetController(appSettings, processor.getCore().getSessionDocument()),
       presetFileHelper(appSettings, presetController),
       recentPresetMenuHelper(presetController),
@@ -1558,6 +1622,15 @@ MainView::MainView(PolyHostPluginProcessor& processorIn)
     menuBar->setColour(juce::PopupMenu::backgroundColourId, juce::Colour(0xFF1E2430));
     addAndMakeVisible(*menuBar);
 
+    if (menuExtension != nullptr)
+    {
+        menuBarRightComponent =
+            menuExtension->getMenuBarRightComponent();
+
+        if (menuBarRightComponent != nullptr)
+            addAndMakeVisible(*menuBarRightComponent);
+    }
+
     setWantsKeyboardFocus(true);
 
     tooltipWindow.setOpaque(false);
@@ -1569,6 +1642,27 @@ MainView::MainView(PolyHostPluginProcessor& processorIn)
     addAndMakeVisible(presetDropdown);
     presetDropdown.setTextWhenNothingSelected("Untitled");
     presetDropdown.onChange = [this] { handlePresetSelection(); };
+
+    addAndMakeVisible(pointerMapDropdown);
+    pointerMapDropdown.setTextWhenNothingSelected("Map: None");
+    pointerMapDropdown.setTooltip("Select the external pointer map for the current plugin");
+    pointerMapDropdown.setScrollWheelEnabled(false);
+    pointerMapDropdown.onWheel = [this] (const juce::MouseWheelDetails& wheel)
+    {
+        const float delta = wheel.deltaY != 0.0f ? wheel.deltaY : wheel.deltaX;
+
+        if (delta == 0.0f)
+            return;
+
+        const auto now = juce::Time::getMillisecondCounter();
+
+        if (now - lastPointerMapDropdownWheelMs < 120)
+            return;
+
+        lastPointerMapDropdownWheelMs = now;
+        selectAdjacentPointerMap(delta < 0.0f ? 1 : -1);
+    };
+    pointerMapDropdown.onChange = [this] { handlePointerMapSelection(); };
 
     tabButtonsViewport.setViewedComponent(&tabButtonsContainer, false);
     tabButtonsViewport.setScrollBarsShown(false, false);
@@ -1948,102 +2042,128 @@ juce::Point<int> MainView::getHostedEditorScreenPointFromLocal(juce::Point<int> 
 
 juce::StringArray MainView::getMenuBarNames()
 {
-    return { "File", "MIDI", "Options", "Help" };
+    juce::StringArray names;
+    names.add("File");
+
+    if (menuExtension != nullptr)
+    {
+        for (const auto& name : menuExtension->getAdditionalMenuNames())
+        {
+            if (name.isNotEmpty() && ! names.contains(name))
+                names.add(name);
+        }
+    }
+
+    names.add("MIDI");
+    names.add("Options");
+    names.add("Help");
+    return names;
 }
 
 juce::PopupMenu MainView::getMenuForIndex(int topLevelMenuIndex,
                                           const juce::String& menuName)
 {
-    juce::ignoreUnused(menuName);
+    juce::ignoreUnused(topLevelMenuIndex);
 
     juce::PopupMenu menu;
 
-    switch (topLevelMenuIndex)
+    if (menuName == "File")
     {
-        case 0:
-        {
-            auto recentMenu = recentPresetMenuHelper.buildRecentPresetMenu(commandRecentPresetBase);
+        auto recentMenu = recentPresetMenuHelper.buildRecentPresetMenu(commandRecentPresetBase);
 
-            menu.addItem(commandNewPreset, "New Preset");
-            menu.addSeparator();
-            menu.addItem(commandNewTab, "New Tab");
-            menu.addItem(commandCloseCurrentTab, "Close Current Tab",
-                         processor.getCore().getNumTabs() > 0);
-            menu.addSeparator();
-            menu.addItem(commandReplacePlugin, "Replace Plugin...");
-            menu.addItem(commandNewPlugin, "New Plugin...");
-            menu.addSeparator();
-            menu.addItem(commandSavePreset, "Save Preset");
-            menu.addItem(commandSavePresetAs, "Save Preset As...");
-            menu.addItem(commandLoadPreset, "Load Preset...");
-            menu.addSubMenu("Recent Presets", recentMenu);
-            menu.addItem(commandLocateMissingPluginsNow, "Locate Missing Plugins...");
-            menu.addItem(commandDeleteCurrentPreset,
-                         "Delete Current Preset",
-                         presetController.hasCurrentFile());
-            menu.addSeparator();
-            menu.addItem(commandOpenPresetsFolder, "Open Presets Folder");
-            menu.addItem(commandPresetBackup, "Presets Backup");
-            break;
-        }
+        menu.addItem(commandNewPreset, "New Preset");
+        menu.addSeparator();
+        menu.addItem(commandNewTab, "New Tab");
+        menu.addItem(commandCloseCurrentTab, "Close Current Tab",
+                     processor.getCore().getNumTabs() > 0);
+        menu.addSeparator();
+        menu.addItem(commandReplacePlugin, "Replace Plugin...");
+        menu.addItem(commandNewPlugin, "New Plugin...");
+        menu.addSeparator();
+        menu.addItem(commandSavePreset, "Save Preset");
+        menu.addItem(commandSavePresetAs, "Save Preset As...");
+        menu.addItem(commandLoadPreset, "Load Preset...");
+        menu.addSubMenu("Recent Presets", recentMenu);
+        menu.addItem(commandLocateMissingPluginsNow, "Locate Missing Plugins...");
+        menu.addItem(commandDeleteCurrentPreset,
+                     "Delete Current Preset",
+                     presetController.hasCurrentFile());
+        menu.addSeparator();
+        menu.addItem(commandOpenPresetsFolder, "Open Presets Folder");
+        menu.addItem(commandPresetBackup, "Presets Backup");
 
-        case 1:
-            menu.addItem(commandMidiMonitor, "MIDI Monitor");
-            menu.addItem(commandRefreshMidiDevices, "Refresh MIDI Devices");
-            menu.addSeparator();
-            menu.addItem(commandMidiPanic, "Panic!   \t(Ctrl+Shift+P)");
-            break;
+        if (menuExtension != nullptr)
+            menuExtension->addAdditionalItemsToMenu(menuName, menu);
 
-        case 2:
-        {
-            menu.addItem(commandPointerControlSettings, "Pointer Control Settings...");
-            menu.addSeparator();
+        return menu;
+    }
 
-            juce::PopupMenu pluginRepairsMenu;
-            pluginRepairsMenu.addItem(commandAutoSaveAfterPluginRepair,
-                                      "Auto-Save Preset After Plugin Repair",
-                                      true,
-                                      appSettings.getAutoSaveAfterPluginRepair());
-            pluginRepairsMenu.addSeparator();
-            pluginRepairsMenu.addItem(commandAddPluginScanFolder,
-                                      "Add Plugin Scan Folder...");
-            pluginRepairsMenu.addItem(commandShowPluginScanFolders,
-                                      "Show Plugin Scan Folders");
-            pluginRepairsMenu.addItem(commandClearPluginScanFolders,
-                                      "Clear Plugin Scan Folders",
-                                      appSettings.getPluginScanFolders().size() > 0);
+    if (menuExtension != nullptr
+        && menuExtension->getAdditionalMenuNames().contains(menuName))
+    {
+        return menuExtension->getAdditionalMenuForName(menuName);
+    }
 
-            menu.addSubMenu("Plugin Repairs", pluginRepairsMenu);
-            menu.addSeparator();
+    if (menuName == "MIDI")
+    {
+        if (menuExtension != nullptr)
+            menuExtension->addAdditionalItemsToMenu(menuName, menu);
 
-            juce::PopupMenu debugMenu;
-            debugMenu.addItem(commandEnableDebugLogging,
-                              "Enable Debug Logging",
-                              true,
-                              appSettings.getDebugLoggingEnabled());
-            debugMenu.addItem(commandEnableAdvancedDebugLogging,
-                              "Enable Advanced Debug Logging",
-                              appSettings.getDebugLoggingEnabled(),
-                              appSettings.getAdvancedDebugLoggingEnabled());
-            debugMenu.addItem(commandClearDebugLogOnStartup,
-                              "Clear Debug Log On Startup",
-                              true,
-                              appSettings.getClearDebugLogOnStartup());
-            debugMenu.addItem(commandClearDebugLogNow,
-                              "Clear Debug Log Now");
+        menu.addItem(commandMidiMonitor, "MIDI Monitor");
+        menu.addItem(commandRefreshMidiDevices, "Refresh MIDI Devices");
+        menu.addSeparator();
+        menu.addItem(commandMidiPanic, "Panic!   \t(Ctrl+Shift+P)");
+        return menu;
+    }
 
-            menu.addSubMenu("Debug", debugMenu);
-            break;
-        }
+    if (menuName == "Options")
+    {
+        menu.addItem(commandPointerControlSettings, "Pointer Control Settings");
+        menu.addSeparator();
 
-        case 3:
-            menu.addItem(commandPresetLoadReport, "Preset Load Report...");
-            menu.addSeparator();
-            menu.addItem(9005, "About PolyHost...");
-            break;
+        juce::PopupMenu pluginRepairsMenu;
+        pluginRepairsMenu.addItem(commandAutoSaveAfterPluginRepair,
+                                  "Auto-Save Preset After Plugin Repair",
+                                  true,
+                                  appSettings.getAutoSaveAfterPluginRepair());
+        pluginRepairsMenu.addSeparator();
+        pluginRepairsMenu.addItem(commandAddPluginScanFolder,
+                                  "Add Plugin Scan Folder...");
+        pluginRepairsMenu.addItem(commandShowPluginScanFolders,
+                                  "Show Plugin Scan Folders");
+        pluginRepairsMenu.addItem(commandClearPluginScanFolders,
+                                  "Clear Plugin Scan Folders",
+                                  appSettings.getPluginScanFolders().size() > 0);
 
-        default:
-            break;
+        menu.addSubMenu("Plugin Repairs", pluginRepairsMenu);
+        menu.addSeparator();
+
+        juce::PopupMenu debugMenu;
+        debugMenu.addItem(commandEnableDebugLogging,
+                          "Enable Debug Logging",
+                          true,
+                          appSettings.getDebugLoggingEnabled());
+        debugMenu.addItem(commandEnableAdvancedDebugLogging,
+                          "Enable Advanced Debug Logging",
+                          appSettings.getDebugLoggingEnabled(),
+                          appSettings.getAdvancedDebugLoggingEnabled());
+        debugMenu.addItem(commandClearDebugLogOnStartup,
+                          "Clear Debug Log On Startup",
+                          true,
+                          appSettings.getClearDebugLogOnStartup());
+        debugMenu.addItem(commandClearDebugLogNow,
+                          "Clear Debug Log Now");
+
+        menu.addSubMenu("Debug", debugMenu);
+        return menu;
+    }
+
+    if (menuName == "Help")
+    {
+        menu.addItem(commandInstructions, "Instructions");
+        menu.addItem(commandPresetLoadReport, "Preset Load Report");
+        menu.addSeparator();
+        menu.addItem(9005, "About");
     }
 
     return menu;
@@ -2053,6 +2173,12 @@ void MainView::menuItemSelected(int menuItemID,
                                 int topLevelMenuIndex)
 {
     juce::ignoreUnused(topLevelMenuIndex);
+
+    if (menuExtension != nullptr
+        && menuExtension->handleAdditionalMenuCommand(menuItemID))
+    {
+        return;
+    }
 
     if (recentPresetMenuHelper.isRecentPresetItemId(menuItemID, commandRecentPresetBase))
     {
@@ -2201,6 +2327,10 @@ void MainView::menuItemSelected(int menuItemID,
             repaint();
             break;
 
+        case commandInstructions:
+            PolyHostInstructions::show(getWindowCenterTarget());
+            break;
+
         case commandPresetLoadReport:
             showPresetLoadReportDialog(true);
             break;
@@ -2236,6 +2366,10 @@ void MainView::timerCallback()
 
     if (pointerControlEditModeEnabled && ! pointerEditGestureActive)
         updatePointerEditOverlay();
+
+    pollPointerMapMouseButtonSwitching();
+
+    monitorHostedEditorSizeChanges();
 
     auto currentDirtyState = processor.getCore().isDirty();
 
@@ -2324,6 +2458,10 @@ void MainView::clearHostedEditor()
         hostedEditor.reset();
     }
 
+    lastObservedHostedEditorWidth = 0;
+    lastObservedHostedEditorHeight = 0;
+    lastHostedEditorAutoResizeMs = 0;
+
     contentPlaceholder.setVisible(true);
     updatePointerEditOverlay();
 }
@@ -2373,6 +2511,13 @@ void MainView::createNewPreset()
     auto& core = processor.getCore();
     core.resetForNewPreset();
     presetController.clearForNewPreset();
+
+    if (menuExtension != nullptr)
+    {
+        menuExtension->setCurrentHostTempoBpm(
+            menuExtension->getDefaultHostTempoBpm());
+    }
+
     pendingMissingPluginPrompt = false;
     pendingMissingPluginPromptDelayTicks = 0;
     showingRoutingView = false;
@@ -2418,6 +2563,203 @@ void MainView::rebuildPresetDropdown()
     }
 
     presetDropdown.setText(currentText, juce::dontSendNotification);
+}
+
+void MainView::rebuildPointerMapDropdown()
+{
+    auto& core = processor.getCore();
+    const int tabIndex = core.getSelectedTabIndex();
+
+    updatingPointerMapDropdown = true;
+    pointerMapDropdown.clear(juce::dontSendNotification);
+    pointerMapChoices.clear();
+
+    if (! juce::isPositiveAndBelow(tabIndex, core.getNumTabs())
+        || core.getMainPluginInstance() == nullptr)
+    {
+        pointerMapDropdown.setEnabled(false);
+        pointerMapDropdown.setText("Map: None", juce::dontSendNotification);
+        updatingPointerMapDropdown = false;
+        return;
+    }
+
+    pointerMapDropdown.setEnabled(true);
+
+    int selectedId = 0;
+
+    pointerMapChoices = core.getAvailableGlobalPointerMapsForTab(tabIndex);
+
+    for (int i = 0; i < pointerMapChoices.size(); ++i)
+    {
+        const auto& choice = pointerMapChoices.getReference(i);
+        const int itemId = 100 + i;
+
+        pointerMapDropdown.addItem(choice.displayName, itemId);
+
+        if (choice.selected)
+            selectedId = itemId;
+    }
+
+    if (pointerMapDropdown.getNumItems() == 0)
+    {
+        const auto activeMapText = core.getActivePointerMapSourceText(tabIndex);
+        pointerMapDropdown.setEnabled(false);
+        pointerMapDropdown.setText(activeMapText.isNotEmpty() && activeMapText != "None"
+                                       ? ("Map: " + activeMapText)
+                                       : "Map: None",
+                                   juce::dontSendNotification);
+    }
+    else if (selectedId > 0)
+    {
+        pointerMapDropdown.setSelectedId(selectedId, juce::dontSendNotification);
+    }
+    else
+    {
+        const auto activeMapText = core.getActivePointerMapSourceText(tabIndex);
+        pointerMapDropdown.setText(activeMapText.isNotEmpty() ? activeMapText : "Map: None",
+                                   juce::dontSendNotification);
+    }
+
+    updatingPointerMapDropdown = false;
+}
+
+void MainView::handlePointerMapSelection()
+{
+    if (updatingPointerMapDropdown)
+        return;
+
+    auto& core = processor.getCore();
+    const int tabIndex = core.getSelectedTabIndex();
+
+    if (! juce::isPositiveAndBelow(tabIndex, core.getNumTabs()))
+        return;
+
+    const int selectedId = pointerMapDropdown.getSelectedId();
+
+    const int choiceIndex = selectedId - 100;
+
+    if (! juce::isPositiveAndBelow(choiceIndex, pointerMapChoices.size()))
+        return;
+
+    const auto choice = pointerMapChoices.getReference(choiceIndex);
+
+    if (core.loadGlobalPointerMapForTabByRelativePath(tabIndex, choice.relativePath))
+    {
+        showTemporaryStatusMessage("Pointer map selected: " + choice.displayName);
+        refreshPointerControlTarget();
+        updatePointerEditOverlay();
+        refreshDirtyUiOnly();
+        repaint();
+    }
+    else
+    {
+        showTemporaryStatusMessage("Failed to load pointer map: " + choice.displayName);
+        rebuildPointerMapDropdown();
+        repaint();
+    }
+}
+
+void MainView::pollPointerMapMouseButtonSwitching()
+{
+   #if JUCE_WINDOWS
+    const bool backButtonDown = (GetAsyncKeyState(polyHostVkXButton1) & 0x8000) != 0;
+    const bool forwardButtonDown = (GetAsyncKeyState(polyHostVkXButton2) & 0x8000) != 0;
+
+    const bool shouldIgnore =
+        ! isShowing()
+        || pointerControlEditModeEnabled
+        || pointerEditGestureActive
+        || showingRoutingView
+        || showingMacroMappingsView
+        || hostedEditor == nullptr
+        || ! hostedEditor->isShowing();
+
+    if (shouldIgnore)
+    {
+        pointerMapBackMouseButtonWasDown = backButtonDown;
+        pointerMapForwardMouseButtonWasDown = forwardButtonDown;
+        return;
+    }
+
+    const bool backPressed = backButtonDown && ! pointerMapBackMouseButtonWasDown;
+    const bool forwardPressed = forwardButtonDown && ! pointerMapForwardMouseButtonWasDown;
+
+    if (backPressed != forwardPressed)
+        selectAdjacentPointerMap(backPressed ? -1 : 1);
+
+    pointerMapBackMouseButtonWasDown = backButtonDown;
+    pointerMapForwardMouseButtonWasDown = forwardButtonDown;
+   #endif
+}
+
+void MainView::selectAdjacentPointerMap(int direction)
+{
+    if (direction == 0)
+        return;
+
+    auto& core = processor.getCore();
+    const int tabIndex = core.getSelectedTabIndex();
+
+    if (! juce::isPositiveAndBelow(tabIndex, core.getNumTabs())
+        || core.getMainPluginInstance() == nullptr)
+    {
+        return;
+    }
+
+    pointerMapChoices = core.getAvailableGlobalPointerMapsForTab(tabIndex);
+
+    const int numChoices = pointerMapChoices.size();
+
+    if (numChoices < 2)
+        return;
+
+    int currentIndex = -1;
+
+    for (int i = 0; i < numChoices; ++i)
+    {
+        if (pointerMapChoices.getReference(i).selected)
+        {
+            currentIndex = i;
+            break;
+        }
+    }
+
+    if (currentIndex < 0)
+    {
+        const int selectedId = pointerMapDropdown.getSelectedId();
+        const int comboIndex = selectedId - 100;
+
+        if (juce::isPositiveAndBelow(comboIndex, numChoices))
+            currentIndex = comboIndex;
+    }
+
+    int nextIndex = 0;
+
+    if (currentIndex >= 0)
+        nextIndex = (currentIndex + direction + numChoices) % numChoices;
+    else
+        nextIndex = direction < 0 ? numChoices - 1 : 0;
+
+    if (! juce::isPositiveAndBelow(nextIndex, numChoices))
+        return;
+
+    const auto choice = pointerMapChoices.getReference(nextIndex);
+
+    if (core.loadGlobalPointerMapForTabByRelativePath(tabIndex, choice.relativePath))
+    {
+        showTemporaryStatusMessage("Pointer map: " + choice.displayName);
+        rebuildPointerMapDropdown();
+        refreshPointerControlTarget();
+        updatePointerEditOverlay();
+        refreshDirtyUiOnly();
+        repaint();
+    }
+    else
+    {
+        showTemporaryStatusMessage("Failed to load pointer map: " + choice.displayName);
+        rebuildPointerMapDropdown();
+        repaint();
+    }
 }
 
 void MainView::handlePresetSelection()
@@ -2549,6 +2891,15 @@ juce::Component* MainView::getWindowCenterTarget() const
         return parentEditor;
 
     return const_cast<MainView*>(this);
+}
+
+void MainView::closePointerEditOverlayFromMouse()
+{
+    if (! pointerControlEditModeEnabled)
+        return;
+
+    setPointerControlEditMode(false);
+    showTemporaryStatusMessage("Pointer Control Edit Mode closed");
 }
 
 void MainView::setPointerEditGestureActive(bool shouldBeActive)
@@ -3018,14 +3369,20 @@ void MainView::processPendingPointerMidi()
 
             if (delta != 0)
             {
-                int adjustMethod = appSettings.getPointerControlAdjustMethod();
+                int adjustMethod =
+                    appSettings.getPointerControlAdjustMethod();
 
                 auto& core = processor.getCore();
-                const int tabIndex = core.getSelectedTabIndex();
+                const int tabIndex =
+                    core.getSelectedTabIndex();
 
-                if (juce::isPositiveAndBelow(tabIndex, core.getNumTabs()))
+                if (juce::isPositiveAndBelow(
+                        tabIndex,
+                        core.getNumTabs()))
                 {
-                    const int methodOverride = core.getTabPointerAdjustMethodOverride(tabIndex);
+                    const int methodOverride =
+                        core.getTabPointerAdjustMethodOverride(
+                            tabIndex);
 
                     if (methodOverride == 1)
                         adjustMethod = 1;
@@ -3035,19 +3392,32 @@ void MainView::processPendingPointerMidi()
 
                 int sensitivity = 1;
 
-                if (juce::isPositiveAndBelow(tabIndex, core.getNumTabs()))
-                    sensitivity = core.getTabPointerAdjustSensitivity(tabIndex);
-                const int direction = (delta > 0 ? 1 : -1);
-                const int repeatCount = std::abs(delta) * sensitivity;
+                if (juce::isPositiveAndBelow(
+                        tabIndex,
+                        core.getNumTabs()))
+                {
+                    sensitivity =
+                        core.getTabPointerAdjustSensitivity(
+                            tabIndex);
+                }
+
+                const int direction =
+                    delta > 0 ? 1 : -1;
+
+                const int repeatCount =
+                    std::abs(delta) * sensitivity;
+
+                core.armPointerAutomationCapture(350);
 
                 if (adjustMethod == 2)
                 {
-                    pointerControl.dragAdjust(direction * repeatCount);
+                    pointerControl.dragAdjust(
+                        direction * repeatCount);
                 }
                 else
                 {
-                    for (int i = 0; i < repeatCount; ++i)
-                        pointerControl.wheelAdjust(direction);
+                    pointerControl.wheelAdjust(
+                        direction * repeatCount);
                 }
             }
 
@@ -3414,22 +3784,100 @@ void MainView::rebuildRoutingView()
         entry.tabIndex = i;
         entry.name = tab.name;
         entry.type = tab.type;
-        const bool isSoloed = soloedTabIndices.contains(i);
-        const bool manualBypassed = juce::isPositiveAndBelow(i, manualBypassStates.size())
-                                        ? manualBypassStates[i]
-                                        : core.isTabBypassed(i);
+
+        const bool isSoloed =
+            soloedTabIndices.contains(i);
+
+        const bool manualBypassed =
+            juce::isPositiveAndBelow(
+                i,
+                manualBypassStates.size())
+                ? manualBypassStates[i]
+                : core.isTabBypassed(i);
 
         entry.isBypassed = manualBypassed;
         entry.isSoloed = isSoloed;
-        entry.isMutedBySolo = (! soloedTabIndices.isEmpty() && ! isSoloed && ! manualBypassed);
+        entry.isMutedBySolo =
+            ! soloedTabIndices.isEmpty()
+            && ! isSoloed
+            && ! manualBypassed;
+
         entry.canMoveUp = core.canMoveTabUp(i);
         entry.canMoveDown = core.canMoveTabDown(i);
-        entry.midiAssignmentCount = core.getTabMidiAssignmentCount(i);
-        entry.routingTooltip = core.getRoutingTooltipForTab(i);
-        entry.pointerAdjustMethodOverride = core.getTabPointerAdjustMethodOverride(i);
-        entry.needsAttention = core.tabNeedsAttention(i);
-        entry.isMissingPlugin = core.tabHasMissingPluginIssue(i);
-        entry.attentionMessage = core.getTabAttentionMessage(i);
+        entry.midiAssignmentCount =
+            core.getTabMidiAssignmentCount(i);
+
+        if (core.isMidiInputAssignedToTab(
+                i,
+                "MIDI Ch: All"))
+        {
+            entry.midiAssignmentsTooltip =
+                "MIDI Ch: All";
+        }
+        else
+        {
+            juce::StringArray assignedChannels;
+
+            for (int channel = 1;
+                 channel <= 16;
+                 ++channel)
+            {
+                const auto assignmentName =
+                    "MIDI Ch: "
+                    + juce::String(channel);
+
+                if (core.isMidiInputAssignedToTab(
+                        i,
+                        assignmentName))
+                {
+                    assignedChannels.add(
+                        juce::String(channel));
+                }
+            }
+
+            if (assignedChannels.isEmpty())
+            {
+                entry.midiAssignmentsTooltip =
+                    "MIDI Ch: None";
+            }
+            else
+            {
+                const auto lastChannel =
+                    assignedChannels[
+                        assignedChannels.size() - 1];
+
+                assignedChannels.remove(
+                    assignedChannels.size() - 1);
+
+                entry.midiAssignmentsTooltip =
+                    "MIDI Ch: ";
+
+                if (! assignedChannels.isEmpty())
+                {
+                    entry.midiAssignmentsTooltip +=
+                        assignedChannels.joinIntoString(", ")
+                        + " and ";
+                }
+
+                entry.midiAssignmentsTooltip +=
+                    lastChannel;
+            }
+        }
+
+        entry.routingTooltip =
+            core.getRoutingTooltipForTab(i);
+
+        entry.pointerAdjustMethodOverride =
+            core.getTabPointerAdjustMethodOverride(i);
+
+        entry.needsAttention =
+            core.tabNeedsAttention(i);
+
+        entry.isMissingPlugin =
+            core.tabHasMissingPluginIssue(i);
+
+        entry.attentionMessage =
+            core.getTabAttentionMessage(i);
 
         modules.add(entry);
     }
@@ -4093,58 +4541,9 @@ void MainView::loadRecentPreset(int menuItemID)
     }
 }
 
-bool MainView::saveCurrentTabPointerMapToCurrentPresetFile()
+void MainView::refreshPointerMapSelector()
 {
-    auto currentFile = presetController.getCurrentFile();
-
-    if (! currentFile.existsAsFile())
-        return false;
-
-    auto xml = juce::XmlDocument::parse(currentFile);
-
-    if (xml == nullptr || ! xml->hasTagName("PolyHostPreset"))
-        return false;
-
-    auto& core = processor.getCore();
-    const int tabIndex = core.getSelectedTabIndex();
-
-    if (! juce::isPositiveAndBelow(tabIndex, core.getNumTabs()))
-        return false;
-
-    auto tabData = core.buildMainTabSessionData();
-
-    int currentTabCounter = 0;
-
-    for (auto* tabXml : xml->getChildIterator())
-    {
-        if (! tabXml->hasTagName("Tab"))
-            continue;
-
-        if (currentTabCounter != tabIndex)
-        {
-            ++currentTabCounter;
-            continue;
-        }
-
-        tabXml->removeChildElement(tabXml->getChildByName("PointerJumpPoints"), true);
-        tabXml->setAttribute("preferGlobalPointerMap", tabData.preferGlobalPointerMap);
-
-        if (tabData.hasCustomPointerMap)
-        {
-            auto* pointerPointsXml = tabXml->createNewChildElement("PointerJumpPoints");
-
-            for (auto& point : tabData.pointerJumpPoints)
-            {
-                auto* pointXml = pointerPointsXml->createNewChildElement("Point");
-                pointXml->setAttribute("x", point.x);
-                pointXml->setAttribute("y", point.y);
-            }
-        }
-
-        break;
-    }
-
-    return xml->writeTo(currentFile, {});
+    rebuildPointerMapDropdown();
 }
 
 bool MainView::saveSessionToFile(const juce::File& file)
@@ -4161,6 +4560,12 @@ bool MainView::saveSessionToFile(const juce::File& file)
 
     auto sessionData = core.buildSessionData();
     sessionData.name = file.getFileNameWithoutExtension();
+
+    if (menuExtension != nullptr)
+    {
+        sessionData.hostTempoBpm =
+            menuExtension->getCurrentHostTempoBpm();
+    }
 
     if (SessionManager::saveSessionToFile(sessionData, file))
     {
@@ -4234,6 +4639,9 @@ bool MainView::loadSessionFromFile(const juce::File& file)
     if (processor.getCore().restoreSessionData(sessionData, restoreWarnings))
     {
         warnings.addArray(restoreWarnings);
+
+        if (menuExtension != nullptr)
+            menuExtension->setCurrentHostTempoBpm(sessionData.hostTempoBpm);
 
         buildAndStorePresetLoadReport(file, sessionData, warnings, true, {});
 
@@ -4323,10 +4731,26 @@ void MainView::resizeParentEditorToFitHostedPlugin()
     if (parentEditor == nullptr)
         return;
 
+    constexpr int sharedMenuBarHeight = 24;
+
+    const int extraMenuBarHeight =
+        menuExtension != nullptr
+            ? juce::jmax(0,
+                         menuExtension->getMenuBarHeight()
+                             - sharedMenuBarHeight)
+            : 0;
+
     if (hostedEditor == nullptr)
     {
-        DebugLog::writeAdvanced("[HostedEditor] resizeParentEditorToFitHostedPlugin | no hosted editor, using default 800x500");
-        parentEditor->setSize(800, 500);
+        DebugLog::writeAdvanced(
+            "[HostedEditor] resizeParentEditorToFitHostedPlugin | "
+            "no hosted editor, using default 800x"
+            + juce::String(500 + extraMenuBarHeight));
+
+        parentEditor->setSize(
+            800,
+            500 + extraMenuBarHeight);
+
         return;
     }
 
@@ -4339,12 +4763,79 @@ void MainView::resizeParentEditorToFitHostedPlugin()
     if (editorHeight <= 0)
         editorHeight = 500;
 
-    DebugLog::writeAdvanced("[HostedEditor] resizeParentEditorToFitHostedPlugin | size="
+    DebugLog::writeAdvanced(
+        "[HostedEditor] resizeParentEditorToFitHostedPlugin | size="
+        + juce::String(editorWidth)
+        + "x"
+        + juce::String(editorHeight + extraMenuBarHeight));
+
+    parentEditor->resizeToFitContent(
+        editorWidth,
+        editorHeight + extraMenuBarHeight);
+}
+
+void MainView::monitorHostedEditorSizeChanges()
+{
+    if (hostedEditor == nullptr || ! hostedEditor->isShowing())
+    {
+        lastObservedHostedEditorWidth = 0;
+        lastObservedHostedEditorHeight = 0;
+        lastHostedEditorAutoResizeMs = 0;
+        return;
+    }
+
+    if (! isShowing()
+        || showingRoutingView
+        || showingMacroMappingsView
+        || pointerControlEditModeEnabled
+        || pointerEditGestureActive)
+    {
+        return;
+    }
+
+    const int editorWidth = hostedEditor->getWidth();
+    const int editorHeight = hostedEditor->getHeight();
+
+    if (editorWidth <= 0 || editorHeight <= 0)
+        return;
+
+    if (lastObservedHostedEditorWidth <= 0 || lastObservedHostedEditorHeight <= 0)
+    {
+        lastObservedHostedEditorWidth = editorWidth;
+        lastObservedHostedEditorHeight = editorHeight;
+        return;
+    }
+
+    const int deltaW = std::abs(editorWidth - lastObservedHostedEditorWidth);
+    const int deltaH = std::abs(editorHeight - lastObservedHostedEditorHeight);
+
+    if (deltaW <= 2 && deltaH <= 2)
+        return;
+
+    const auto now = juce::Time::getMillisecondCounter();
+
+    if (lastHostedEditorAutoResizeMs != 0
+        && (now - lastHostedEditorAutoResizeMs) < 180)
+    {
+        return;
+    }
+
+    DebugLog::writeAdvanced("[HostedEditor] detected hosted editor size change | old="
+                            + juce::String(lastObservedHostedEditorWidth)
+                            + "x"
+                            + juce::String(lastObservedHostedEditorHeight)
+                            + " | new="
                             + juce::String(editorWidth)
                             + "x"
                             + juce::String(editorHeight));
 
-    parentEditor->resizeToFitContent(editorWidth, editorHeight);
+    lastObservedHostedEditorWidth = editorWidth;
+    lastObservedHostedEditorHeight = editorHeight;
+    lastHostedEditorAutoResizeMs = now;
+
+    resizeParentEditorToFitHostedPlugin();
+    resized();
+    repaint();
 }
 
 void MainView::refreshHostedEditor()
@@ -4379,6 +4870,10 @@ void MainView::refreshHostedEditor()
         hostedEditor->setTopLeftPosition(0, 0);
         hostedEditor->setVisible(true);
         hostedEditor->toFront(true);
+
+        lastObservedHostedEditorWidth = hostedEditor->getWidth();
+        lastObservedHostedEditorHeight = hostedEditor->getHeight();
+        lastHostedEditorAutoResizeMs = 0;
 
         contentPlaceholder.setVisible(false);
         pluginIssueMessageEditor.setVisible(false);
@@ -4512,6 +5007,7 @@ void MainView::refreshFromCore()
     rebuildPresetDropdown();
     rebuildTabButtons();
     rebuildRoutingView();
+    rebuildPointerMapDropdown();
 
     juce::Array<MacroMappingsView::MappingEntry> mappingEntries;
     for (auto& mapping : core.getMacroMappings())
@@ -4621,7 +5117,12 @@ void MainView::paint(juce::Graphics& g)
 
     auto bounds = getLocalBounds();
 
-    auto menuBarArea = bounds.removeFromTop(24);
+    const int menuBarHeight =
+        menuExtension != nullptr
+            ? juce::jmax(24, menuExtension->getMenuBarHeight())
+            : 24;
+
+    auto menuBarArea = bounds.removeFromTop(menuBarHeight);
     g.setColour(juce::Colour(0xFF1E2430));
     g.fillRect(menuBarArea);
 
@@ -4670,13 +5171,45 @@ void MainView::resized()
 {
     auto area = getLocalBounds();
 
-    auto menuBarArea = area.removeFromTop(24);
+    const int menuBarHeight =
+        menuExtension != nullptr
+            ? juce::jmax(24, menuExtension->getMenuBarHeight())
+            : 24;
+
+    auto menuBarArea = area.removeFromTop(menuBarHeight);
+
+    if (menuBarRightComponent != nullptr
+        && menuExtension != nullptr)
+    {
+        const int componentWidth = juce::jlimit(
+            0,
+            menuBarArea.getWidth(),
+            menuExtension->getMenuBarRightComponentWidth());
+
+        auto componentArea =
+            menuBarArea.removeFromRight(componentWidth);
+
+        menuBarRightComponent->setBounds(componentArea);
+    }
+
     if (menuBar != nullptr)
-        menuBar->setBounds(menuBarArea);
+    {
+        auto menuBounds = menuBarArea;
+
+        if (menuBarHeight > 24)
+        {
+            menuBounds =
+                menuBounds.withSizeKeepingCentre(
+                    menuBounds.getWidth(),
+                    24);
+        }
+
+        menuBar->setBounds(menuBounds);
+    }
 
     auto topRow = area.removeFromTop(28);
 
-    auto presetArea = topRow.removeFromLeft(280);
+    auto presetArea = topRow.removeFromLeft(220);
     presetArea.removeFromLeft(8);
     presetArea.removeFromRight(6);
 
@@ -4685,6 +5218,15 @@ void MainView::resized()
         presetBounds.getWidth(),
         topRow.getHeight() - 8);
     presetDropdown.setBounds(presetBounds);
+
+    auto pointerMapArea = topRow.removeFromRight(158);
+    pointerMapArea.removeFromRight(8);
+
+    auto pointerMapBounds = pointerMapArea.reduced(2);
+    pointerMapBounds = pointerMapBounds.withSizeKeepingCentre(
+        pointerMapBounds.getWidth(),
+        topRow.getHeight() - 8);
+    pointerMapDropdown.setBounds(pointerMapBounds);
 
     toolbar.setBounds(topRow);
 
@@ -4860,8 +5402,7 @@ void MainView::buildAndStorePresetLoadReport(const juce::File& file,
     int loadedPluginCount = 0;
     int missingPluginCount = 0;
     int failedPluginCount = 0;
-    int globalPointerMapCount = 0;
-    int presetPointerMapCount = 0;
+    int externalPointerMapCount = 0;
     int noPointerMapCount = 0;
     int freeZoneCount = 0;
 
@@ -4889,12 +5430,10 @@ void MainView::buildAndStorePresetLoadReport(const juce::File& file,
 
             const auto pointerMapSource = core.getActivePointerMapSourceText(i);
 
-            if (pointerMapSource == "Global")
-                ++globalPointerMapCount;
-            else if (pointerMapSource == "Preset")
-                ++presetPointerMapCount;
-            else
+            if (pointerMapSource == "None")
                 ++noPointerMapCount;
+            else
+                ++externalPointerMapCount;
 
             freeZoneCount += core.getTabPointerFreeZones(i).size();
         }
@@ -4985,8 +5524,7 @@ void MainView::buildAndStorePresetLoadReport(const juce::File& file,
 
     report << "Missing plugins: " << missingPluginCount << "\n";
     report << "Failed/quarantined plugins: " << failedPluginCount << "\n";
-    report << "Global pointer maps used: " << globalPointerMapCount << "\n";
-    report << "Preset pointer maps used: " << presetPointerMapCount << "\n";
+    report << "External pointer maps used: " << externalPointerMapCount << "\n";
     report << "Tabs with no pointer map: " << noPointerMapCount << "\n";
     report << "Pointer free zones: " << freeZoneCount << "\n";
     report << "Warnings: " << warnings.size() << "\n";
@@ -5039,7 +5577,7 @@ void MainView::buildAndStorePresetLoadReport(const juce::File& file,
         }
     }
 
-    if (globalPointerMapCount > 0 || presetPointerMapCount > 0 || noPointerMapCount > 0)
+    if (externalPointerMapCount > 0 || noPointerMapCount > 0)
     {
         report << "\nPointer Maps\n";
         report << "------------\n";
@@ -5234,6 +5772,64 @@ void MainView::filesDropped(const juce::StringArray& files, int x, int y)
     }
 
     DebugLog::write("[DragDrop] filesDropped received, but nothing handled");
+}
+
+bool MainView::openPluginPath(const juce::String& pluginPath,
+                              bool openInNewTab)
+{
+    const juce::File file(pluginPath.trim().unquoted());
+
+    const bool isAcceptedFormat =
+        file.hasFileExtension(".vst3")
+       #if JUCE_PLUGINHOST_VST
+        || file.hasFileExtension(".dll")
+       #endif
+        ;
+
+    if (! isAcceptedFormat || ! file.exists())
+    {
+        juce::AlertWindow::showMessageBoxAsync(
+            juce::AlertWindow::WarningIcon,
+            "Plugin Open Failed",
+            "PolyHost could not open this plugin path:\n\n"
+                + file.getFullPathName(),
+            "OK",
+            getWindowCenterTarget());
+
+        return false;
+    }
+
+    DebugLog::write("[ExternalOpen] plugin path="
+                    + file.getFullPathName()
+                    + " | openInNewTab="
+                    + juce::String(openInNewTab ? "true" : "false"));
+
+    if (openInNewTab)
+        return loadDroppedPluginInNewTab(file);
+
+    createNewPreset();
+
+    auto& core = processor.getCore();
+    core.setSelectedTabIndex(0);
+    core.getTabModel().selectTab(0);
+
+    const bool loaded =
+        loadPluginFileIntoSelectedTabWithShellChoice(file);
+
+    if (loaded)
+    {
+        core.refreshTabModel();
+        core.getTabModel().selectTab(
+            core.getSelectedTabIndex());
+    }
+    else
+    {
+        core.markDirty();
+    }
+
+    refreshFromCore();
+    repaint();
+    return loaded;
 }
 
 int MainView::promptForDroppedPluginAction(const juce::File& droppedFile, int targetTabIndex) const

@@ -46,36 +46,12 @@ std::unique_ptr<juce::XmlElement> SessionManager::createXmlFromSessionData(const
         tabXml->setAttribute("pointerLaneTolerance", tab.pointerLaneTolerance);
         tabXml->setAttribute("pointerAdjustSensitivity", tab.pointerAdjustSensitivity);
         tabXml->setAttribute("pointerAdjustMethodOverride", tab.pointerAdjustMethodOverride);
-        tabXml->setAttribute("preferGlobalPointerMap", tab.preferGlobalPointerMap);
 
-        if (tab.hasCustomPointerMap)
-        {
-            auto* pointerPointsXml = tabXml->createNewChildElement("PointerJumpPoints");
+        if (tab.selectedGlobalPointerMapRelativePath.trim().isNotEmpty())
+            tabXml->setAttribute("selectedGlobalPointerMapRelativePath", tab.selectedGlobalPointerMapRelativePath.trim());
 
-            for (auto& point : tab.pointerJumpPoints)
-            {
-                auto* pointXml = pointerPointsXml->createNewChildElement("Point");
-                pointXml->setAttribute("x", point.x);
-                pointXml->setAttribute("y", point.y);
-            }
-
-            if (! tab.pointerFreeZones.isEmpty())
-            {
-                auto* freeZonesXml = tabXml->createNewChildElement("PointerFreeZones");
-
-                for (auto& zone : tab.pointerFreeZones)
-                {
-                    if (zone.isEmpty())
-                        continue;
-
-                    auto* freeZoneXml = freeZonesXml->createNewChildElement("Zone");
-                    freeZoneXml->setAttribute("x", zone.getX());
-                    freeZoneXml->setAttribute("y", zone.getY());
-                    freeZoneXml->setAttribute("width", zone.getWidth());
-                    freeZoneXml->setAttribute("height", zone.getHeight());
-                }
-            }
-        }
+        if (tab.selectedGlobalPointerMapName.trim().isNotEmpty())
+            tabXml->setAttribute("selectedGlobalPointerMapName", tab.selectedGlobalPointerMapName.trim());
 
         if (! tab.midiAssignedDeviceIdentifiers.isEmpty())
         {
@@ -159,60 +135,11 @@ bool SessionManager::restoreSessionDataFromXml(const juce::XmlElement& xml,
             tabXml->getIntAttribute("pointerAdjustSensitivity", 1));
         tab.pointerAdjustMethodOverride = juce::jlimit(0, 2,
             tabXml->getIntAttribute("pointerAdjustMethodOverride", 0));
-        tab.preferGlobalPointerMap = tabXml->getBoolAttribute("preferGlobalPointerMap", false);
+        tab.selectedGlobalPointerMapRelativePath =
+            tabXml->getStringAttribute("selectedGlobalPointerMapRelativePath").trim();
+        tab.selectedGlobalPointerMapName =
+            tabXml->getStringAttribute("selectedGlobalPointerMapName").trim();
 
-        if (auto* pointerPointsXml = tabXml->getChildByName("PointerJumpPoints"))
-        {
-            tab.hasCustomPointerMap = true;
-
-            for (auto* pointXml : pointerPointsXml->getChildIterator())
-            {
-                if (! pointXml->hasTagName("Point"))
-                    continue;
-
-                SessionTabData::PointerJumpPoint point;
-                point.x = (float) pointXml->getDoubleAttribute("x", 0.0);
-                point.y = (float) pointXml->getDoubleAttribute("y", 0.0);
-                tab.pointerJumpPoints.add(point);
-            }
-        }
-
-        if (auto* freeZonesXml = tabXml->getChildByName("PointerFreeZones"))
-        {
-            for (auto* freeZoneXml : freeZonesXml->getChildIterator())
-            {
-                if (! freeZoneXml->hasTagName("Zone"))
-                    continue;
-
-                auto zone = juce::Rectangle<float>(
-                    (float) freeZoneXml->getDoubleAttribute("x", 0.0),
-                    (float) freeZoneXml->getDoubleAttribute("y", 0.0),
-                    (float) freeZoneXml->getDoubleAttribute("width", 0.0),
-                    (float) freeZoneXml->getDoubleAttribute("height", 0.0));
-
-                if (! zone.isEmpty())
-                    tab.pointerFreeZones.add(zone);
-            }
-        }
-
-        // Legacy single-zone format support.
-        if (tab.pointerFreeZones.isEmpty())
-        {
-            if (auto* freeZoneXml = tabXml->getChildByName("PointerFreeZone"))
-            {
-                auto zone = juce::Rectangle<float>(
-                    (float) freeZoneXml->getDoubleAttribute("x", 0.0),
-                    (float) freeZoneXml->getDoubleAttribute("y", 0.0),
-                    (float) freeZoneXml->getDoubleAttribute("width", 0.0),
-                    (float) freeZoneXml->getDoubleAttribute("height", 0.0));
-
-                if (! zone.isEmpty())
-                    tab.pointerFreeZones.add(zone);
-            }
-        }
-
-        if (! tab.pointerFreeZones.isEmpty())
-            tab.hasCustomPointerMap = true;
 
         if (auto* midiAssignmentsXml = tabXml->getChildByName("MidiAssignments"))
         {

@@ -1,6 +1,7 @@
 #pragma once
 
 #include <JuceHeader.h>
+#include <functional>
 #include <vector>
 #include "SessionManager.h"
 #include "TabModel.h"
@@ -14,12 +15,15 @@ public:
 
     void prepareToPlay(double sampleRate, int samplesPerBlock);
     void releaseResources();
-    void processBlock(juce::AudioBuffer<float>& buffer, juce::MidiBuffer& midiMessages);
+    void processBlock(juce::AudioBuffer<float>& buffer,
+                      juce::MidiBuffer& midiMessages,
+                      juce::AudioPlayHead* playHead);
 
     const juce::String getSessionName() const;
     void setSessionName(const juce::String& newName);
 
     bool isDirty() const;
+    bool hasAnyLoadedPlugin() const;
     void markDirty();
     void markClean();
 
@@ -50,17 +54,29 @@ public:
     void setTabPointerLaneTolerance(int tabIndex, float tolerance);
     int getTabPointerAdjustSensitivity(int tabIndex) const;
     void setTabPointerAdjustSensitivity(int tabIndex, int sensitivity);
-    bool tabHasCustomPointerMap(int tabIndex) const;
     bool tabHasGlobalPointerMap(int tabIndex) const;
-    juce::String getGlobalPointerMapIdentityText(int tabIndex) const;
-    bool globalPointerMapNeedsUserLabel(int tabIndex) const;
-    bool getTabPreferGlobalPointerMap(int tabIndex) const;
-    void setTabPreferGlobalPointerMap(int tabIndex, bool shouldPreferGlobal);
     bool loadGlobalPointerMapForTab(int tabIndex);
     bool saveCurrentPointerMapToGlobalFile(int tabIndex, const juce::String& userLabel = {});
+    bool saveCurrentPointerMapAsNewGlobalFile(int tabIndex,
+                                              const juce::String& mapFileName,
+                                              bool allowOverwriteExisting = false);
+    bool pointerMapFileNameExists(const juce::String& mapFileName) const;
+    bool deleteSelectedGlobalPointerMapFile(int tabIndex, juce::String* deletedMapName = nullptr);
     juce::String getActivePointerMapSourceText(int tabIndex) const;
-    void saveCurrentPointerMapToPreset(int tabIndex);
-    void clearCurrentPresetPointerMap(int tabIndex);
+
+    struct PointerMapChoice
+    {
+        juce::String displayName;
+        juce::String fileName;
+        juce::String relativePath;
+        bool selected = false;
+    };
+
+    juce::Array<PointerMapChoice> getAvailableGlobalPointerMapsForTab(int tabIndex) const;
+    bool loadGlobalPointerMapForTabByRelativePath(int tabIndex, const juce::String& relativePath);
+    juce::String getSelectedGlobalPointerMapRelativePath(int tabIndex) const;
+    juce::String getSelectedGlobalPointerMapDisplayName(int tabIndex) const;
+
     const juce::Array<SessionTabData::PointerJumpPoint>& getTabPointerJumpPoints(int tabIndex) const;
     void setTabPointerJumpPoints(int tabIndex, const juce::Array<SessionTabData::PointerJumpPoint>& points);
     bool tabHasPointerFreeZone(int tabIndex) const;
@@ -154,6 +170,16 @@ public:
 
     float getMacroCurrentValue(int macroIndex) const;
     void setMacroValueFromHost(int macroIndex, float normalizedValue);
+    void setMacroCurrentValueFromPointerAutomation(int macroIndex,
+                                                   float normalizedValue);
+
+    using PointerAutomationCallback =
+        std::function<void(int macroIndex, float normalizedValue)>;
+
+    void setPointerAutomationCallback(
+        PointerAutomationCallback callback);
+
+    void armPointerAutomationCapture(int milliseconds);
 
     void suppressDirtyMarkingFor(int milliseconds);
     bool isDirtyMarkingSuppressed() const;
@@ -168,16 +194,19 @@ private:
     {
         std::unique_ptr<SlotModel> slot;
         std::unique_ptr<juce::AudioPluginInstance> pluginInstance;
+        PluginSlotType pluginType = PluginSlotType::Empty;
+        juce::MidiBuffer midiScratchBuffer;
+        juce::AudioBuffer<float> audioScratchBuffer;
+        int audioScratchChannelCapacity = 2;
+        int audioScratchSampleCapacity = 512;
         juce::String tabName;
         bool bypassed = false;
         int pointerAdjustMethodOverride = 0;
         juce::StringArray midiAssignedDeviceIdentifiers;
-        bool hasCustomPointerMap = false;
-        bool preferGlobalPointerMap = false;
+        juce::String selectedGlobalPointerMapRelativePath;
+        juce::String selectedGlobalPointerMapName;
         juce::Array<SessionTabData::PointerJumpPoint> pointerJumpPoints;
-        juce::Array<SessionTabData::PointerJumpPoint> presetPointerJumpPoints;
         juce::Array<juce::Rectangle<float>> pointerFreeZones;
-        juce::Array<juce::Rectangle<float>> presetPointerFreeZones;
         float pointerLaneTolerance = 30.0f;
         int pointerAdjustSensitivity = 1;
         bool restoreIssueActive = false;
@@ -229,6 +258,8 @@ private:
     int findHostedTabIndexForProcessor(const juce::AudioProcessor* processor) const;
     juce::String getHostedPluginDisplayName(int tabIndex) const;
     int findMacroMappingIndexByMacroSlot(int macroIndex) const;
+    int findMacroMappingIndexByTarget(int tabIndex,
+                                      int parameterIndex) const;
 
     void ensureValidSelectedTab();
     void rebuildTabModelFromHostedTabs();
@@ -236,9 +267,11 @@ private:
     PluginSlotType getHostedTabType(int tabIndex) const;
     void moveHostedTab(int fromIndex, int toIndex);
     int findNextActiveFxTab(int startIndex) const;
-    void buildMidiBufferForTab(int tabIndex,
-                               const juce::MidiBuffer& sourceMidi,
-                               juce::MidiBuffer& destMidi) const;
+    void buildMidiBufferForTab(
+        int tabIndex,
+        const juce::MidiBuffer& sourceMidi,
+        juce::MidiBuffer& destMidi,
+        bool releaseOnly = false) const;
 
     void updateMeterLevels(const juce::AudioBuffer<float>& inputBuffer,
                            const juce::AudioBuffer<float>& outputBuffer);
@@ -248,9 +281,11 @@ private:
     static juce::File getPointerMapsDirectory();
     static juce::String makeSafePointerMapFileName(const juce::String& pluginName,
                                                    const juce::String& manufacturer);
+    juce::Array<juce::File> findMatchingGlobalPointerMapFilesForTab(int tabIndex) const;
     juce::File getGlobalPointerMapFileForTab(int tabIndex) const;
     juce::File getWritableGlobalPointerMapFileForTab(int tabIndex,
                                                      const juce::String& userLabel = {}) const;
+    bool loadPointerMapFileIntoTab(int tabIndex, const juce::File& file);
 
 public:
     struct MissingPluginEntry
@@ -289,6 +324,12 @@ private:
     int currentBlockSize = 512;
     std::atomic<bool> playbackPrepared { false };
 
+    static constexpr int hostBufferChannelCapacity = 2;
+    int hostBufferSampleCapacity = 512;
+    juce::AudioBuffer<float> hostInputScratchBuffer;
+    juce::AudioBuffer<float> finalOutputScratchBuffer;
+    juce::Array<int> fxIndexScratch;
+
     int routingViewWidth = 800;
     int routingViewHeight = 500;
     bool routingViewSizeValid = false;
@@ -302,10 +343,17 @@ private:
     bool hasMacroMappingsUndoSnapshot = false;
     std::array<float, 128> macroCurrentValues {};
 
+    PointerAutomationCallback pointerAutomationCallback;
+    std::atomic<juce::uint32> pointerAutomationCaptureExpiryMs { 0 };
+    std::atomic<bool> applyingMacroValueFromHost { false };
+
     juce::uint32 dirtyMarkingResumeTimeMs = 0;
 
     std::atomic<float> inputMeterLevelL { 0.0f };
     std::atomic<float> inputMeterLevelR { 0.0f };
     std::atomic<float> outputMeterLevelL { 0.0f };
     std::atomic<float> outputMeterLevelR { 0.0f };
+
+    std::atomic<int> lastInvalidAudioTabIndex { -1 };
+    std::atomic<juce::uint32> invalidAudioBlockCount { 0 };
 };

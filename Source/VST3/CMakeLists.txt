@@ -1,7 +1,7 @@
 cmake_minimum_required(VERSION 3.22)
 
 # ── VST3 Plugin Version ────────────────────────────────────────────────────────
-set(POLYHOST_VERSION "1.1.35")
+set(POLYHOST_VERSION "2.2.53")
 
 project(PolyHostInterface VERSION ${POLYHOST_VERSION} LANGUAGES CXX)
 
@@ -51,6 +51,8 @@ target_sources(PolyHostPlugin PRIVATE
     PluginEditor.h
     MainView.cpp
     MainView.h
+    Instructions.cpp
+    Instructions.h
     PluginCore.cpp
     PluginCore.h
     TabModel.cpp

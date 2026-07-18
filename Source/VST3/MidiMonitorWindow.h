@@ -318,8 +318,32 @@ private:
 
         for (auto& incoming : messages)
         {
-            if (!incoming.valid)
+            if (! incoming.valid)
                 continue;
+
+            const auto& message = incoming.message;
+
+            int rawStatus = -1;
+
+            if (message.getRawDataSize() > 0)
+            {
+                rawStatus =
+                    static_cast<int>(
+                        static_cast<unsigned char>(
+                            message.getRawData()[0]));
+            }
+
+            if (hideClockButton.getToggleState()
+                && rawStatus == 0xF8)
+            {
+                continue;
+            }
+
+            if (hideActiveSenseButton.getToggleState()
+                && rawStatus == 0xFE)
+            {
+                continue;
+            }
 
             allEntries.add(makeEntry(incoming));
             addedAny = true;

@@ -1,5 +1,7 @@
 #include "PluginCore.h"
 #include "DebugLog.h"
+#include <algorithm>
+#include <cmath>
 
 namespace
 {
@@ -15,6 +17,49 @@ namespace
             return {};
 
         return block.toBase64Encoding();
+    }
+
+    juce::String compactPluginIdentity(juce::String text)
+    {
+        return text.trim()
+                   .toLowerCase()
+                   .retainCharacters(
+                       "abcdefghijklmnopqrstuvwxyz0123456789");
+    }
+
+    bool isPolyHostInterfaceVst3File(
+        const juce::File& pluginFile)
+    {
+        if (! pluginFile.hasFileExtension(".vst3"))
+            return false;
+
+        return compactPluginIdentity(
+                   pluginFile.getFileNameWithoutExtension())
+            == "polyhostinterface";
+    }
+
+    bool isPolyHostInterfaceVst3Description(
+        const juce::PluginDescription& description)
+    {
+        const juce::File pluginFile(
+            description.fileOrIdentifier);
+
+        const bool isVst3 =
+            description.pluginFormatName
+                .containsIgnoreCase("VST3")
+            || pluginFile.hasFileExtension(".vst3");
+
+        if (! isVst3)
+            return false;
+
+        return compactPluginIdentity(description.name)
+                   == "polyhostinterface"
+            || compactPluginIdentity(
+                   description.descriptiveName)
+                   == "polyhostinterface"
+            || compactPluginIdentity(
+                   pluginFile.getFileNameWithoutExtension())
+                   == "polyhostinterface";
     }
 
     juce::String makePluginQuarantineDisplayNameFromData(const SessionPluginData& pluginData)
@@ -86,6 +131,89 @@ namespace
         return lhs.isNotEmpty()
             && rhs.isNotEmpty()
             && lhs.equalsIgnoreCase(rhs);
+    }
+
+    bool isAsciiDigit(juce::juce_wchar c)
+    {
+        return c >= '0' && c <= '9';
+    }
+
+    int naturalCompareText(::juce_wchar c)
+    {
+        return c >= '0' && c <= '9';
+    }
+
+    int naturalCompareText(juce::String lhs, juce::String rhs)
+    {
+        lhs = lhs.trim().toLowerCase();
+        rhs = rhs.trim().toLowerCase();
+
+        int leftIndex = 0;
+        int rightIndex = 0;
+
+        while (leftIndex < lhs.length() && rightIndex < rhs.length())
+        {
+            const auto leftChar = lhs[leftIndex];
+            const auto rightChar = rhs[rightIndex];
+
+            const bool leftIsDigit = isAsciiDigit(leftChar);
+            const bool rightIsDigit = isAsciiDigit(rightChar);
+
+            if (leftIsDigit && rightIsDigit)
+            {
+                const int leftNumberStart = leftIndex;
+                const int rightNumberStart = rightIndex;
+
+                while (leftIndex < lhs.length() && isAsciiDigit(lhs[leftIndex]))
+                    ++leftIndex;
+
+                while (rightIndex < rhs.length() && isAsciiDigit(rhs[rightIndex]))
+                    ++rightIndex;
+
+                int leftSignificantStart = leftNumberStart;
+                int rightSignificantStart = rightNumberStart;
+
+                while (leftSignificantStart < leftIndex && lhs[leftSignificantStart] == '0')
+                    ++leftSignificantStart;
+
+                while (rightSignificantStart < rightIndex && rhs[rightSignificantStart] == '0')
+                    ++rightSignificantStart;
+
+                const int leftSignificantLength = leftIndex - leftSignificantStart;
+                const int rightSignificantLength = rightIndex - rightSignificantStart;
+
+                if (leftSignificantLength != rightSignificantLength)
+                    return leftSignificantLength < rightSignificantLength ? -1 : 1;
+
+                for (int i = 0; i < leftSignificantLength; ++i)
+                {
+                    const auto leftDigit = lhs[leftSignificantStart + i];
+                    const auto rightDigit = rhs[rightSignificantStart + i];
+
+                    if (leftDigit != rightDigit)
+                        return leftDigit < rightDigit ? -1 : 1;
+                }
+
+                const int leftOriginalLength = leftIndex - leftNumberStart;
+                const int rightOriginalLength = rightIndex - rightNumberStart;
+
+                if (leftOriginalLength != rightOriginalLength)
+                    return leftOriginalLength < rightOriginalLength ? -1 : 1;
+
+                continue;
+            }
+
+            if (leftChar != rightChar)
+                return leftChar < rightChar ? -1 : 1;
+
+            ++leftIndex;
+            ++rightIndex;
+        }
+
+        if (leftIndex == lhs.length() && rightIndex == rhs.length())
+            return 0;
+
+        return leftIndex < lhs.length() ? 1 : -1;
     }
 
     bool pluginDescriptionMatchesSessionPluginData(const juce::PluginDescription& description,
@@ -659,6 +787,7 @@ void PluginCore::ensurePluginFormatsInitialised()
 
 PluginCore::~PluginCore()
 {
+    clearPluginLoadCrashMarker();
     playbackPrepared.store(false);
 
     for (auto* tab : hostedTabs)
@@ -685,13 +814,81 @@ void PluginCore::prepareToPlay(double sampleRate, int samplesPerBlock)
     currentSampleRate = sampleRate;
     currentBlockSize = samplesPerBlock;
 
+    hostBufferSampleCapacity =
+        juce::jmax(1, samplesPerBlock);
+
+    hostInputScratchBuffer.setSize(
+        hostBufferChannelCapacity,
+        hostBufferSampleCapacity,
+        false,
+        true,
+        false);
+
+    finalOutputScratchBuffer.setSize(
+        hostBufferChannelCapacity,
+        hostBufferSampleCapacity,
+        false,
+        true,
+        false);
+
+    hostInputScratchBuffer.clear();
+    finalOutputScratchBuffer.clear();
+
+    fxIndexScratch.clearQuick();
+    fxIndexScratch.ensureStorageAllocated(
+        hostedTabs.size());
+
     for (auto* tab : hostedTabs)
     {
         if (tab == nullptr)
             continue;
 
+        tab->midiScratchBuffer.clear();
+        tab->midiScratchBuffer.ensureSize(
+            64 * 1024);
+
         if (tab->pluginInstance != nullptr)
-            tab->pluginInstance->prepareToPlay(sampleRate, samplesPerBlock);
+        {
+            tab->pluginInstance->prepareToPlay(
+                sampleRate,
+                samplesPerBlock);
+        }
+
+        int requiredChannels =
+            hostBufferChannelCapacity;
+
+        if (tab->pluginInstance != nullptr)
+        {
+            requiredChannels =
+                juce::jmax(
+                    requiredChannels,
+                    juce::jmax(
+                        juce::jmax(
+                            0,
+                            tab->pluginInstance
+                                ->getTotalNumInputChannels()),
+                        juce::jmax(
+                            0,
+                            tab->pluginInstance
+                                ->getTotalNumOutputChannels())));
+        }
+
+        tab->audioScratchChannelCapacity =
+            juce::jmax(
+                1,
+                requiredChannels);
+
+        tab->audioScratchSampleCapacity =
+            hostBufferSampleCapacity;
+
+        tab->audioScratchBuffer.setSize(
+            tab->audioScratchChannelCapacity,
+            tab->audioScratchSampleCapacity,
+            false,
+            true,
+            false);
+
+        tab->audioScratchBuffer.clear();
     }
 
     playbackPrepared.store(true);
@@ -712,7 +909,8 @@ void PluginCore::releaseResources()
 }
 
 void PluginCore::processBlock(juce::AudioBuffer<float>& buffer,
-                              juce::MidiBuffer& midiMessages)
+                              juce::MidiBuffer& midiMessages,
+                              juce::AudioPlayHead* playHead)
 {
     if (! playbackPrepared.load())
         return;
@@ -726,168 +924,440 @@ void PluginCore::processBlock(juce::AudioBuffer<float>& buffer,
     if (numSamples <= 0 || hostChannels <= 0)
         return;
 
-    juce::AudioBuffer<float> hostInput(hostChannels, numSamples);
-    hostInput.makeCopyOf(buffer, true);
+    auto containsNonFiniteSamples =
+        [](const juce::AudioBuffer<float>& audioBuffer) noexcept
+        {
+            for (int channel = 0;
+                 channel < audioBuffer.getNumChannels();
+                 ++channel)
+            {
+                const auto* samples =
+                    audioBuffer.getReadPointer(channel);
 
-    juce::AudioBuffer<float> finalOutput(hostChannels, numSamples);
+                for (int sample = 0;
+                     sample < audioBuffer.getNumSamples();
+                     ++sample)
+                {
+                    if (! std::isfinite(samples[sample]))
+                        return true;
+                }
+            }
+
+            return false;
+        };
+
+    auto clearAndRecordInvalidAudio =
+        [this, &containsNonFiniteSamples](
+            juce::AudioBuffer<float>& audioBuffer,
+            int tabIndex) noexcept
+        {
+            if (! containsNonFiniteSamples(audioBuffer))
+                return;
+
+            audioBuffer.clear();
+
+            lastInvalidAudioTabIndex.store(
+                tabIndex,
+                std::memory_order_relaxed);
+
+            invalidAudioBlockCount.fetch_add(
+                1,
+                std::memory_order_relaxed);
+        };
+
+    if (hostChannels > hostBufferChannelCapacity
+        || numSamples > hostBufferSampleCapacity)
+    {
+        return;
+    }
+
+    hostInputScratchBuffer.setSize(
+        hostChannels,
+        numSamples,
+        false,
+        false,
+        true);
+
+    finalOutputScratchBuffer.setSize(
+        hostChannels,
+        numSamples,
+        false,
+        false,
+        true);
+
+    auto& hostInput =
+        hostInputScratchBuffer;
+
+    auto& finalOutput =
+        finalOutputScratchBuffer;
+
+    hostInput.makeCopyOf(buffer, true);
     finalOutput.clear();
 
-    juce::Array<juce::AudioBuffer<float>> fxInputBuffers;
-    juce::Array<int> fxIndices;
+    auto& fxIndices =
+        fxIndexScratch;
+
+    fxIndices.clearQuick();
 
     for (int i = 0; i < hostedTabs.size(); ++i)
     {
-        if (hostedTabs[i] == nullptr || hostedTabs[i]->bypassed)
+        auto* tab = hostedTabs[i];
+
+        if (tab == nullptr || tab->bypassed)
             continue;
 
-        if (getHostedTabType(i) == PluginSlotType::FX && hostedTabs[i]->pluginInstance != nullptr)
+        if (getHostedTabType(i) != PluginSlotType::FX
+            || tab->pluginInstance == nullptr)
         {
-            fxIndices.add(i);
-            fxInputBuffers.add(juce::AudioBuffer<float>(hostChannels, numSamples));
-            fxInputBuffers.getReference(fxInputBuffers.size() - 1).clear();
+            continue;
         }
+
+        auto* instance =
+            tab->pluginInstance.get();
+
+        const int totalInputChannels =
+            juce::jmax(
+                0,
+                instance->getTotalNumInputChannels());
+
+        const int totalOutputChannels =
+            juce::jmax(
+                0,
+                instance->getTotalNumOutputChannels());
+
+        const int processChannels =
+            juce::jmax(
+                hostChannels,
+                juce::jmax(
+                    totalInputChannels,
+                    totalOutputChannels));
+
+        if (processChannels
+                > tab->audioScratchChannelCapacity
+            || numSamples
+                > tab->audioScratchSampleCapacity)
+        {
+            continue;
+        }
+
+        tab->audioScratchBuffer.setSize(
+            processChannels,
+            numSamples,
+            false,
+            false,
+            true);
+
+        tab->audioScratchBuffer.clear();
+        fxIndices.add(i);
     }
 
-    auto getFxBufferIndexForTab = [&fxIndices](int tabIndex) -> int
-    {
-        for (int i = 0; i < fxIndices.size(); ++i)
+    auto findNextPreparedFxTab =
+        [&fxIndices](int startIndex) -> int
         {
-            if (fxIndices[i] == tabIndex)
-                return i;
-        }
+            for (int i = 0;
+                 i < fxIndices.size();
+                 ++i)
+            {
+                const int tabIndex =
+                    fxIndices[i];
 
-        return -1;
-    };
+                if (tabIndex > startIndex)
+                    return tabIndex;
+            }
 
-    const int firstActiveFxTab = findNextActiveFxTab(-1);
+            return -1;
+        };
+
+    const int firstActiveFxTab =
+        findNextPreparedFxTab(-1);
 
     if (firstActiveFxTab >= 0)
     {
-        const int firstFxBufferIndex = getFxBufferIndexForTab(firstActiveFxTab);
+        auto* firstFxTab =
+            hostedTabs[firstActiveFxTab];
 
-        if (juce::isPositiveAndBelow(firstFxBufferIndex, fxInputBuffers.size()))
+        if (firstFxTab != nullptr)
         {
-            auto& firstFxBuffer = fxInputBuffers.getReference(firstFxBufferIndex);
+            auto& firstFxBuffer =
+                firstFxTab->audioScratchBuffer;
 
-            for (int ch = 0; ch < hostChannels; ++ch)
-                firstFxBuffer.addFrom(ch, 0, hostInput, ch, 0, numSamples);
+            for (int ch = 0;
+                 ch < hostChannels;
+                 ++ch)
+            {
+                firstFxBuffer.addFrom(
+                    ch,
+                    0,
+                    hostInput,
+                    ch,
+                    0,
+                    numSamples);
+            }
         }
     }
     else
     {
-        finalOutput.makeCopyOf(hostInput, true);
+        finalOutput.makeCopyOf(
+            hostInput,
+            true);
     }
 
     for (int i = 0; i < hostedTabs.size(); ++i)
     {
         auto* tab = hostedTabs[i];
 
-        if (tab == nullptr || tab->pluginInstance == nullptr || tab->bypassed)
+        if (tab == nullptr
+            || tab->pluginInstance == nullptr)
+        {
             continue;
+        }
 
-        if (getHostedTabType(i) != PluginSlotType::Synth)
+        if (getHostedTabType(i)
+            != PluginSlotType::Synth)
+        {
             continue;
+        }
 
-        auto* instance = tab->pluginInstance.get();
+        auto* instance =
+            tab->pluginInstance.get();
 
-        juce::AudioBuffer<float> synthBuffer(hostChannels, numSamples);
+        auto& synthMidi =
+            tab->midiScratchBuffer;
+
+        buildMidiBufferForTab(
+            i,
+            midiMessages,
+            synthMidi,
+            tab->bypassed);
+
+        const int totalInputChannels =
+            juce::jmax(
+                0,
+                instance->getTotalNumInputChannels());
+
+        const int totalOutputChannels =
+            juce::jmax(
+                0,
+                instance->getTotalNumOutputChannels());
+
+        const int processChannels =
+            juce::jmax(
+                hostChannels,
+                juce::jmax(
+                    totalInputChannels,
+                    totalOutputChannels));
+
+        if (processChannels
+                > tab->audioScratchChannelCapacity
+            || numSamples
+                > tab->audioScratchSampleCapacity)
+        {
+            continue;
+        }
+
+        tab->audioScratchBuffer.setSize(
+            processChannels,
+            numSamples,
+            false,
+            false,
+            true);
+
+        auto& synthBuffer =
+            tab->audioScratchBuffer;
+
         synthBuffer.clear();
 
-        juce::MidiBuffer synthMidi;
-        buildMidiBufferForTab(i, midiMessages, synthMidi);
+        const int inputChannelsToPreserve =
+            juce::jlimit(
+                0,
+                synthBuffer.getNumChannels(),
+                totalInputChannels > 0
+                    ? totalInputChannels
+                    : hostChannels);
 
-        const int totalInputChannels = instance->getTotalNumInputChannels();
-        const int totalOutputChannels = instance->getTotalNumOutputChannels();
-
-        if (hostChannels < totalOutputChannels)
-            continue;
-
-        for (int ch = totalInputChannels; ch < hostChannels; ++ch)
+        for (int ch = inputChannelsToPreserve; ch < synthBuffer.getNumChannels(); ++ch)
             synthBuffer.clear(ch, 0, numSamples);
 
+        instance->setPlayHead(playHead);
         instance->processBlock(synthBuffer, synthMidi);
 
-        const int nextFxTab = findNextActiveFxTab(i);
+        clearAndRecordInvalidAudio(
+            synthBuffer,
+            i);
+
+        if (tab->bypassed)
+            continue;
+
+        const int nextFxTab =
+            findNextPreparedFxTab(i);
 
         if (nextFxTab >= 0)
         {
-            const int fxBufferIndex = getFxBufferIndexForTab(nextFxTab);
+            auto* targetTab =
+                hostedTabs[nextFxTab];
 
-            if (juce::isPositiveAndBelow(fxBufferIndex, fxInputBuffers.size()))
+            if (targetTab != nullptr)
             {
-                auto& targetBuffer = fxInputBuffers.getReference(fxBufferIndex);
+                auto& targetBuffer =
+                    targetTab->audioScratchBuffer;
 
-                for (int ch = 0; ch < hostChannels; ++ch)
-                    targetBuffer.addFrom(ch, 0, synthBuffer, ch, 0, numSamples);
+                for (int ch = 0;
+                     ch < hostChannels;
+                     ++ch)
+                {
+                    targetBuffer.addFrom(
+                        ch,
+                        0,
+                        synthBuffer,
+                        ch,
+                        0,
+                        numSamples);
+                }
             }
         }
         else
         {
-            for (int ch = 0; ch < hostChannels; ++ch)
-                finalOutput.addFrom(ch, 0, synthBuffer, ch, 0, numSamples);
+            for (int ch = 0;
+                 ch < hostChannels;
+                 ++ch)
+            {
+                finalOutput.addFrom(
+                    ch,
+                    0,
+                    synthBuffer,
+                    ch,
+                    0,
+                    numSamples);
+            }
         }
     }
 
-    for (int fxListIndex = 0; fxListIndex < fxIndices.size(); ++fxListIndex)
+    for (int fxListIndex = 0;
+         fxListIndex < fxIndices.size();
+         ++fxListIndex)
     {
-        const int tabIndex = fxIndices[fxListIndex];
-        auto* tab = hostedTabs[tabIndex];
+        const int tabIndex =
+            fxIndices[fxListIndex];
 
-        if (tab == nullptr || tab->pluginInstance == nullptr || tab->bypassed)
-            continue;
+        auto* tab =
+            hostedTabs[tabIndex];
 
-        auto* instance = tab->pluginInstance.get();
-        auto& fxBuffer = fxInputBuffers.getReference(fxListIndex);
-        juce::MidiBuffer fxMidi;
-        buildMidiBufferForTab(tabIndex, midiMessages, fxMidi);
-
-        const int totalInputChannels = juce::jmax(0, instance->getTotalNumInputChannels());
-        const int totalOutputChannels = juce::jmax(0, instance->getTotalNumOutputChannels());
-        const int processChannels = juce::jmax(hostChannels,
-                                               juce::jmax(totalInputChannels, totalOutputChannels));
-
-        juce::AudioBuffer<float> expandedFxBuffer;
-        juce::AudioBuffer<float>* processBuffer = &fxBuffer;
-
-        if (processChannels > hostChannels)
+        if (tab == nullptr
+            || tab->pluginInstance == nullptr
+            || tab->bypassed)
         {
-            expandedFxBuffer.setSize(processChannels, numSamples, false, false, true);
-            expandedFxBuffer.clear();
-
-            for (int ch = 0; ch < hostChannels; ++ch)
-                expandedFxBuffer.copyFrom(ch, 0, fxBuffer, ch, 0, numSamples);
-
-            processBuffer = &expandedFxBuffer;
+            continue;
         }
 
-        const int inputChannelsToPreserve = juce::jlimit(0,
-                                                         processBuffer->getNumChannels(),
-                                                         totalInputChannels > 0 ? totalInputChannels
-                                                                                : hostChannels);
+        auto* instance =
+            tab->pluginInstance.get();
 
-        for (int ch = inputChannelsToPreserve; ch < processBuffer->getNumChannels(); ++ch)
-            processBuffer->clear(ch, 0, numSamples);
+        auto& fxBuffer =
+            tab->audioScratchBuffer;
 
-        instance->processBlock(*processBuffer, fxMidi);
+        auto& fxMidi =
+            tab->midiScratchBuffer;
 
-        const int nextFxTab = findNextActiveFxTab(tabIndex);
+        buildMidiBufferForTab(
+            tabIndex,
+            midiMessages,
+            fxMidi);
+
+        const int totalInputChannels =
+            juce::jmax(
+                0,
+                instance->getTotalNumInputChannels());
+
+        const int totalOutputChannels =
+            juce::jmax(
+                0,
+                instance->getTotalNumOutputChannels());
+
+        const int processChannels =
+            juce::jmax(
+                hostChannels,
+                juce::jmax(
+                    totalInputChannels,
+                    totalOutputChannels));
+
+        if (processChannels
+                > tab->audioScratchChannelCapacity
+            || numSamples
+                > tab->audioScratchSampleCapacity)
+        {
+            continue;
+        }
+
+        const int inputChannelsToPreserve =
+            juce::jlimit(
+                0,
+                fxBuffer.getNumChannels(),
+                totalInputChannels > 0
+                    ? totalInputChannels
+                    : hostChannels);
+
+        for (int ch = inputChannelsToPreserve;
+             ch < fxBuffer.getNumChannels();
+             ++ch)
+        {
+            fxBuffer.clear(
+                ch,
+                0,
+                numSamples);
+        }
+
+        instance->setPlayHead(playHead);
+        instance->processBlock(
+            fxBuffer,
+            fxMidi);
+
+        clearAndRecordInvalidAudio(
+            fxBuffer,
+            tabIndex);
+
+        const int nextFxTab =
+            fxListIndex + 1 < fxIndices.size()
+                ? fxIndices[fxListIndex + 1]
+                : -1;
 
         if (nextFxTab >= 0)
         {
-            const int nextFxBufferIndex = getFxBufferIndexForTab(nextFxTab);
+            auto* targetTab =
+                hostedTabs[nextFxTab];
 
-            if (juce::isPositiveAndBelow(nextFxBufferIndex, fxInputBuffers.size()))
+            if (targetTab != nullptr)
             {
-                auto& targetBuffer = fxInputBuffers.getReference(nextFxBufferIndex);
+                auto& targetBuffer =
+                    targetTab->audioScratchBuffer;
 
-                for (int ch = 0; ch < hostChannels; ++ch)
-                    targetBuffer.addFrom(ch, 0, *processBuffer, ch, 0, numSamples);
+                for (int ch = 0;
+                     ch < hostChannels;
+                     ++ch)
+                {
+                    targetBuffer.addFrom(
+                        ch,
+                        0,
+                        fxBuffer,
+                        ch,
+                        0,
+                        numSamples);
+                }
             }
         }
         else
         {
-            for (int ch = 0; ch < hostChannels; ++ch)
-                finalOutput.addFrom(ch, 0, *processBuffer, ch, 0, numSamples);
+            for (int ch = 0;
+                 ch < hostChannels;
+                 ++ch)
+            {
+                finalOutput.addFrom(
+                    ch,
+                    0,
+                    fxBuffer,
+                    ch,
+                    0,
+                    numSamples);
+            }
         }
     }
 
@@ -933,6 +1403,60 @@ juce::String PluginCore::makeSafePointerMapFileName(const juce::String& pluginNa
     return safeManufacturer + " - " + safePlugin;
 }
 
+juce::Array<juce::File> PluginCore::findMatchingGlobalPointerMapFilesForTab(int tabIndex) const
+{
+    juce::Array<juce::File> matches;
+
+    if (! juce::isPositiveAndBelow(tabIndex, hostedTabs.size()))
+        return matches;
+
+    const auto* hostedTab = hostedTabs[tabIndex];
+
+    if (hostedTab == nullptr || hostedTab->pluginInstance == nullptr)
+        return matches;
+
+    juce::PluginDescription description;
+    hostedTab->pluginInstance->fillInPluginDescription(description);
+
+    const auto mapsDir = getPointerMapsDirectory();
+
+    if (! mapsDir.isDirectory())
+        return matches;
+
+    const auto defaultFile = mapsDir
+        .getChildFile(makeSafePointerMapFileName(getBestPointerMapPluginName(description),
+                                                 getBestPointerMapManufacturerName(description)))
+        .withFileExtension(".xml");
+
+    for (const auto& entry : juce::RangedDirectoryIterator(mapsDir,
+                                                           true,
+                                                           "*.xml",
+                                                           juce::File::findFiles))
+    {
+        const auto file = entry.getFile();
+
+        if (auto xml = parsePointerMapFile(file))
+        {
+            const bool matchesIdentity = pointerMapXmlMatchesDescription(*xml, description);
+            const bool legacyDefault =
+                ! pointerMapXmlHasPluginIdentity(*xml)
+                && file.getFileName().equalsIgnoreCase(defaultFile.getFileName());
+
+            if (matchesIdentity || legacyDefault)
+                matches.add(file);
+        }
+    }
+
+    std::sort(matches.begin(), matches.end(),
+              [&mapsDir](const juce::File& a, const juce::File& b)
+              {
+                  return a.getRelativePathFrom(mapsDir)
+                          .compareIgnoreCase(b.getRelativePathFrom(mapsDir)) < 0;
+              });
+
+    return matches;
+}
+
 juce::File PluginCore::getGlobalPointerMapFileForTab(int tabIndex) const
 {
     if (! juce::isPositiveAndBelow(tabIndex, hostedTabs.size()))
@@ -943,18 +1467,34 @@ juce::File PluginCore::getGlobalPointerMapFileForTab(int tabIndex) const
     if (hostedTab == nullptr || hostedTab->pluginInstance == nullptr)
         return {};
 
-    juce::PluginDescription description;
-    hostedTab->pluginInstance->fillInPluginDescription(description);
-
     const auto mapsDir = getPointerMapsDirectory();
-    const auto defaultFile = mapsDir
-        .getChildFile(makeSafePointerMapFileName(getBestPointerMapPluginName(description),
-                                                 getBestPointerMapManufacturerName(description)))
-        .withFileExtension(".xml");
+    const auto files = findMatchingGlobalPointerMapFilesForTab(tabIndex);
 
-    return findExistingPointerMapFileForDescription(mapsDir,
-                                                    defaultFile,
-                                                    description);
+    if (files.isEmpty())
+        return {};
+
+    const auto selectedRelativePath = hostedTab->selectedGlobalPointerMapRelativePath.trim();
+    const auto selectedName = hostedTab->selectedGlobalPointerMapName.trim();
+
+    if (selectedRelativePath.isNotEmpty())
+    {
+        for (const auto& file : files)
+        {
+            if (file.getRelativePathFrom(mapsDir).trim().equalsIgnoreCase(selectedRelativePath))
+                return file;
+        }
+    }
+
+    if (selectedName.isNotEmpty())
+    {
+        for (const auto& file : files)
+        {
+            if (file.getFileNameWithoutExtension().trim().equalsIgnoreCase(selectedName))
+                return file;
+        }
+    }
+
+    return files.getReference(0);
 }
 
 juce::File PluginCore::getWritableGlobalPointerMapFileForTab(int tabIndex,
@@ -968,11 +1508,20 @@ juce::File PluginCore::getWritableGlobalPointerMapFileForTab(int tabIndex,
     if (hostedTab == nullptr || hostedTab->pluginInstance == nullptr)
         return {};
 
+    const auto trimmedUserLabel = userLabel.trim();
+
+    if (trimmedUserLabel.isEmpty())
+    {
+        auto selectedFile = getGlobalPointerMapFileForTab(tabIndex);
+
+        if (selectedFile.existsAsFile())
+            return selectedFile;
+    }
+
     juce::PluginDescription description;
     hostedTab->pluginInstance->fillInPluginDescription(description);
 
     const auto mapsDir = getPointerMapsDirectory();
-    const auto trimmedUserLabel = userLabel.trim();
 
     juce::File defaultFile;
 
@@ -993,38 +1542,6 @@ juce::File PluginCore::getWritableGlobalPointerMapFileForTab(int tabIndex,
     return getWritablePointerMapFileForDescription(mapsDir,
                                                    defaultFile,
                                                    description);
-}
-
-juce::String PluginCore::getGlobalPointerMapIdentityText(int tabIndex) const
-{
-    if (! juce::isPositiveAndBelow(tabIndex, hostedTabs.size()))
-        return "Unknown plugin";
-
-    const auto* hostedTab = hostedTabs[tabIndex];
-
-    if (hostedTab == nullptr || hostedTab->pluginInstance == nullptr)
-        return "Unknown plugin";
-
-    juce::PluginDescription description;
-    hostedTab->pluginInstance->fillInPluginDescription(description);
-
-    return makePointerMapIdentityText(description);
-}
-
-bool PluginCore::globalPointerMapNeedsUserLabel(int tabIndex) const
-{
-    if (! juce::isPositiveAndBelow(tabIndex, hostedTabs.size()))
-        return true;
-
-    const auto* hostedTab = hostedTabs[tabIndex];
-
-    if (hostedTab == nullptr || hostedTab->pluginInstance == nullptr)
-        return true;
-
-    juce::PluginDescription description;
-    hostedTab->pluginInstance->fillInPluginDescription(description);
-
-    return pointerMapDescriptionNeedsUserLabel(description);
 }
 
 void PluginCore::updateMeterLevels(const juce::AudioBuffer<float>& inputBuffer,
@@ -1099,8 +1616,22 @@ bool PluginCore::isDirty() const
     return sessionDocument.isDirty();
 }
 
+bool PluginCore::hasAnyLoadedPlugin() const
+{
+    for (auto* tab : hostedTabs)
+    {
+        if (tab != nullptr && tab->pluginInstance != nullptr)
+            return true;
+    }
+
+    return false;
+}
+
 void PluginCore::markDirty()
 {
+    if (! hasAnyLoadedPlugin() && ! sessionDocument.hasCurrentPresetFile())
+        return;
+
     sessionDocument.markDirty();
 }
 
@@ -1156,11 +1687,34 @@ bool PluginCore::addTab(const juce::String& tabName)
     tab->slot->setPluginLoaded(false);
     tab->tabName = tabName.isNotEmpty() ? tabName
                                         : "Empty";
-    tab->midiAssignedDeviceIdentifiers.addIfNotAlreadyThere("MIDI Ch: All");
-    tab->hasCustomPointerMap = false;
-    tab->preferGlobalPointerMap = false;
+
+    tab->midiScratchBuffer.ensureSize(
+        64 * 1024);
+
+    tab->audioScratchChannelCapacity =
+        hostBufferChannelCapacity;
+
+    tab->audioScratchSampleCapacity =
+        hostBufferSampleCapacity;
+
+    tab->audioScratchBuffer.setSize(
+        tab->audioScratchChannelCapacity,
+        tab->audioScratchSampleCapacity,
+        false,
+        true,
+        false);
+
+    tab->audioScratchBuffer.clear();
+
+    tab->midiAssignedDeviceIdentifiers
+        .addIfNotAlreadyThere(
+            "MIDI Ch: All");
+
     tab->pointerLaneTolerance = 30.0f;
     tab->pointerAdjustSensitivity = 1;
+
+    fxIndexScratch.ensureStorageAllocated(
+        hostedTabs.size() + 1);
 
     hostedTabs.add(tab);
     selectedTabIndex = hostedTabs.size() - 1;
@@ -1219,12 +1773,10 @@ bool PluginCore::clearTab(int tabIndex)
     selectedTab->tabName = "Empty";
     selectedTab->bypassed = false;
     selectedTab->pointerAdjustMethodOverride = 0;
-    selectedTab->hasCustomPointerMap = false;
-    selectedTab->preferGlobalPointerMap = false;
+    selectedTab->selectedGlobalPointerMapRelativePath.clear();
+    selectedTab->selectedGlobalPointerMapName.clear();
     selectedTab->pointerJumpPoints.clear();
-    selectedTab->presetPointerJumpPoints.clear();
     selectedTab->pointerFreeZones.clear();
-    selectedTab->presetPointerFreeZones.clear();
     selectedTab->pointerLaneTolerance = 30.0f;
     selectedTab->pointerAdjustSensitivity = 1;
     clearTabRestoreIssue(*selectedTab);
@@ -1278,12 +1830,10 @@ bool PluginCore::reloadTabPlugin(int tabIndex)
     const auto bypassed = selectedTab->bypassed;
     const auto pointerAdjustMethodOverride = selectedTab->pointerAdjustMethodOverride;
     const auto pointerAdjustSensitivity = selectedTab->pointerAdjustSensitivity;
-    const auto hasCustomPointerMap = selectedTab->hasCustomPointerMap;
-    const auto preferGlobalPointerMap = selectedTab->preferGlobalPointerMap;
     const auto pointerJumpPoints = selectedTab->pointerJumpPoints;
-    const auto presetPointerJumpPoints = selectedTab->presetPointerJumpPoints;
     const auto pointerFreeZones = selectedTab->pointerFreeZones;
-    const auto presetPointerFreeZones = selectedTab->presetPointerFreeZones;
+    const auto selectedGlobalPointerMapRelativePath = selectedTab->selectedGlobalPointerMapRelativePath;
+    const auto selectedGlobalPointerMapName = selectedTab->selectedGlobalPointerMapName;
     const auto midiAssignments = selectedTab->midiAssignedDeviceIdentifiers;
 
     unloadMainSlotPlugin();
@@ -1294,12 +1844,10 @@ bool PluginCore::reloadTabPlugin(int tabIndex)
         selectedTab->bypassed = bypassed;
         selectedTab->pointerAdjustMethodOverride = pointerAdjustMethodOverride;
         selectedTab->pointerAdjustSensitivity = pointerAdjustSensitivity;
-        selectedTab->hasCustomPointerMap = hasCustomPointerMap;
-        selectedTab->preferGlobalPointerMap = preferGlobalPointerMap;
         selectedTab->pointerJumpPoints = pointerJumpPoints;
-        selectedTab->presetPointerJumpPoints = presetPointerJumpPoints;
         selectedTab->pointerFreeZones = pointerFreeZones;
-        selectedTab->presetPointerFreeZones = presetPointerFreeZones;
+        selectedTab->selectedGlobalPointerMapRelativePath = selectedGlobalPointerMapRelativePath;
+        selectedTab->selectedGlobalPointerMapName = selectedGlobalPointerMapName;
         selectedTab->midiAssignedDeviceIdentifiers = midiAssignments;
 
         selectedTabIndex = previousSelected;
@@ -1315,12 +1863,10 @@ bool PluginCore::reloadTabPlugin(int tabIndex)
     selectedTab->bypassed = bypassed;
     selectedTab->pointerAdjustMethodOverride = pointerAdjustMethodOverride;
     selectedTab->pointerAdjustSensitivity = pointerAdjustSensitivity;
-    selectedTab->hasCustomPointerMap = hasCustomPointerMap;
-    selectedTab->preferGlobalPointerMap = preferGlobalPointerMap;
     selectedTab->pointerJumpPoints = pointerJumpPoints;
-    selectedTab->presetPointerJumpPoints = presetPointerJumpPoints;
     selectedTab->pointerFreeZones = pointerFreeZones;
-    selectedTab->presetPointerFreeZones = presetPointerFreeZones;
+    selectedTab->selectedGlobalPointerMapRelativePath = selectedGlobalPointerMapRelativePath;
+    selectedTab->selectedGlobalPointerMapName = selectedGlobalPointerMapName;
     selectedTab->midiAssignedDeviceIdentifiers = midiAssignments;
 
     selectedTabIndex = previousSelected;
@@ -1456,62 +2002,65 @@ int PluginCore::getTabPointerAdjustSensitivity(int tabIndex) const
     return hostedTabs[tabIndex]->pointerAdjustSensitivity;
 }
 
-bool PluginCore::tabHasCustomPointerMap(int tabIndex) const
-{
-    if (! juce::isPositiveAndBelow(tabIndex, hostedTabs.size()))
-        return false;
-
-    return hostedTabs[tabIndex]->hasCustomPointerMap;
-}
-
 bool PluginCore::tabHasGlobalPointerMap(int tabIndex) const
 {
     auto file = getGlobalPointerMapFileForTab(tabIndex);
     return file.existsAsFile();
 }
 
-bool PluginCore::getTabPreferGlobalPointerMap(int tabIndex) const
+juce::Array<PluginCore::PointerMapChoice> PluginCore::getAvailableGlobalPointerMapsForTab(int tabIndex) const
+{
+    juce::Array<PointerMapChoice> choices;
+
+    const auto mapsDir = getPointerMapsDirectory();
+    auto files = findMatchingGlobalPointerMapFilesForTab(tabIndex);
+    const auto selectedFile = getGlobalPointerMapFileForTab(tabIndex);
+
+    std::sort(files.begin(), files.end(),
+              [](const juce::File& a, const juce::File& b)
+              {
+                  const auto nameCompare = naturalCompareText(a.getFileNameWithoutExtension(),
+                                                              b.getFileNameWithoutExtension());
+
+                  if (nameCompare != 0)
+                      return nameCompare < 0;
+
+                  return a.getRelativePathFrom(a.getParentDirectory())
+                          .compareIgnoreCase(b.getRelativePathFrom(b.getParentDirectory())) < 0;
+              });
+
+    for (int i = 0; i < files.size(); ++i)
+    {
+        const auto& file = files.getReference(i);
+        const auto baseName = file.getFileNameWithoutExtension().trim();
+
+        int duplicateIndex = 1;
+
+        for (int j = 0; j < i; ++j)
+        {
+            if (files.getReference(j).getFileNameWithoutExtension().trim().equalsIgnoreCase(baseName))
+                ++duplicateIndex;
+        }
+
+        PointerMapChoice choice;
+        choice.fileName = baseName;
+        choice.displayName = baseName;
+
+        if (duplicateIndex > 1)
+            choice.displayName << " (" << duplicateIndex << ")";
+
+        choice.relativePath = file.getRelativePathFrom(mapsDir).trim();
+        choice.selected = selectedFile == file;
+        choices.add(choice);
+    }
+
+    return choices;
+}
+
+bool PluginCore::loadPointerMapFileIntoTab(int tabIndex, const juce::File& file)
 {
     if (! juce::isPositiveAndBelow(tabIndex, hostedTabs.size()))
         return false;
-
-    return hostedTabs[tabIndex]->preferGlobalPointerMap;
-}
-
-void PluginCore::setTabPreferGlobalPointerMap(int tabIndex, bool shouldPreferGlobal)
-{
-    if (! juce::isPositiveAndBelow(tabIndex, hostedTabs.size()))
-        return;
-
-    auto* tab = hostedTabs[tabIndex];
-    tab->preferGlobalPointerMap = shouldPreferGlobal;
-
-    tab->pointerJumpPoints.clear();
-    tab->pointerFreeZones.clear();
-
-    if (shouldPreferGlobal)
-    {
-        loadGlobalPointerMapForTab(tabIndex);
-    }
-    else if (tab->hasCustomPointerMap)
-    {
-        tab->pointerJumpPoints = tab->presetPointerJumpPoints;
-        tab->pointerFreeZones = tab->presetPointerFreeZones;
-    }
-    else
-    {
-        loadGlobalPointerMapForTab(tabIndex);
-    }
-
-    markDirty();
-}
-
-bool PluginCore::loadGlobalPointerMapForTab(int tabIndex)
-{
-    if (! juce::isPositiveAndBelow(tabIndex, hostedTabs.size()))
-        return false;
-
-    auto file = getGlobalPointerMapFileForTab(tabIndex);
 
     if (! file.existsAsFile())
         return false;
@@ -1554,7 +2103,6 @@ bool PluginCore::loadGlobalPointerMapForTab(int tabIndex)
         }
     }
 
-    // Legacy single-zone format support.
     if (freeZones.isEmpty())
     {
         if (auto* freeZoneXml = xml->getChildByName("PointerFreeZone"))
@@ -1571,9 +2119,121 @@ bool PluginCore::loadGlobalPointerMapForTab(int tabIndex)
     }
 
     auto* tab = hostedTabs[tabIndex];
+
+    if (tab == nullptr)
+        return false;
+
+    const auto mapsDir = getPointerMapsDirectory();
+
     tab->pointerJumpPoints = points;
     tab->pointerFreeZones = freeZones;
+    tab->selectedGlobalPointerMapRelativePath = file.getRelativePathFrom(mapsDir).trim();
+    tab->selectedGlobalPointerMapName = file.getFileNameWithoutExtension().trim();
+
     return true;
+}
+
+bool PluginCore::loadGlobalPointerMapForTabByRelativePath(int tabIndex, const juce::String& relativePath)
+{
+    if (! juce::isPositiveAndBelow(tabIndex, hostedTabs.size()))
+        return false;
+
+    auto* tab = hostedTabs[tabIndex];
+
+    if (tab == nullptr)
+        return false;
+
+    const auto mapsDir = getPointerMapsDirectory();
+    const auto files = findMatchingGlobalPointerMapFilesForTab(tabIndex);
+    const auto targetRelativePath = relativePath.trim();
+
+    juce::File selectedFile;
+
+    if (targetRelativePath.isNotEmpty())
+    {
+        for (const auto& file : files)
+        {
+            if (file.getRelativePathFrom(mapsDir).trim().equalsIgnoreCase(targetRelativePath))
+            {
+                selectedFile = file;
+                break;
+            }
+        }
+    }
+
+    if (selectedFile == juce::File())
+        return false;
+
+    if (! loadPointerMapFileIntoTab(tabIndex, selectedFile))
+        return false;
+
+    markDirty();
+    return true;
+}
+
+juce::String PluginCore::getSelectedGlobalPointerMapRelativePath(int tabIndex) const
+{
+    if (! juce::isPositiveAndBelow(tabIndex, hostedTabs.size()))
+        return {};
+
+    const auto* tab = hostedTabs[tabIndex];
+
+    if (tab == nullptr)
+        return {};
+
+    return tab->selectedGlobalPointerMapRelativePath;
+}
+
+juce::String PluginCore::getSelectedGlobalPointerMapDisplayName(int tabIndex) const
+{
+    auto file = getGlobalPointerMapFileForTab(tabIndex);
+
+    if (file.existsAsFile())
+        return file.getFileNameWithoutExtension();
+
+    if (juce::isPositiveAndBelow(tabIndex, hostedTabs.size()))
+    {
+        const auto* tab = hostedTabs[tabIndex];
+
+        if (tab != nullptr && tab->selectedGlobalPointerMapName.trim().isNotEmpty())
+            return tab->selectedGlobalPointerMapName.trim();
+    }
+
+    return {};
+}
+
+bool PluginCore::pointerMapFileNameExists(const juce::String& mapFileName) const
+{
+    auto safeName = sanitisePointerMapToken(mapFileName.trim());
+
+    if (safeName.isEmpty())
+        return false;
+
+    if (safeName.endsWithIgnoreCase(".xml"))
+        safeName = safeName.dropLastCharacters(4).trim();
+
+    safeName = sanitisePointerMapToken(safeName);
+
+    if (safeName.isEmpty())
+        return false;
+
+    return getPointerMapsDirectory()
+        .getChildFile(safeName)
+        .withFileExtension(".xml")
+        .existsAsFile();
+}
+
+bool PluginCore::loadGlobalPointerMapForTab(int tabIndex)
+{
+    if (! juce::isPositiveAndBelow(tabIndex, hostedTabs.size()))
+        return false;
+
+    auto file = getGlobalPointerMapFileForTab(tabIndex);
+
+    if (! file.existsAsFile())
+        return false;
+
+    return loadPointerMapFileIntoTab(tabIndex, file);
 }
 
 bool PluginCore::saveCurrentPointerMapToGlobalFile(int tabIndex,
@@ -1595,8 +2255,12 @@ bool PluginCore::saveCurrentPointerMapToGlobalFile(int tabIndex,
     juce::PluginDescription description;
     hostedTab->pluginInstance->fillInPluginDescription(description);
 
+    const auto identityLabel = userLabel.trim().isNotEmpty()
+        ? userLabel.trim()
+        : file.getFileNameWithoutExtension().trim();
+
     juce::XmlElement xml("PointerMap");
-    writePointerMapPluginIdentity(xml, description, userLabel);
+    writePointerMapPluginIdentity(xml, description, identityLabel);
 
     for (auto& point : hostedTabs[tabIndex]->pointerJumpPoints)
     {
@@ -1622,63 +2286,153 @@ bool PluginCore::saveCurrentPointerMapToGlobalFile(int tabIndex,
         }
     }
 
-    return xml.writeTo(file, {});
+    const bool saved = xml.writeTo(file, {});
+
+    if (saved)
+    {
+        auto* tab = hostedTabs[tabIndex];
+
+        if (tab != nullptr)
+        {
+            const auto mapsDir = getPointerMapsDirectory();
+            tab->selectedGlobalPointerMapRelativePath = file.getRelativePathFrom(mapsDir).trim();
+            tab->selectedGlobalPointerMapName = file.getFileNameWithoutExtension().trim();
+            markDirty();
+        }
+    }
+
+    return saved;
 }
+
+
+bool PluginCore::saveCurrentPointerMapAsNewGlobalFile(int tabIndex,
+                                                      const juce::String& mapFileName,
+                                                      bool allowOverwriteExisting)
+{
+    if (! juce::isPositiveAndBelow(tabIndex, hostedTabs.size()))
+        return false;
+
+    const auto* hostedTab = hostedTabs[tabIndex];
+
+    if (hostedTab == nullptr || hostedTab->pluginInstance == nullptr)
+        return false;
+
+    auto safeName = sanitisePointerMapToken(mapFileName.trim());
+
+    if (safeName.isEmpty())
+        return false;
+
+    if (safeName.endsWithIgnoreCase(".xml"))
+        safeName = safeName.dropLastCharacters(4).trim();
+
+    safeName = sanitisePointerMapToken(safeName);
+
+    if (safeName.isEmpty())
+        return false;
+
+    const auto mapsDir = getPointerMapsDirectory();
+    mapsDir.createDirectory();
+
+    const auto requestedFile = mapsDir.getChildFile(safeName).withFileExtension(".xml");
+
+    auto file = allowOverwriteExisting
+        ? requestedFile
+        : getNonConflictingPointerMapFile(requestedFile);
+
+    juce::PluginDescription description;
+    hostedTab->pluginInstance->fillInPluginDescription(description);
+
+    juce::XmlElement xml("PointerMap");
+    writePointerMapPluginIdentity(xml, description, file.getFileNameWithoutExtension());
+
+    for (auto& point : hostedTab->pointerJumpPoints)
+    {
+        auto* pointXml = xml.createNewChildElement("Point");
+        pointXml->setAttribute("x", point.x);
+        pointXml->setAttribute("y", point.y);
+    }
+
+    if (! hostedTab->pointerFreeZones.isEmpty())
+    {
+        auto* freeZonesXml = xml.createNewChildElement("PointerFreeZones");
+
+        for (auto& zone : hostedTab->pointerFreeZones)
+        {
+            if (zone.isEmpty())
+                continue;
+
+            auto* freeZoneXml = freeZonesXml->createNewChildElement("Zone");
+            freeZoneXml->setAttribute("x", zone.getX());
+            freeZoneXml->setAttribute("y", zone.getY());
+            freeZoneXml->setAttribute("width", zone.getWidth());
+            freeZoneXml->setAttribute("height", zone.getHeight());
+        }
+    }
+
+    const bool saved = xml.writeTo(file, {});
+
+    if (saved)
+    {
+        auto* tab = hostedTabs[tabIndex];
+
+        if (tab != nullptr)
+        {
+            tab->selectedGlobalPointerMapRelativePath = file.getRelativePathFrom(mapsDir).trim();
+            tab->selectedGlobalPointerMapName = file.getFileNameWithoutExtension().trim();
+            markDirty();
+        }
+    }
+
+    return saved;
+}
+
+bool PluginCore::deleteSelectedGlobalPointerMapFile(int tabIndex, juce::String* deletedMapName)
+{
+    if (! juce::isPositiveAndBelow(tabIndex, hostedTabs.size()))
+        return false;
+
+    auto* tab = hostedTabs[tabIndex];
+
+    if (tab == nullptr || tab->pluginInstance == nullptr)
+        return false;
+
+    auto file = getGlobalPointerMapFileForTab(tabIndex);
+
+    if (! file.existsAsFile())
+        return false;
+
+    const auto mapsDir = getPointerMapsDirectory();
+    const auto deletedName = file.getFileNameWithoutExtension().trim();
+
+    if (deletedMapName != nullptr)
+        *deletedMapName = deletedName;
+
+    if (! file.deleteFile())
+        return false;
+
+    tab->selectedGlobalPointerMapRelativePath.clear();
+    tab->selectedGlobalPointerMapName.clear();
+    tab->pointerJumpPoints.clear();
+    tab->pointerFreeZones.clear();
+
+    const auto remainingFiles = findMatchingGlobalPointerMapFilesForTab(tabIndex);
+
+    if (! remainingFiles.isEmpty())
+        loadPointerMapFileIntoTab(tabIndex, remainingFiles.getReference(0));
+
+    markDirty();
+    return true;
+}
+
 
 juce::String PluginCore::getActivePointerMapSourceText(int tabIndex) const
 {
     if (! juce::isPositiveAndBelow(tabIndex, hostedTabs.size()))
         return "None";
 
-    const auto* tab = hostedTabs[tabIndex];
-
-    if (tab->preferGlobalPointerMap)
-        return tabHasGlobalPointerMap(tabIndex) ? "Global" : "None";
-
-    if (tab->hasCustomPointerMap)
-        return "Preset";
-
-    if (tabHasGlobalPointerMap(tabIndex))
-        return "Global";
-
-    return "None";
+    const auto selectedMap = getSelectedGlobalPointerMapDisplayName(tabIndex);
+    return selectedMap.isNotEmpty() ? selectedMap : "None";
 }
-
-void PluginCore::saveCurrentPointerMapToPreset(int tabIndex)
-{
-    if (! juce::isPositiveAndBelow(tabIndex, hostedTabs.size()))
-        return;
-
-    auto* tab = hostedTabs[tabIndex];
-    tab->hasCustomPointerMap = true;
-    tab->presetPointerJumpPoints = tab->pointerJumpPoints;
-    tab->presetPointerFreeZones = tab->pointerFreeZones;
-
-    if (! tab->preferGlobalPointerMap)
-    {
-        tab->pointerJumpPoints = tab->presetPointerJumpPoints;
-        tab->pointerFreeZones = tab->presetPointerFreeZones;
-    }
-
-    markDirty();
-}
-
-void PluginCore::clearCurrentPresetPointerMap(int tabIndex)
-{
-    if (! juce::isPositiveAndBelow(tabIndex, hostedTabs.size()))
-        return;
-
-    auto* tab = hostedTabs[tabIndex];
-    tab->hasCustomPointerMap = false;
-    tab->presetPointerJumpPoints.clear();
-    tab->pointerJumpPoints.clear();
-    tab->presetPointerFreeZones.clear();
-    tab->pointerFreeZones.clear();
-
-    loadGlobalPointerMapForTab(tabIndex);
-    markDirty();
-}
-
 void PluginCore::setTabPointerAdjustSensitivity(int tabIndex, int sensitivity)
 {
     if (! juce::isPositiveAndBelow(tabIndex, hostedTabs.size()))
@@ -1833,14 +2587,15 @@ PluginSlotType PluginCore::getHostedTabType(int tabIndex) const
     if (! juce::isPositiveAndBelow(tabIndex, hostedTabs.size()))
         return PluginSlotType::Empty;
 
-    auto* hostedTab = hostedTabs[tabIndex];
+    const auto* hostedTab = hostedTabs[tabIndex];
 
-    if (hostedTab == nullptr || hostedTab->pluginInstance == nullptr)
+    if (hostedTab == nullptr
+        || hostedTab->pluginInstance == nullptr)
+    {
         return PluginSlotType::Empty;
+    }
 
-    juce::PluginDescription description;
-    hostedTab->pluginInstance->fillInPluginDescription(description);
-    return slotTypeFromDescription(description);
+    return hostedTab->pluginType;
 }
 
 int PluginCore::findNextActiveFxTab(int startIndex) const
@@ -2010,39 +2765,109 @@ juce::String PluginCore::buildPluginDiagnosticsText(int tabIndex) const
     return text;
 }
 
-void PluginCore::buildMidiBufferForTab(int tabIndex,
-                                       const juce::MidiBuffer& sourceMidi,
-                                       juce::MidiBuffer& destMidi) const
+void PluginCore::buildMidiBufferForTab(
+    int tabIndex,
+    const juce::MidiBuffer& sourceMidi,
+    juce::MidiBuffer& destMidi,
+    bool releaseOnly) const
 {
+    static constexpr const char*
+        midiChannelNames[16] =
+        {
+            "MIDI Ch: 1",
+            "MIDI Ch: 2",
+            "MIDI Ch: 3",
+            "MIDI Ch: 4",
+            "MIDI Ch: 5",
+            "MIDI Ch: 6",
+            "MIDI Ch: 7",
+            "MIDI Ch: 8",
+            "MIDI Ch: 9",
+            "MIDI Ch: 10",
+            "MIDI Ch: 11",
+            "MIDI Ch: 12",
+            "MIDI Ch: 13",
+            "MIDI Ch: 14",
+            "MIDI Ch: 15",
+            "MIDI Ch: 16"
+        };
+
     destMidi.clear();
 
-    if (! juce::isPositiveAndBelow(tabIndex, hostedTabs.size()))
-        return;
-
-    auto* hostedTab = hostedTabs[tabIndex];
-    if (hostedTab == nullptr)
-        return;
-
-    const auto& assignments = hostedTab->midiAssignedDeviceIdentifiers;
-
-    if (assignments.contains("MIDI Ch: All"))
+    if (! juce::isPositiveAndBelow(
+            tabIndex,
+            hostedTabs.size()))
     {
-        destMidi = sourceMidi;
         return;
     }
 
+    auto* hostedTab =
+        hostedTabs[tabIndex];
+
+    if (hostedTab == nullptr)
+        return;
+
+    const auto& assignments =
+        hostedTab->midiAssignedDeviceIdentifiers;
+
+    const bool acceptsAllChannels =
+        assignments.contains("MIDI Ch: All");
+
     for (const auto metadata : sourceMidi)
     {
-        const auto& message = metadata.getMessage();
-        const int channel = message.getChannel();
+        const auto& message =
+            metadata.getMessage();
 
-        if (channel <= 0)
+        if (releaseOnly)
+        {
+            bool isReleaseMessage =
+                message.isNoteOff();
+
+            if (message.isController())
+            {
+                const int controller =
+                    message.getControllerNumber();
+
+                const int value =
+                    message.getControllerValue();
+
+                isReleaseMessage =
+                    isReleaseMessage
+                    || (controller == 64
+                        && value < 64)
+                    || (controller == 66
+                        && value < 64)
+                    || controller == 120
+                    || controller == 121
+                    || controller == 123;
+            }
+
+            if (! isReleaseMessage)
+                continue;
+        }
+
+        if (acceptsAllChannels)
+        {
+            destMidi.addEvent(
+                message,
+                metadata.samplePosition);
+
+            continue;
+        }
+
+        const int channel =
+            message.getChannel();
+
+        if (channel < 1 || channel > 16)
             continue;
 
-        const juce::String channelName = "MIDI Ch: " + juce::String(channel);
-
-        if (assignments.contains(channelName))
-            destMidi.addEvent(message, metadata.samplePosition);
+        if (assignments.contains(
+                midiChannelNames[channel - 1]))
+        {
+            destMidi.addEvent(
+                message,
+                metadata.samplePosition);
+        }
     }
 }
 
@@ -2224,6 +3049,25 @@ int PluginCore::findMacroMappingIndexByMacroSlot(int macroIndex) const
     return -1;
 }
 
+int PluginCore::findMacroMappingIndexByTarget(
+    int tabIndex,
+    int parameterIndex) const
+{
+    for (int i = 0; i < macroMappings.size(); ++i)
+    {
+        const auto& mapping =
+            macroMappings.getReference(i);
+
+        if (mapping.tabIndex == tabIndex
+            && mapping.parameterIndex == parameterIndex)
+        {
+            return i;
+        }
+    }
+
+    return -1;
+}
+
 void PluginCore::captureLastTouchedParameter(juce::AudioProcessor* processor,
                                              int parameterIndex,
                                              float newValue)
@@ -2269,12 +3113,31 @@ bool PluginCore::scanPluginDescriptionsForFile(const juce::String& pluginPath,
         return false;
     }
 
-    const bool isVST3 = pluginFile.hasFileExtension(".vst3");
-    const bool isVST2 = pluginFile.hasFileExtension(".dll");
+    const bool isVST3 =
+        pluginFile.hasFileExtension(".vst3");
+
+    const bool isVST2 =
+        pluginFile.hasFileExtension(".dll");
 
     if (! isVST3 && ! isVST2)
     {
         errorMessage = "Unsupported plugin format";
+        return false;
+    }
+
+    if (isVST3
+        && isPolyHostInterfaceVst3File(pluginFile))
+    {
+        errorMessage =
+            "PolyHostInterface cannot host its own VST3 "
+            "recursively.\n\n"
+            "The load request was blocked to prevent a crash.";
+
+        DebugLog::write(
+            "[Plugin] blocked recursive PolyHostInterface "
+            "VST3 scan | path="
+            + pluginFile.getFullPathName());
+
         return false;
     }
 
@@ -2331,10 +3194,40 @@ bool PluginCore::scanPluginDescriptionsForFile(const juce::String& pluginPath,
 
 bool PluginCore::loadMainSlotPluginFromDescription(const juce::PluginDescription& description)
 {
-    auto* selectedTab = getSelectedHostedTab();
+    auto* selectedTab =
+        getSelectedHostedTab();
 
     if (selectedTab == nullptr)
         return false;
+
+    if (isPolyHostInterfaceVst3Description(
+            description))
+    {
+        const juce::String errorMessage =
+            "PolyHostInterface cannot host its own VST3 "
+            "recursively. The load request was blocked "
+            "to prevent a crash.";
+
+        if (selectedTab->slot != nullptr)
+        {
+            selectedTab->slot->setPluginPath(
+                description.fileOrIdentifier);
+
+            selectedTab->slot->setLastError(
+                errorMessage);
+        }
+
+        statusText =
+            "Load blocked: recursive PolyHostInterface "
+            "hosting is not allowed";
+
+        DebugLog::write(
+            "[Plugin] blocked recursive PolyHostInterface "
+            "VST3 load | path="
+            + description.fileOrIdentifier);
+
+        return false;
+    }
 
     unloadMainSlotPlugin();
 
@@ -2402,20 +3295,46 @@ bool PluginCore::loadMainSlotPluginFromDescription(const juce::PluginDescription
     if (playbackPrepared.load())
         instance->prepareToPlay(currentSampleRate, currentBlockSize);
 
-    selectedTab->pluginInstance = std::move(instance);
-    attachToHostedPlugin(selectedTab->pluginInstance.get());
+    selectedTab->pluginType =
+        slotTypeFromDescription(description);
+
+    selectedTab->audioScratchChannelCapacity =
+        juce::jmax(
+            hostBufferChannelCapacity,
+            juce::jmax(
+                juce::jmax(
+                    0,
+                    instance->getTotalNumInputChannels()),
+                juce::jmax(
+                    0,
+                    instance->getTotalNumOutputChannels())));
+
+    selectedTab->audioScratchSampleCapacity =
+        hostBufferSampleCapacity;
+
+    selectedTab->audioScratchBuffer.setSize(
+        selectedTab->audioScratchChannelCapacity,
+        selectedTab->audioScratchSampleCapacity,
+        false,
+        true,
+        false);
+
+    selectedTab->audioScratchBuffer.clear();
+
+    selectedTab->pluginInstance =
+        std::move(instance);
+
+    attachToHostedPlugin(
+        selectedTab->pluginInstance.get());
 
     selectedTab->slot->setPluginLoaded(true);
     selectedTab->slot->setLoadedPluginName(description.name);
     selectedTab->slot->setPluginPath(description.fileOrIdentifier);
     selectedTab->slot->setLastError({});
 
-    if (! selectedTab->hasCustomPointerMap)
-    {
-        selectedTab->pointerJumpPoints.clear();
-        selectedTab->pointerFreeZones.clear();
-        loadGlobalPointerMapForTab(selectedTabIndex);
-    }
+    selectedTab->pointerJumpPoints.clear();
+    selectedTab->pointerFreeZones.clear();
+    loadGlobalPointerMapForTab(selectedTabIndex);
 
     clearTabRestoreIssue(*selectedTab);
 
@@ -2612,13 +3531,8 @@ SessionTabData PluginCore::buildSessionTabData(int tabIndex) const
     tabData.pointerAdjustMethodOverride = hostedTab->pointerAdjustMethodOverride;
     tabData.pointerLaneTolerance = hostedTab->pointerLaneTolerance;
     tabData.pointerAdjustSensitivity = hostedTab->pointerAdjustSensitivity;
-    tabData.hasCustomPointerMap = hostedTab->hasCustomPointerMap;
-    tabData.preferGlobalPointerMap = hostedTab->preferGlobalPointerMap;
-    if (hostedTab->hasCustomPointerMap)
-    {
-        tabData.pointerJumpPoints = hostedTab->presetPointerJumpPoints;
-        tabData.pointerFreeZones = hostedTab->presetPointerFreeZones;
-    }
+    tabData.selectedGlobalPointerMapRelativePath = hostedTab->selectedGlobalPointerMapRelativePath;
+    tabData.selectedGlobalPointerMapName = hostedTab->selectedGlobalPointerMapName;
     tabData.midiAssignedDeviceIdentifiers = hostedTab->midiAssignedDeviceIdentifiers;
 
     auto* instance = hostedTab->pluginInstance.get();
@@ -2693,26 +3607,15 @@ bool PluginCore::restoreTabFromSessionData(int tabIndex,
     selectedTab->pointerAdjustMethodOverride = tabData.pointerAdjustMethodOverride;
     selectedTab->pointerLaneTolerance = tabData.pointerLaneTolerance;
     selectedTab->pointerAdjustSensitivity = juce::jlimit(1, 20, tabData.pointerAdjustSensitivity);
-    selectedTab->hasCustomPointerMap = tabData.hasCustomPointerMap;
-    selectedTab->preferGlobalPointerMap = tabData.preferGlobalPointerMap;
-    selectedTab->presetPointerJumpPoints = tabData.pointerJumpPoints;
-    selectedTab->presetPointerFreeZones = tabData.pointerFreeZones;
+    selectedTab->selectedGlobalPointerMapRelativePath = tabData.selectedGlobalPointerMapRelativePath;
+    selectedTab->selectedGlobalPointerMapName = tabData.selectedGlobalPointerMapName;
     selectedTab->pointerJumpPoints.clear();
     selectedTab->pointerFreeZones.clear();
 
-    if (selectedTab->preferGlobalPointerMap)
-    {
-        loadGlobalPointerMapForTab(tabIndex);
-    }
-    else if (selectedTab->hasCustomPointerMap)
-    {
-        selectedTab->pointerJumpPoints = selectedTab->presetPointerJumpPoints;
-        selectedTab->pointerFreeZones = selectedTab->presetPointerFreeZones;
-    }
-    else
-    {
-        loadGlobalPointerMapForTab(tabIndex);
-    }
+    const auto requestedGlobalPointerMapRelativePath = selectedTab->selectedGlobalPointerMapRelativePath.trim();
+    const auto requestedGlobalPointerMapName = selectedTab->selectedGlobalPointerMapName.trim();
+    const bool shouldCheckRequestedGlobalPointerMap =
+        (requestedGlobalPointerMapRelativePath.isNotEmpty() || requestedGlobalPointerMapName.isNotEmpty());
 
     selectedTab->midiAssignedDeviceIdentifiers = tabData.midiAssignedDeviceIdentifiers;
 
@@ -2839,6 +3742,105 @@ bool PluginCore::restoreTabFromSessionData(int tabIndex,
         rebuildTabModelFromHostedTabs();
         selectedTabIndex = previousSelected;
         return false;
+    }
+
+    if (shouldCheckRequestedGlobalPointerMap)
+        loadGlobalPointerMapForTab(tabIndex);
+
+    if (shouldCheckRequestedGlobalPointerMap)
+    {
+        const auto mapsDir = getPointerMapsDirectory();
+        const auto selectedMapFile = getGlobalPointerMapFileForTab(tabIndex);
+        const auto selectedMapRelativePath = selectedMapFile.existsAsFile()
+            ? selectedMapFile.getRelativePathFrom(mapsDir).trim()
+            : juce::String();
+        const auto selectedMapName = selectedMapFile.existsAsFile()
+            ? selectedMapFile.getFileNameWithoutExtension().trim()
+            : juce::String();
+
+        auto tabDisplayName = tabData.plugin.pluginName.trim();
+
+        if (tabDisplayName.isEmpty())
+            tabDisplayName = tabData.plugin.pluginDescriptiveName.trim();
+
+        if (tabDisplayName.isEmpty())
+            tabDisplayName = tabData.tabName.trim();
+
+        if (tabDisplayName.isEmpty())
+            tabDisplayName = "Tab " + juce::String(tabIndex + 1);
+
+        auto requestedDisplayName = requestedGlobalPointerMapName;
+
+        if (requestedDisplayName.isEmpty())
+            requestedDisplayName = juce::File(requestedGlobalPointerMapRelativePath).getFileNameWithoutExtension();
+
+        if (requestedDisplayName.isEmpty())
+            requestedDisplayName = "selected external pointer map";
+
+        if (! selectedMapFile.existsAsFile())
+        {
+            warnings.add("External pointer map not found for tab: "
+                         + tabDisplayName
+                         + " | requested="
+                         + requestedDisplayName
+                         + (requestedGlobalPointerMapRelativePath.isNotEmpty()
+                              ? " | saved relative path=" + requestedGlobalPointerMapRelativePath
+                              : juce::String()));
+        }
+        else if (requestedGlobalPointerMapRelativePath.isNotEmpty()
+                 && ! selectedMapRelativePath.equalsIgnoreCase(requestedGlobalPointerMapRelativePath))
+        {
+            int sameNameMatchCount = 0;
+
+            if (requestedGlobalPointerMapName.isNotEmpty())
+            {
+                const auto matchingFiles = findMatchingGlobalPointerMapFilesForTab(tabIndex);
+
+                for (const auto& file : matchingFiles)
+                    if (file.getFileNameWithoutExtension().trim().equalsIgnoreCase(requestedGlobalPointerMapName))
+                        ++sameNameMatchCount;
+            }
+
+            if (requestedGlobalPointerMapName.isNotEmpty()
+                && selectedMapName.equalsIgnoreCase(requestedGlobalPointerMapName)
+                && sameNameMatchCount == 1)
+            {
+                warnings.add("External pointer map moved for tab: "
+                             + tabDisplayName
+                             + " | requested="
+                             + requestedDisplayName
+                             + " | saved relative path="
+                             + requestedGlobalPointerMapRelativePath
+                             + " | loaded="
+                             + selectedMapRelativePath);
+            }
+            else if (requestedGlobalPointerMapName.isNotEmpty()
+                     && selectedMapName.equalsIgnoreCase(requestedGlobalPointerMapName)
+                     && sameNameMatchCount > 1)
+            {
+                warnings.add("External pointer map path changed and filename is duplicated for tab: "
+                             + tabDisplayName
+                             + " | requested="
+                             + requestedDisplayName
+                             + " | saved relative path="
+                             + requestedGlobalPointerMapRelativePath
+                             + " | loaded="
+                             + selectedMapRelativePath
+                             + " | matching filenames="
+                             + juce::String(sameNameMatchCount));
+            }
+            else
+            {
+                warnings.add("External pointer map fallback used for tab: "
+                             + tabDisplayName
+                             + " | requested="
+                             + requestedDisplayName
+                             + " | saved relative path="
+                             + requestedGlobalPointerMapRelativePath
+                             + " | loaded="
+                             + selectedMapRelativePath);
+            }
+        }
     }
 
     if (tabData.plugin.pluginStateBase64.isNotEmpty())
@@ -3261,57 +4263,171 @@ bool PluginCore::moveMacroMappingDown(int macroIndex)
 
 float PluginCore::getMacroCurrentValue(int macroIndex) const
 {
-    if (macroIndex < 0 || macroIndex >= (int) macroCurrentValues.size())
+    if (macroIndex < 0
+        || macroIndex >= (int) macroCurrentValues.size())
+    {
         return 0.0f;
+    }
 
     return macroCurrentValues[(size_t) macroIndex];
 }
 
-void PluginCore::setMacroValueFromHost(int macroIndex, float normalizedValue)
+void PluginCore::setPointerAutomationCallback(
+    PointerAutomationCallback callback)
 {
-    if (macroIndex < 0 || macroIndex >= (int) macroCurrentValues.size())
+    pointerAutomationCallback = callback;
+}
+
+void PluginCore::armPointerAutomationCapture(
+    int milliseconds)
+{
+    pointerAutomationCaptureExpiryMs.store(
+        juce::Time::getMillisecondCounter()
+            + (juce::uint32) juce::jmax(1, milliseconds),
+        std::memory_order_release);
+}
+
+void PluginCore::setMacroCurrentValueFromPointerAutomation(
+    int macroIndex,
+    float normalizedValue)
+{
+    if (macroIndex < 0
+        || macroIndex >= (int) macroCurrentValues.size())
+    {
         return;
+    }
 
-    normalizedValue = juce::jlimit(0.0f, 1.0f, normalizedValue);
-    macroCurrentValues[(size_t) macroIndex] = normalizedValue;
+    macroCurrentValues[(size_t) macroIndex] =
+        juce::jlimit(0.0f, 1.0f, normalizedValue);
+}
 
-    const int mappingIndex = findMacroMappingIndexByMacroSlot(macroIndex);
+void PluginCore::setMacroValueFromHost(
+    int macroIndex,
+    float normalizedValue)
+{
+    if (macroIndex < 0
+        || macroIndex >= (int) macroCurrentValues.size())
+    {
+        return;
+    }
+
+    normalizedValue =
+        juce::jlimit(0.0f, 1.0f, normalizedValue);
+
+    macroCurrentValues[(size_t) macroIndex] =
+        normalizedValue;
+
+    const int mappingIndex =
+        findMacroMappingIndexByMacroSlot(macroIndex);
 
     if (mappingIndex < 0)
         return;
 
-    const auto& mapping = macroMappings.getReference(mappingIndex);
+    const auto& mapping =
+        macroMappings.getReference(mappingIndex);
 
     if (! mapping.enabled)
         return;
 
-    if (! juce::isPositiveAndBelow(mapping.tabIndex, hostedTabs.size()))
+    if (! juce::isPositiveAndBelow(
+            mapping.tabIndex,
+            hostedTabs.size()))
+    {
         return;
+    }
 
     auto* tab = hostedTabs[mapping.tabIndex];
 
-    if (tab == nullptr || tab->pluginInstance == nullptr)
+    if (tab == nullptr
+        || tab->pluginInstance == nullptr)
+    {
         return;
+    }
 
-    auto& parameters = tab->pluginInstance->getParameters();
+    auto& parameters =
+        tab->pluginInstance->getParameters();
 
-    if (! juce::isPositiveAndBelow(mapping.parameterIndex, parameters.size()))
+    if (! juce::isPositiveAndBelow(
+            mapping.parameterIndex,
+            parameters.size()))
+    {
         return;
+    }
 
-    if (auto* parameter = parameters[mapping.parameterIndex])
-        parameter->setValueNotifyingHost(normalizedValue);
+    if (auto* parameter =
+            parameters[mapping.parameterIndex])
+    {
+        const bool previousApplyingState =
+            applyingMacroValueFromHost.exchange(
+                true,
+                std::memory_order_acq_rel);
+
+        parameter->setValueNotifyingHost(
+            normalizedValue);
+
+        applyingMacroValueFromHost.store(
+            previousApplyingState,
+            std::memory_order_release);
+    }
 }
 
-void PluginCore::audioProcessorParameterChanged(juce::AudioProcessor* processor,
-                                                int parameterIndex,
-                                                float newValue)
+void PluginCore::audioProcessorParameterChanged(
+    juce::AudioProcessor* processor,
+    int parameterIndex,
+    float newValue)
 {
-    captureLastTouchedParameter(processor, parameterIndex, newValue);
+    captureLastTouchedParameter(
+        processor,
+        parameterIndex,
+        newValue);
 
-    const int tabIndex = findHostedTabIndexForProcessor(processor);
+    const int tabIndex =
+        findHostedTabIndexForProcessor(processor);
 
     if (tabIndex < 0)
         return;
+
+    const auto captureExpiry =
+        pointerAutomationCaptureExpiryMs.load(
+            std::memory_order_acquire);
+
+    const auto currentTime =
+        juce::Time::getMillisecondCounter();
+
+    const bool pointerCaptureActive =
+        captureExpiry != 0
+        && currentTime <= captureExpiry;
+
+    if (pointerCaptureActive
+        && ! applyingMacroValueFromHost.load(
+            std::memory_order_acquire)
+        && pointerAutomationCallback)
+    {
+        const int mappingIndex =
+            findMacroMappingIndexByTarget(
+                tabIndex,
+                parameterIndex);
+
+        if (juce::isPositiveAndBelow(
+                mappingIndex,
+                macroMappings.size()))
+        {
+            const auto& mapping =
+                macroMappings.getReference(mappingIndex);
+
+            if (mapping.enabled
+                && mapping.macroIndex >= 0
+                && mapping.macroIndex < 128)
+            {
+                pointerAutomationCallback(
+                    mapping.macroIndex,
+                    juce::jlimit(
+                        0.0f,
+                        1.0f,
+                        newValue));
+            }
+        }
+    }
 
     if (isDirtyMarkingSuppressed())
         return;
@@ -3341,13 +4457,18 @@ void PluginCore::sendMidiPanic()
 
     for (int channel = 1; channel <= 16; ++channel)
     {
-        panicMidi.addEvent(juce::MidiMessage::controllerEvent(channel, 64, 0), 0);
-        panicMidi.addEvent(juce::MidiMessage::controllerEvent(channel, 123, 0), 0);
-        panicMidi.addEvent(juce::MidiMessage::controllerEvent(channel, 120, 0), 0);
+        panicMidi.addEvent(juce::MidiMessage::controllerEvent(channel, 64, 0), 0);   // Sustain off
+        panicMidi.addEvent(juce::MidiMessage::controllerEvent(channel, 66, 0), 0);   // Sostenuto off
+        panicMidi.addEvent(juce::MidiMessage::controllerEvent(channel, 67, 0), 0);   // Soft pedal off
+        panicMidi.addEvent(juce::MidiMessage::controllerEvent(channel, 121, 0), 0);  // Reset all controllers
+        panicMidi.addEvent(juce::MidiMessage::controllerEvent(channel, 123, 0), 0);  // All notes off
+        panicMidi.addEvent(juce::MidiMessage::controllerEvent(channel, 120, 0), 0);  // All sound off
+
+        for (int note = 0; note < 128; ++note)
+            panicMidi.addEvent(juce::MidiMessage::noteOff(channel, note), 0);
     }
 
     const int numSamples = juce::jmax(1, currentBlockSize);
-    const int numChannels = 2;
 
     for (int i = 0; i < hostedTabs.size(); ++i)
     {
@@ -3358,7 +4479,11 @@ void PluginCore::sendMidiPanic()
 
         auto* instance = tab->pluginInstance.get();
 
-        juce::AudioBuffer<float> tempAudio(numChannels, numSamples);
+        const int totalInputChannels = juce::jmax(0, instance->getTotalNumInputChannels());
+        const int totalOutputChannels = juce::jmax(0, instance->getTotalNumOutputChannels());
+        const int processChannels = juce::jmax(1, juce::jmax(totalInputChannels, totalOutputChannels));
+
+        juce::AudioBuffer<float> tempAudio(processChannels, numSamples);
         tempAudio.clear();
 
         juce::MidiBuffer panicCopy = panicMidi;

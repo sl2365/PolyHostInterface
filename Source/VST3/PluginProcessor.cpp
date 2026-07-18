@@ -1,5 +1,6 @@
 #include "PluginProcessor.h"
 #include "PluginEditor.h"
+#include <cstring>
 
 PolyHostPluginProcessor::MacroParameter::MacroParameter(PolyHostPluginProcessor& ownerIn, int macroIndexIn)
     : owner(ownerIn),
@@ -12,9 +13,12 @@ float PolyHostPluginProcessor::MacroParameter::getValue() const
     return owner.getCore().getMacroCurrentValue(macroIndex);
 }
 
-void PolyHostPluginProcessor::MacroParameter::setValue(float newValue)
+void PolyHostPluginProcessor::MacroParameter::setValue(
+    float newValue)
 {
-    owner.getCore().setMacroValueFromHost(macroIndex, newValue);
+    owner.setMacroParameterValue(
+        macroIndex,
+        newValue);
 }
 
 float PolyHostPluginProcessor::MacroParameter::getDefaultValue() const
@@ -86,9 +90,11 @@ void PolyHostPluginProcessor::initialiseMacroParameters()
 
     for (int i = 0; i < macroCount; ++i)
     {
-        auto parameter = std::make_unique<MacroParameter>(*this, i);
-        addParameter(parameter.get());
-        macroParameters.push_back(std::move(parameter));
+        auto* parameter =
+            new MacroParameter(*this, i);
+
+        addParameter(parameter);
+        macroParameters.push_back(parameter);
     }
 }
 
@@ -98,42 +104,78 @@ PolyHostPluginProcessor::PolyHostPluginProcessor()
                            .withOutput("Output", juce::AudioChannelSet::stereo(), true))
 {
     initialiseMacroParameters();
+
+    core.setPointerAutomationCallback(
+        [this](int macroIndex,
+               float normalizedValue)
+        {
+            queuePointerAutomationHostNotification(
+                macroIndex,
+                normalizedValue);
+        });
 }
 
 PolyHostPluginProcessor::~PolyHostPluginProcessor()
 {
+    core.setPointerAutomationCallback({});
+
+    cancelPendingUpdate();
+    stopTimer();
+    endPointerAutomationGesture();
 }
 
-void PolyHostPluginProcessor::prepareToPlay(double sampleRate, int samplesPerBlock)
+void PolyHostPluginProcessor::prepareToPlay(double sampleRate,
+                                            int samplesPerBlock)
 {
     core.prepareToPlay(sampleRate, samplesPerBlock);
+
+    if (standaloneAudioExtension != nullptr)
+    {
+        standaloneAudioExtension->prepareToPlay(
+            sampleRate,
+            samplesPerBlock);
+    }
 }
 
 void PolyHostPluginProcessor::releaseResources()
 {
+    if (standaloneAudioExtension != nullptr)
+        standaloneAudioExtension->releaseResources();
+
     core.releaseResources();
 }
 
-void PolyHostPluginProcessor::processBlock(juce::AudioBuffer<float>& buffer,
-                                           juce::MidiBuffer& midiMessages)
+void PolyHostPluginProcessor::processBlock(
+    juce::AudioBuffer<float>& buffer,
+    juce::MidiBuffer& midiMessages)
 {
     juce::ScopedNoDenormals noDenormals;
 
-    for (auto i = getTotalNumInputChannels(); i < getTotalNumOutputChannels(); ++i)
+    for (auto i = getTotalNumInputChannels();
+         i < getTotalNumOutputChannels();
+         ++i)
+    {
         buffer.clear(i, 0, buffer.getNumSamples());
+    }
 
     for (const auto metadata : midiMessages)
     {
         const auto& message = metadata.getMessage();
 
-        pushMidiMonitorEvent(message, "Host MIDI");
+        pushMidiMonitorEvent(message);
 
         if (message.isController())
-            pushPointerMidiEvent(message.getControllerNumber(),
-                                 message.getControllerValue());
+        {
+            pushPointerMidiEvent(
+                message.getControllerNumber(),
+                message.getControllerValue());
+        }
     }
 
-    core.processBlock(buffer, midiMessages);
+    core.processBlock(buffer, midiMessages, getPlayHead());
+
+    if (standaloneAudioExtension != nullptr)
+        standaloneAudioExtension->processOutputBlock(buffer);
 }
 
 juce::AudioProcessorEditor* PolyHostPluginProcessor::createEditor()
@@ -202,11 +244,12 @@ bool PolyHostPluginProcessor::isBusesLayoutSupported(const BusesLayout& layouts)
     const auto inputSet = layouts.getMainInputChannelSet();
     const auto outputSet = layouts.getMainOutputChannelSet();
 
-    const bool inputOk = (inputSet == juce::AudioChannelSet::mono()
-                          || inputSet == juce::AudioChannelSet::stereo());
+    const bool inputOk =
+        inputSet == juce::AudioChannelSet::mono()
+        || inputSet == juce::AudioChannelSet::stereo();
 
-    const bool outputOk = (outputSet == juce::AudioChannelSet::mono()
-                           || outputSet == juce::AudioChannelSet::stereo());
+    const bool outputOk =
+        outputSet == juce::AudioChannelSet::stereo();
 
     return inputOk && outputOk;
 }
@@ -215,10 +258,19 @@ void PolyHostPluginProcessor::getStateInformation(juce::MemoryBlock& destData)
 {
     auto stateXml = std::make_unique<juce::XmlElement>("POLYHOST_STATE");
 
-    stateXml->setAttribute("sessionName", core.getSessionName());
-    stateXml->setAttribute("currentPresetFile",
-                           core.getSessionDocument().getCurrentPresetFile().getFullPathName());
-    stateXml->setAttribute("selectedTabIndex", core.getSelectedTabIndex());
+    stateXml->setAttribute(
+        "sessionName",
+        core.getSessionName());
+
+    stateXml->setAttribute(
+        "currentPresetFile",
+        AppSettings::makePresetPathPortable(
+            core.getSessionDocument()
+                .getCurrentPresetFile()));
+
+    stateXml->setAttribute(
+        "selectedTabIndex",
+        core.getSelectedTabIndex());
 
     auto sessionData = core.buildSessionData();
 
@@ -237,7 +289,13 @@ void PolyHostPluginProcessor::getStateInformation(juce::MemoryBlock& destData)
 
 void PolyHostPluginProcessor::setStateInformation(const void* data, int sizeInBytes)
 {
-    std::unique_ptr<juce::XmlElement> stateXml(getXmlFromBinary(data, sizeInBytes));
+    const juce::ScopedLock stateRestoreLock(
+        getCallbackLock());
+
+    std::unique_ptr<juce::XmlElement> stateXml(
+        getXmlFromBinary(
+            data,
+            sizeInBytes));
 
     if (stateXml == nullptr)
         return;
@@ -288,10 +346,21 @@ void PolyHostPluginProcessor::setStateInformation(const void* data, int sizeInBy
     if (! restoredSession)
         core.resetForNewPreset();
 
-    if (currentPresetFilePath.isNotEmpty())
-        core.getSessionDocument().setCurrentPresetFile(juce::File(currentPresetFilePath));
+    const auto currentPresetFile =
+        AppSettings::resolvePresetPath(
+            currentPresetFilePath);
+
+    if (currentPresetFile.existsAsFile())
+    {
+        core.getSessionDocument()
+            .setCurrentPresetFile(
+                currentPresetFile);
+    }
     else
-        core.getSessionDocument().setCurrentPresetFile({});
+    {
+        core.getSessionDocument()
+            .setCurrentPresetFile({});
+    }
 
     core.markClean();
     core.suppressDirtyMarkingFor(4000);
@@ -328,34 +397,295 @@ bool PolyHostPluginProcessor::popNextPointerMidiEvent(PointerMidiEvent& dest)
     return true;
 }
 
-void PolyHostPluginProcessor::pushMidiMonitorEvent(const juce::MidiMessage& message,
-                                                   const juce::String& sourceName)
+void PolyHostPluginProcessor::pushMidiMonitorEvent(
+    const juce::MidiMessage& message)
 {
-    const juce::ScopedLock sl(midiMonitorQueueLock);
+    const int dataSize =
+        message.getRawDataSize();
 
-    MidiMonitorEvent event;
-    event.message = message;
-    event.sourceName = sourceName;
-    event.valid = true;
+    if (dataSize <= 0
+        || dataSize > midiMonitorMaxMessageBytes)
+    {
+        return;
+    }
 
-    midiMonitorQueue.add(event);
+    const int write =
+        midiMonitorWriteIndex.load(
+            std::memory_order_relaxed);
 
-    if (midiMonitorQueue.size() > 512)
-        midiMonitorQueue.removeRange(0, midiMonitorQueue.size() - 512);
+    const int nextWrite =
+        (write + 1) % midiMonitorQueueSize;
+
+    const int read =
+        midiMonitorReadIndex.load(
+            std::memory_order_acquire);
+
+    if (nextWrite == read)
+        return;
+
+    auto& event =
+        midiMonitorQueue[write];
+
+    std::memcpy(
+        event.data.data(),
+        message.getRawData(),
+        static_cast<size_t>(dataSize));
+
+    event.dataSize = dataSize;
+    event.timeStamp = message.getTimeStamp();
+
+    midiMonitorWriteIndex.store(
+        nextWrite,
+        std::memory_order_release);
 }
 
-juce::Array<PolyHostPluginProcessor::MidiMonitorEvent> PolyHostPluginProcessor::popPendingMidiMonitorEvents()
+juce::Array<
+    PolyHostPluginProcessor::MidiMonitorEvent>
+PolyHostPluginProcessor::popPendingMidiMonitorEvents()
 {
-    const juce::ScopedLock sl(midiMonitorQueueLock);
+    juce::Array<MidiMonitorEvent> result;
 
-    auto result = midiMonitorQueue;
-    midiMonitorQueue.clear();
+    for (;;)
+    {
+        const int read =
+            midiMonitorReadIndex.load(
+                std::memory_order_relaxed);
+
+        const int write =
+            midiMonitorWriteIndex.load(
+                std::memory_order_acquire);
+
+        if (read == write)
+            break;
+
+        auto& rawEvent =
+            midiMonitorQueue[read];
+
+        if (rawEvent.dataSize > 0
+            && rawEvent.dataSize
+                <= midiMonitorMaxMessageBytes)
+        {
+            MidiMonitorEvent event;
+
+            event.message =
+                juce::MidiMessage(
+                    rawEvent.data.data(),
+                    rawEvent.dataSize,
+                    rawEvent.timeStamp);
+
+            event.sourceName = "Host MIDI";
+            event.valid = true;
+
+            result.add(event);
+        }
+
+        rawEvent.dataSize = 0;
+
+        midiMonitorReadIndex.store(
+            (read + 1) % midiMonitorQueueSize,
+            std::memory_order_release);
+    }
+
     return result;
 }
 
 PluginCore& PolyHostPluginProcessor::getCore()
 {
     return core;
+}
+
+void PolyHostPluginProcessor::setMacroParameterValue(
+    int macroIndex,
+    float normalizedValue)
+{
+    if (pointerAutomationNotificationMacroIndex.load(
+            std::memory_order_acquire) == macroIndex)
+    {
+        core.setMacroCurrentValueFromPointerAutomation(
+            macroIndex,
+            normalizedValue);
+
+        return;
+    }
+
+    core.setMacroValueFromHost(
+        macroIndex,
+        normalizedValue);
+}
+
+void PolyHostPluginProcessor::
+    queuePointerAutomationHostNotification(
+        int macroIndex,
+        float normalizedValue)
+{
+    if (macroIndex < 0
+        || macroIndex >= (int) macroParameters.size())
+    {
+        return;
+    }
+
+    pendingPointerAutomationValue.store(
+        juce::jlimit(
+            0.0f,
+            1.0f,
+            normalizedValue),
+        std::memory_order_relaxed);
+
+    pendingPointerAutomationMacroIndex.store(
+        macroIndex,
+        std::memory_order_relaxed);
+
+    pendingPointerAutomationSequence.fetch_add(
+        1,
+        std::memory_order_release);
+
+    triggerAsyncUpdate();
+}
+
+void PolyHostPluginProcessor::handleAsyncUpdate()
+{
+    juce::uint32 sequenceBefore = 0;
+    juce::uint32 sequenceAfter = 0;
+    int macroIndex = -1;
+    float normalizedValue = 0.0f;
+
+    do
+    {
+        sequenceBefore =
+            pendingPointerAutomationSequence.load(
+                std::memory_order_acquire);
+
+        if (sequenceBefore
+            == lastHandledPointerAutomationSequence)
+        {
+            return;
+        }
+
+        macroIndex =
+            pendingPointerAutomationMacroIndex.load(
+                std::memory_order_relaxed);
+
+        normalizedValue =
+            pendingPointerAutomationValue.load(
+                std::memory_order_relaxed);
+
+        sequenceAfter =
+            pendingPointerAutomationSequence.load(
+                std::memory_order_acquire);
+    }
+    while (sequenceBefore != sequenceAfter);
+
+    lastHandledPointerAutomationSequence =
+        sequenceAfter;
+
+    notifyHostOfPointerAutomation(
+        macroIndex,
+        normalizedValue);
+
+    if (pendingPointerAutomationSequence.load(
+            std::memory_order_acquire)
+        != lastHandledPointerAutomationSequence)
+    {
+        triggerAsyncUpdate();
+    }
+}
+
+void PolyHostPluginProcessor::
+    notifyHostOfPointerAutomation(
+        int macroIndex,
+        float normalizedValue)
+{
+    if (! juce::isPositiveAndBelow(
+            macroIndex,
+            (int) macroParameters.size()))
+    {
+        return;
+    }
+
+    auto* parameter =
+        macroParameters[(size_t) macroIndex];
+
+    if (parameter == nullptr)
+        return;
+
+    if (activePointerAutomationMacroIndex
+        != macroIndex)
+    {
+        endPointerAutomationGesture();
+
+        parameter->beginChangeGesture();
+
+        activePointerAutomationMacroIndex =
+            macroIndex;
+    }
+
+    normalizedValue =
+        juce::jlimit(
+            0.0f,
+            1.0f,
+            normalizedValue);
+
+    pointerAutomationNotificationMacroIndex.store(
+        macroIndex,
+        std::memory_order_release);
+
+    parameter->setValueNotifyingHost(
+        normalizedValue);
+
+    pointerAutomationNotificationMacroIndex.store(
+        -1,
+        std::memory_order_release);
+
+    lastPointerAutomationChangeMs =
+        juce::Time::getMillisecondCounter();
+
+    startTimer(50);
+}
+
+void PolyHostPluginProcessor::timerCallback()
+{
+    if (activePointerAutomationMacroIndex < 0)
+    {
+        stopTimer();
+        return;
+    }
+
+    const auto elapsedMs =
+        juce::Time::getMillisecondCounter()
+        - lastPointerAutomationChangeMs;
+
+    if (elapsedMs >= 300)
+    {
+        endPointerAutomationGesture();
+        stopTimer();
+    }
+}
+
+void PolyHostPluginProcessor::
+    endPointerAutomationGesture()
+{
+    if (! juce::isPositiveAndBelow(
+            activePointerAutomationMacroIndex,
+            (int) macroParameters.size()))
+    {
+        activePointerAutomationMacroIndex = -1;
+        return;
+    }
+
+    if (auto* parameter =
+            macroParameters[
+                (size_t) activePointerAutomationMacroIndex])
+    {
+        parameter->endChangeGesture();
+    }
+
+    activePointerAutomationMacroIndex = -1;
+}
+
+void PolyHostPluginProcessor::setStandaloneAudioExtension(
+    StandaloneAudioExtension* extension)
+{
+    standaloneAudioExtension = extension;
 }
 
 juce::AudioProcessor* JUCE_CALLTYPE createPluginFilter()

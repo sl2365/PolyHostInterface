@@ -119,12 +119,37 @@ void AppSettings::setClearDebugLogOnStartup(bool shouldClear)
 
 juce::String AppSettings::getLastPresetPath() const
 {
-    return xml->getStringAttribute(kLastPresetPath);
+    const auto storedPath =
+        xml->getStringAttribute(kLastPresetPath).trim();
+
+    const auto resolvedFile =
+        resolvePresetPath(storedPath);
+
+    return resolvedFile.getFullPathName();
 }
 
 void AppSettings::setLastPresetPath(const juce::String& path)
 {
-    xml->setAttribute(kLastPresetPath, path);
+    const auto trimmedPath = path.trim();
+
+    if (trimmedPath.isEmpty())
+    {
+        xml->removeAttribute(kLastPresetPath);
+        save();
+        return;
+    }
+
+    const auto resolvedFile =
+        resolvePresetPath(trimmedPath);
+
+    const auto portablePath =
+        makePresetPathPortable(resolvedFile);
+
+    if (portablePath.isNotEmpty())
+        xml->setAttribute(kLastPresetPath, portablePath);
+    else
+        xml->removeAttribute(kLastPresetPath);
+
     save();
 }
 
@@ -196,8 +221,64 @@ void AppSettings::setDefaultTempoBpm(double bpm)
 
 juce::File AppSettings::getAppDirectory()
 {
-    return juce::File::getSpecialLocation(juce::File::currentExecutableFile)
+    return juce::File::getSpecialLocation(
+               juce::File::currentExecutableFile)
         .getParentDirectory();
+}
+
+juce::String AppSettings::makePresetPathPortable(
+    const juce::File& file)
+{
+    if (file.getFullPathName().isEmpty())
+        return {};
+
+    const auto presetsDirectory =
+        getPresetsDirectory();
+
+    if (! file.isAChildOf(presetsDirectory))
+        return {};
+
+    return file.getRelativePathFrom(
+        getAppDirectory());
+}
+
+juce::File AppSettings::resolvePresetPath(
+    const juce::String& path)
+{
+    const auto trimmedPath = path.trim();
+
+    if (trimmedPath.isEmpty())
+        return {};
+
+    const auto appDirectory =
+        getAppDirectory();
+
+    const auto presetsDirectory =
+        getPresetsDirectory();
+
+    juce::File candidate;
+
+    if (juce::File::isAbsolutePath(trimmedPath))
+    {
+        candidate = juce::File(trimmedPath);
+    }
+    else
+    {
+        candidate =
+            appDirectory.getChildFile(trimmedPath);
+    }
+
+    if (candidate.isAChildOf(presetsDirectory))
+        return candidate;
+
+    const auto localPreset =
+        presetsDirectory.getChildFile(
+            candidate.getFileName());
+
+    if (localPreset.isAChildOf(presetsDirectory))
+        return localPreset;
+
+    return {};
 }
 
 juce::String AppSettings::makePathPortable(const juce::File& file)
@@ -400,15 +481,29 @@ juce::StringArray AppSettings::getRecentPresetPaths() const
 {
     juce::StringArray paths;
 
-    if (auto* recentXml = xml->getChildByName(kRecentPresets))
+    if (auto* recentXml =
+            xml->getChildByName(kRecentPresets))
     {
-        for (auto* presetXml : recentXml->getChildIterator())
+        for (auto* presetXml :
+             recentXml->getChildIterator())
         {
-            if (presetXml->hasTagName("Preset"))
+            if (! presetXml->hasTagName("Preset"))
+                continue;
+
+            const auto storedPath =
+                presetXml->getStringAttribute("path")
+                    .trim();
+
+            const auto resolvedFile =
+                resolvePresetPath(storedPath);
+
+            const auto resolvedPath =
+                resolvedFile.getFullPathName();
+
+            if (resolvedPath.isNotEmpty())
             {
-                auto path = presetXml->getStringAttribute("path").trim();
-                if (path.isNotEmpty())
-                    paths.add(path);
+                paths.addIfNotAlreadyThere(
+                    resolvedPath);
             }
         }
     }
@@ -416,29 +511,61 @@ juce::StringArray AppSettings::getRecentPresetPaths() const
     return paths;
 }
 
-void AppSettings::addRecentPresetPath(const juce::String& path)
+void AppSettings::addRecentPresetPath(
+    const juce::String& path)
 {
-    auto trimmedPath = path.trim();
+    const auto resolvedFile =
+        resolvePresetPath(path);
 
-    if (trimmedPath.isEmpty())
+    const auto portablePath =
+        makePresetPathPortable(resolvedFile);
+
+    if (portablePath.isEmpty())
         return;
 
-    auto previous = getRecentPresetPaths();
-    previous.removeString(trimmedPath);
-    previous.insert(0, trimmedPath);
+    const auto resolvedPath =
+        resolvedFile.getFullPathName();
+
+    auto previous =
+        getRecentPresetPaths();
+
+    previous.removeString(
+        resolvedPath,
+        true);
+
+    previous.insert(
+        0,
+        resolvedPath);
 
     while (previous.size() > 10)
         previous.remove(previous.size() - 1);
 
-    if (auto* existing = xml->getChildByName(kRecentPresets))
-        xml->removeChildElement(existing, true);
-
-    auto* recentXml = xml->createNewChildElement(kRecentPresets);
-
-    for (auto& recentPath : previous)
+    if (auto* existing =
+            xml->getChildByName(kRecentPresets))
     {
-        auto* presetXml = recentXml->createNewChildElement("Preset");
-        presetXml->setAttribute("path", recentPath);
+        xml->removeChildElement(existing, true);
+    }
+
+    auto* recentXml =
+        xml->createNewChildElement(kRecentPresets);
+
+    for (const auto& recentPath : previous)
+    {
+        const auto recentFile =
+            resolvePresetPath(recentPath);
+
+        const auto recentPortablePath =
+            makePresetPathPortable(recentFile);
+
+        if (recentPortablePath.isEmpty())
+            continue;
+
+        auto* presetXml =
+            recentXml->createNewChildElement("Preset");
+
+        presetXml->setAttribute(
+            "path",
+            recentPortablePath);
     }
 
     save();
@@ -446,35 +573,61 @@ void AppSettings::addRecentPresetPath(const juce::String& path)
 
 void AppSettings::clearRecentPresetPaths()
 {
-    if (auto* existing = xml->getChildByName(kRecentPresets))
+    if (auto* existing =
+            xml->getChildByName(kRecentPresets))
+    {
         xml->removeChildElement(existing, true);
+    }
 
     save();
 }
 
 void AppSettings::removeMissingRecentPresetPaths()
 {
-    auto recentPaths = getRecentPresetPaths();
-    juce::StringArray validPaths;
+    const auto recentPaths =
+        getRecentPresetPaths();
 
-    for (auto& path : recentPaths)
+    juce::StringArray validPortablePaths;
+
+    for (const auto& path : recentPaths)
     {
-        juce::File file(path);
-        if (file.existsAsFile())
-            validPaths.add(path);
+        const auto file =
+            resolvePresetPath(path);
+
+        if (! file.existsAsFile())
+            continue;
+
+        const auto portablePath =
+            makePresetPathPortable(file);
+
+        if (portablePath.isNotEmpty())
+        {
+            validPortablePaths.addIfNotAlreadyThere(
+                portablePath);
+        }
     }
 
-    if (auto* existing = xml->getChildByName(kRecentPresets))
-        xml->removeChildElement(existing, true);
-
-    if (!validPaths.isEmpty())
+    if (auto* existing =
+            xml->getChildByName(kRecentPresets))
     {
-        auto* recentXml = xml->createNewChildElement(kRecentPresets);
+        xml->removeChildElement(existing, true);
+    }
 
-        for (auto& validPath : validPaths)
+    if (! validPortablePaths.isEmpty())
+    {
+        auto* recentXml =
+            xml->createNewChildElement(kRecentPresets);
+
+        for (const auto& validPath :
+             validPortablePaths)
         {
-            auto* presetXml = recentXml->createNewChildElement("Preset");
-            presetXml->setAttribute("path", validPath);
+            auto* presetXml =
+                recentXml->createNewChildElement(
+                    "Preset");
+
+            presetXml->setAttribute(
+                "path",
+                validPath);
         }
     }
 

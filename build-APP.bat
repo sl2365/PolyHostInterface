@@ -28,11 +28,12 @@ set "CMAKE=%TOOLS%\cmake\bin\cmake.exe"
 set "BUILD_DIR=%ROOT%build-APP"
 set "DIST_DIR=%ROOT%dist"
 set "EXENAME=PolyHostInterface.exe"
+set "FINAL_EXE=%DIST_DIR%\%EXENAME%"
 set "VST2_SDK=%TOOLS%\vstsdk2.4"
 
 echo.
 echo ============================================================
-echo PolyHost APP Build Script
+echo PolyHost - Standalone App - Build Script
 echo ============================================================
 echo.
 
@@ -97,25 +98,34 @@ if errorlevel 1 (
 )
 
 echo.
-echo Copying output to dist...
+echo Copying standalone EXE to dist...
 if not exist "%DIST_DIR%" mkdir "%DIST_DIR%"
 
-if exist "%BUILD_DIR%\PolyHost_artefacts\Release\%EXENAME%" (
-    copy /Y "%BUILD_DIR%\PolyHost_artefacts\Release\%EXENAME%" "%DIST_DIR%\%EXENAME%"
+if exist "%BUILD_DIR%\PolyHost_artefacts\Release\Standalone\%EXENAME%" (
+    if exist "%FINAL_EXE%" del /f /q "%FINAL_EXE%"
+    copy /Y "%BUILD_DIR%\PolyHost_artefacts\Release\Standalone\%EXENAME%" "%FINAL_EXE%" >nul
+    if errorlevel 1 (
+        echo ERROR: Failed to copy standalone EXE to:
+        echo %FINAL_EXE%
+        pause
+        exit /b 1
+    )
+    echo Copied EXE to:
+    echo %FINAL_EXE%
 ) else (
     echo Expected EXE not found at:
-    echo %BUILD_DIR%\PolyHost_artefacts\Release\%EXENAME%
+    echo %BUILD_DIR%\PolyHost_artefacts\Release\Standalone\%EXENAME%
     echo.
     echo Build may have succeeded with a different output path.
     pause
     exit /b 1
 )
 
-:: Close cmd and Launch app
+:: Close cmd and launch app
 echo.
 echo ============================================================
 echo APP Build complete. Launching %EXENAME% in 2 seconds...
 echo ============================================================
 timeout /t 2 /nobreak >nul
-start "" "%DIST_DIR%\%EXENAME%"
-exit
+start "" "%FINAL_EXE%"
+exit /b 0

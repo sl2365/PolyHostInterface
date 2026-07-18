@@ -189,6 +189,13 @@ public:
     static juce::File getPresetsDirectory();
     static juce::File getPluginMapsDirectory();
     static juce::File getAppDirectory();
+
+    static juce::String makePresetPathPortable(
+        const juce::File& file);
+
+    static juce::File resolvePresetPath(
+        const juce::String& path);
+
     static juce::String makePathPortable(const juce::File& file);
     static juce::File resolvePortablePath(const juce::String& path);
     static juce::String getDriveFlexiblePath(const juce::File& file);

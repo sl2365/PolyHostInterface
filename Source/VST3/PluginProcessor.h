@@ -1,9 +1,12 @@
 #pragma once
 #include <JuceHeader.h>
+#include <array>
 #include <atomic>
 #include "PluginCore.h"
 
-class PolyHostPluginProcessor : public juce::AudioProcessor
+class PolyHostPluginProcessor : public juce::AudioProcessor,
+                                private juce::AsyncUpdater,
+                                private juce::Timer
 {
 public:
     class MacroParameter final : public juce::AudioProcessorParameter
@@ -76,21 +79,81 @@ public:
     void pushPointerMidiEvent(int controllerNumber, int controllerValue);
 
     juce::Array<MidiMonitorEvent> popPendingMidiMonitorEvents();
-    void pushMidiMonitorEvent(const juce::MidiMessage& message, const juce::String& sourceName);
+    void pushMidiMonitorEvent(
+        const juce::MidiMessage& message);
 
     PluginCore& getCore();
+
+    class StandaloneAudioExtension
+    {
+    public:
+        virtual ~StandaloneAudioExtension() = default;
+
+        virtual void prepareToPlay(double sampleRate,
+                                   int samplesPerBlock) = 0;
+
+        virtual void processOutputBlock(
+            juce::AudioBuffer<float>& buffer) = 0;
+
+        virtual void releaseResources() = 0;
+    };
+
+    void setStandaloneAudioExtension(
+        StandaloneAudioExtension* extension);
 
 private:
     void initialiseMacroParameters();
 
+    void setMacroParameterValue(int macroIndex,
+                                float normalizedValue);
+
+    void queuePointerAutomationHostNotification(
+        int macroIndex,
+        float normalizedValue);
+
+    void handleAsyncUpdate() override;
+    void timerCallback() override;
+
+    void notifyHostOfPointerAutomation(
+        int macroIndex,
+        float normalizedValue);
+
+    void endPointerAutomationGesture();
+
+    StandaloneAudioExtension* standaloneAudioExtension = nullptr;
     PluginCore core;
-    std::vector<std::unique_ptr<MacroParameter>> macroParameters;
+    std::vector<MacroParameter*> macroParameters;
+
+    std::atomic<int> pendingPointerAutomationMacroIndex { -1 };
+    std::atomic<float> pendingPointerAutomationValue { 0.0f };
+    std::atomic<juce::uint32> pendingPointerAutomationSequence { 0 };
+
+    juce::uint32 lastHandledPointerAutomationSequence = 0;
+    std::atomic<int> pointerAutomationNotificationMacroIndex { -1 };
+    int activePointerAutomationMacroIndex = -1;
+    juce::uint32 lastPointerAutomationChangeMs = 0;
 
     static constexpr int pointerMidiQueueSize = 128;
     PointerMidiEvent pointerMidiQueue[pointerMidiQueueSize];
     std::atomic<int> pointerMidiWriteIndex { 0 };
     std::atomic<int> pointerMidiReadIndex { 0 };
 
-    juce::Array<MidiMonitorEvent> midiMonitorQueue;
-    juce::CriticalSection midiMonitorQueueLock;
+    static constexpr int midiMonitorMaxMessageBytes = 1024;
+    static constexpr int midiMonitorQueueSize = 512;
+
+    struct RawMidiMonitorEvent
+    {
+        std::array<
+            juce::uint8,
+            midiMonitorMaxMessageBytes> data {};
+
+        int dataSize = 0;
+        double timeStamp = 0.0;
+    };
+
+    RawMidiMonitorEvent
+        midiMonitorQueue[midiMonitorQueueSize];
+
+    std::atomic<int> midiMonitorWriteIndex { 0 };
+    std::atomic<int> midiMonitorReadIndex { 0 };
 };

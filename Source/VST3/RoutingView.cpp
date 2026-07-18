@@ -149,10 +149,12 @@ void RoutingView::ModuleRow::setModule(const ModuleEntry& newEntry)
         typeButton.setColour(juce::TextButton::buttonColourId, juce::Colour(0xFF555555));
     }
 
-    if (entry.midiAssignmentCount > 0)
-        midiButton.setButtonText(ButtonStyling::Labels::midi() + " (" + juce::String(entry.midiAssignmentCount) + ")");
-    else
-        midiButton.setButtonText(ButtonStyling::Labels::midi());
+    midiButton.setButtonText("MIDI Ch");
+
+    midiButton.setTooltip(
+        entry.midiAssignmentsTooltip.isNotEmpty()
+            ? entry.midiAssignmentsTooltip
+            : "MIDI Ch: None");
 
     bypassButton.setVisualState(! entry.isBypassed);
     soloButton.setVisualState(entry.isSoloed);

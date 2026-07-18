@@ -1,32 +1,32 @@
 # Poly Host Interface
 
-A lightweight, standalone tabbed VST2, VST3, CLAP plugin host for Windows.
+A lightweight, standalone tabbed VST2, VST3, (CLAP - Later when JUCE 9 released) plugin host for Windows.
 Play synths and route FX chains, driven by any MIDI device.
-Fully portable: stores all settings next to the exe, touches nothing else on the system.
+Fully portable: stores all settings next to the exe/vst3, touches nothing else on the system.
 
-I always liked tools like TobyBear's MiniHost, SaviHost and Tone2's NanoHost. But wanted something that combines all of them. A quick jamming tool that can open multiple plugin formats. I aim to add support for more formats, but the main ones will most likely be tried first at least. This is a tool that doesn't yet exist elsewhere in a small package like this, at least not as one that you can use file-associations with.
+I always liked tools like TobyBear's MiniHost, SaviHost and Tone2's NanoHost. But wanted something that combines all of them. A quick jamming tool that can open multiple plugin formats. I aim to add support for more formats. This is a tool that doesn't yet exist elsewhere in a small package like this, at least not as one that you can use file-associations with.
 
-The VST3 plugin version has superceded the abilities of the standalone version. It is more robust, less glitchy and has more functions. Eventually, I will make the standalone version be a simpler host that can load the plugin, this makes it easier to maintain and then functionality/preset compatibility will remain consistent.
+The standalone version is an expanded version of the VST3 plugin code, adding features not required by a plugin. This makes it easier to maintain and keep functionality/preset compatibility consistent.
 
-See the demos at the bottom of the page for a better idea of what it does...
+See the demos at the bottom of the page for a better idea of what the Pointer Control in action...
 
 ## Feature Status
 
 | Feature | Status - Some features only in APP or VST3 |
 |---|---|
-| VST3 x64 | ✅ Working - Also supports Shell VST's|
-| CLAP x64 | ✅ Working - May be buggy - Requires CLAP SDK to build — see below. NOTE: Once JUCE natively supports CLAP, then it will be added to the VST3 plugin version of PHI |
-| VST2 x64 | ✅ Working - Requires Steinberg VST2 SDK to build — see below |
 | VST2 **32-bit** in 64-bit host | 🔴 Needs plugin bridge — see below - planned |
+| VST2 x64 | ✅ Working - Requires Steinberg VST2 SDK to build — see below |
+| VST3 x64 | ✅ Working - Full support for Shell VST's|
+| CLAP x64 | ✅ Once JUCE natively supports CLAP, then it will be added to PHI |
 | MIDI 1.0 | ✅ Working |
 | MIDI 2.0 (Windows MIDI Services) | ⚠️ Requires JUCE 8+ and Windows 11 - planned |
 | Tabbed interface (Synth: parallel + FX: serial) | ✅ Working |
-| Tab-order = FX routing order | ✅ Working |
+| Tab-ordering = FX routing order | ✅ Working |
 | Portable settings (no AppData/registry) | ✅ Working |
 | Audio / MIDI recording | 🔲 Planned for standalone |
-| Pointer Control functionality | ✅ Working - Absolute (1) and Relative (3) knob modes|
-| Mouse button emulation | ✅ Working (Left, Middle, Right buttons) |
-| Keyboard emulation | ✅ Working (Limited to: Up, Down, Enter, mainly for menu navigation) |
+| Pointer Control functionality | ✅ Working - Absolute knob mode (1) and 3x Relative knob modes (2),(3) and (4) |
+| Mouse button emulation | ✅ Working - (Left, Middle, Right buttons) |
+| Keyboard emulation | ✅ Working - (Limited to: Up, Down, Enter, mainly for menu navigation) |
 | MIDI Monitor | ✅ Working |
 | MIDI Macros | ✅ Working |
 | Plugin Repair - locates missing plugins | ✅ Working |

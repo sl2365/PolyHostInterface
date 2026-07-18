@@ -17,6 +17,7 @@ public:
         bool canMoveUp = false;
         bool canMoveDown = false;
         int midiAssignmentCount = 0;
+        juce::String midiAssignmentsTooltip;
         juce::String routingTooltip;
         int pointerAdjustMethodOverride = 0;
         bool needsAttention = false;
@@ -128,7 +129,7 @@ private:
         juce::Label adjustLabel;
         AdjustMethodEditor adjustMethodEditor;
         ButtonStyling::SmallIconButton closeButton { ButtonStyling::Glyphs::close() };
-        juce::TextButton midiButton { ButtonStyling::Labels::midi() };
+        juce::TextButton midiButton { "MIDI Ch" };
         ButtonStyling::StatusIconButton bypassButton
         {
             ButtonStyling::Glyphs::activeTick(),
