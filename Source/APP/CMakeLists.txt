@@ -109,6 +109,12 @@ target_sources(PolyHost PRIVATE
     "${PHI_SHARED_SOURCE_DIR}/RoutingView.h"
     "${PHI_SHARED_SOURCE_DIR}/MacroMappingsView.cpp"
     "${PHI_SHARED_SOURCE_DIR}/MacroMappingsView.h"
+    "${PHI_SHARED_SOURCE_DIR}/AudioRecordingController.cpp"
+    "${PHI_SHARED_SOURCE_DIR}/AudioRecordingController.h"
+    "${PHI_SHARED_SOURCE_DIR}/MidiRecordingController.cpp"
+    "${PHI_SHARED_SOURCE_DIR}/MidiRecordingController.h"
+    "${PHI_SHARED_SOURCE_DIR}/RecordingView.cpp"
+    "${PHI_SHARED_SOURCE_DIR}/RecordingView.h"
     "${PHI_SHARED_SOURCE_DIR}/DebugLog.cpp"
     "${PHI_SHARED_SOURCE_DIR}/DebugLog.h"
 )

@@ -7,6 +7,7 @@
 #include "AppSettings.h"
 #include "RoutingView.h"
 #include "MacroMappingsView.h"
+#include "RecordingView.h"
 #include "PointerControl.h"
 #include "PluginCore.h"
 #include "MidiMonitorWindow.h"
@@ -75,6 +76,7 @@ public:
 
     bool openPluginPath(const juce::String& pluginPath,
                         bool openInNewTab);
+    void toggleRecordingView();
 
     void paint(juce::Graphics& g) override;
     void resized() override;
@@ -111,6 +113,23 @@ private:
               selected(selectedIn),
               needsAttention(needsAttentionIn)
         {
+            setWantsKeyboardFocus(false);
+            setMouseClickGrabsKeyboardFocus(false);
+        }
+
+        std::function<void()> onRightClick;
+
+        void mouseDown(const juce::MouseEvent& event) override
+        {
+            if (event.mods.isRightButtonDown())
+            {
+                if (onRightClick)
+                    onRightClick();
+
+                return;
+            }
+
+            juce::Button::mouseDown(event);
         }
 
         void setTabState(PluginSlotType newType, bool isSelected, bool shouldNeedAttention = false)
@@ -504,7 +523,9 @@ private:
         commandRefreshMidiDevices = 2007,
         commandMidiPanic = 2008,
         commandMidiMonitor = 2009,
+        commandMidiOutputSettings = 2010,
         commandRecentPresetBase = 2100,
+        commandDynamicPresetBase = 30000,
         commandDeleteCurrentPreset = 2200,
         commandOpenPresetsFolder = 2201,
         commandPresetBackup = 2205,
@@ -527,6 +548,7 @@ private:
         commandShowPluginScanFolders = 2602,
         commandClearPluginScanFolders = 2603,
         commandLocateMissingPluginsNow = 2604,
+        commandRecording = 2605,
 
         commandPresetLoadReport = 2700,
         commandInstructions = 2701
@@ -567,6 +589,7 @@ private:
     void clearAllSolos();
     void mapLastTouchedParameterToMacro();
     void showMacroMappingsView();
+    void hideRecordingView();
     void updateSaveButtonColours();
     void syncManualBypassStatesFromCore();
     void applyEffectiveBypassStates();
@@ -574,6 +597,7 @@ private:
     void processPendingPointerMidi();
     void refreshPointerControlTarget();
     void showPointerControlSettingsDialog();
+    void showMidiOutputSettingsDialog();
     void showAboutDialog();
     void buildAndStorePresetLoadReport(const juce::File& file,
                                        const SessionData& sessionData,
@@ -593,12 +617,19 @@ private:
     void loadPresetFromFile();
     bool saveSessionToFile(const juce::File& file);
     bool loadSessionFromFile(const juce::File& file);
-    void createNewPreset();
+    void requestNewPreset();
+    void createNewPreset(bool scheduleDeferredUiReset = true);
     void reloadCurrentPreset();
     void sendMidiPanic();
 
     bool promptToSaveIfNeeded();
     void loadRecentPreset(int menuItemID);
+    juce::PopupMenu buildDynamicPresetMenu();
+    bool populateDynamicPresetMenu(juce::PopupMenu& menu,
+                                   const juce::File& directory,
+                                   juce::StringArray& visitedDirectories,
+                                   int depth);
+    void loadDynamicPreset(int menuItemID);
 
     void openPresetsFolder();
     void backupPresetsToZip();
@@ -623,6 +654,7 @@ private:
     PresetSessionController presetController;
     PresetFileDialogHelper presetFileHelper;
     RecentPresetMenuHelper recentPresetMenuHelper;
+    juce::Array<juce::File> dynamicPresetMenuFiles;
     UnsavedChangesHelper unsavedChangesHelper;
     ToolbarFactory toolbarFactory;
 
@@ -658,6 +690,7 @@ private:
     juce::TextEditor pluginIssueMessageEditor;
     RoutingView routingView;
     MacroMappingsView macroMappingsView;
+    RecordingView recordingView;
     juce::Component::SafePointer<juce::CallOutBox> midiAssignmentsCallout;
     juce::Component::SafePointer<juce::Component> midiAssignmentsAnchor;
     int midiAssignmentsTabIndex = -1;
@@ -693,4 +726,5 @@ private:
     bool lastKnownShowingState = true;
     bool pendingMissingPluginPrompt = false;
     int pendingMissingPluginPromptDelayTicks = 0;
+    bool suppressEmptyEditorResize = false;
 };

@@ -17,6 +17,59 @@ namespace
     static constexpr int polyHostVkXButton1 = 0x05; // Mouse Back
     static constexpr int polyHostVkXButton2 = 0x06; // Mouse Forward
    #endif
+
+    class ScopedPresetProcessingSuspension final
+    {
+    public:
+        ScopedPresetProcessingSuspension(
+            PolyHostPluginProcessor& processorIn,
+            const juce::String& operationNameIn)
+            : processor(processorIn),
+              operationName(operationNameIn),
+              wasAlreadySuspended(processorIn.isSuspended())
+        {
+            DebugLog::write("[PresetSafety] processing suspension begin | operation="
+                            + operationName);
+
+            if (! wasAlreadySuspended)
+                processor.suspendProcessing(true);
+
+            callbackLock =
+                std::make_unique<juce::ScopedLock>(
+                    processor.getCallbackLock());
+
+            DebugLog::write("[PresetSafety] callback lock acquired | operation="
+                            + operationName);
+        }
+
+        ~ScopedPresetProcessingSuspension()
+        {
+            DebugLog::write("[PresetSafety] callback lock release begin | operation="
+                            + operationName);
+            callbackLock.reset();
+            DebugLog::write("[PresetSafety] callback lock release returned | operation="
+                            + operationName);
+
+            if (! wasAlreadySuspended)
+            {
+                DebugLog::write("[PresetSafety] processing resume call begin | operation="
+                                + operationName);
+                processor.suspendProcessing(false);
+                DebugLog::write("[PresetSafety] processing resume call returned | operation="
+                                + operationName);
+            }
+
+            DebugLog::write("[PresetSafety] processing resumed | operation="
+                            + operationName);
+        }
+
+    private:
+        PolyHostPluginProcessor& processor;
+        juce::String operationName;
+        bool wasAlreadySuspended = false;
+        std::unique_ptr<juce::ScopedLock> callbackLock;
+    };
+
     class AboutDialogContent final : public juce::Component
     {
     public:
@@ -271,6 +324,166 @@ namespace
         juce::TextEditor reportEditor;
         juce::TextButton locateMissingButton;
         juce::TextButton copyButton;
+        juce::TextButton closeButton;
+    };
+
+    class MidiOutputSettingsDialogContent final
+        : public juce::Component
+    {
+    public:
+        explicit MidiOutputSettingsDialogContent(
+            PolyHostPluginProcessor& processorIn)
+            : processor(processorIn)
+        {
+            setOpaque(true);
+            setSize(480, 250);
+
+            const auto textColour =
+                getLookAndFeel().findColour(
+                    juce::Label::textColourId);
+
+            outputGroup.setText(
+                "MIDI Output to Host");
+
+            outputGroup.setColour(
+                juce::GroupComponent::textColourId,
+                textColour);
+
+            outputGroup.setColour(
+                juce::GroupComponent::outlineColourId,
+                getLookAndFeel().findColour(
+                    juce::GroupComponent::
+                        outlineColourId));
+
+            addAndMakeVisible(outputGroup);
+
+            sendGeneratedButton.setButtonText(
+                "Send generated MIDI to host");
+
+            sendGeneratedButton.setClickingTogglesState(
+                true);
+
+            sendGeneratedButton.setToggleState(
+                processor.getSendGeneratedMidiToHost(),
+                juce::dontSendNotification);
+
+            sendGeneratedButton.setColour(
+                juce::ToggleButton::textColourId,
+                textColour);
+
+            sendGeneratedButton.setTooltip(
+                "Return MIDI created or changed by hosted plugins to the DAW.");
+
+            sendGeneratedButton.onClick = [this]
+            {
+                processor.setSendGeneratedMidiToHost(
+                    sendGeneratedButton.getToggleState());
+            };
+
+            addAndMakeVisible(sendGeneratedButton);
+
+            midiThruButton.setButtonText(
+                "MIDI Thru");
+
+            midiThruButton.setClickingTogglesState(
+                true);
+
+            midiThruButton.setToggleState(
+                processor.getMidiThruEnabled(),
+                juce::dontSendNotification);
+
+            midiThruButton.setColour(
+                juce::ToggleButton::textColourId,
+                textColour);
+
+            midiThruButton.setTooltip(
+                "Forward incoming DAW MIDI back to PHI's MIDI output.");
+
+            midiThruButton.onClick = [this]
+            {
+                processor.setMidiThruEnabled(
+                    midiThruButton.getToggleState());
+            };
+
+            addAndMakeVisible(midiThruButton);
+
+            informationLabel.setText(
+                "Generated MIDI is produced by hosted arpeggiators, "
+                "sequencers and MIDI effects. MIDI Thru also forwards "
+                "the original MIDI received from the DAW and may create "
+                "duplicate notes if the DAW routes that output back to PHI.",
+                juce::dontSendNotification);
+
+            informationLabel.setJustificationType(
+                juce::Justification::topLeft);
+
+            informationLabel.setColour(
+                juce::Label::textColourId,
+                textColour.withAlpha(0.80f));
+
+            addAndMakeVisible(informationLabel);
+
+            closeButton.setButtonText("Close");
+
+            closeButton.onClick = [this]
+            {
+                if (auto* parent =
+                        findParentComponentOfClass<
+                            juce::DialogWindow>())
+                {
+                    parent->exitModalState(0);
+                }
+            };
+
+            addAndMakeVisible(closeButton);
+        }
+
+        void paint(juce::Graphics& g) override
+        {
+            g.fillAll(
+                getLookAndFeel().findColour(
+                    juce::ResizableWindow::
+                        backgroundColourId));
+        }
+
+        void resized() override
+        {
+            auto area =
+                getLocalBounds().reduced(14);
+
+            auto buttonArea =
+                area.removeFromBottom(30);
+
+            closeButton.setBounds(
+                buttonArea.removeFromRight(90));
+
+            area.removeFromBottom(10);
+
+            outputGroup.setBounds(area);
+
+            auto groupArea =
+                area.reduced(14);
+
+            groupArea.removeFromTop(8);
+
+            sendGeneratedButton.setBounds(
+                groupArea.removeFromTop(28));
+
+            midiThruButton.setBounds(
+                groupArea.removeFromTop(28));
+
+            groupArea.removeFromTop(8);
+
+            informationLabel.setBounds(
+                groupArea);
+        }
+
+    private:
+        PolyHostPluginProcessor& processor;
+        juce::GroupComponent outputGroup;
+        juce::ToggleButton sendGeneratedButton;
+        juce::ToggleButton midiThruButton;
+        juce::Label informationLabel;
         juce::TextButton closeButton;
     };
 
@@ -1608,15 +1821,20 @@ MainView::MainView(PolyHostPluginProcessor& processorIn,
       presetController(appSettings, processor.getCore().getSessionDocument()),
       presetFileHelper(appSettings, presetController),
       recentPresetMenuHelper(presetController),
-      toolbarFactory(*this)
+      toolbarFactory(*this),
+      recordingView(processorIn.getAudioRecordingController(),
+                    processorIn.getMidiRecordingController(),
+                    appSettings)
 {
-    DebugLog::setEnabled(appSettings.getDebugLoggingEnabled());
+    // Diagnostic build: basic logging is intentionally always enabled so a
+    // plug-in load that terminates PHI leaves a useful final phase marker.
+    DebugLog::setEnabled(true);
     DebugLog::setAdvancedEnabled(appSettings.getAdvancedDebugLoggingEnabled());
 
     if (appSettings.getClearDebugLogOnStartup())
         DebugLog::clear();
 
-    DebugLog::write("MainView startup");
+    DebugLog::write("[PluginLoadDiagnostic] 00 diagnostic build startup | baseline=2.5.8");
 
     menuBar = std::make_unique<juce::MenuBarComponent>(this);
     menuBar->setColour(juce::PopupMenu::backgroundColourId, juce::Colour(0xFF1E2430));
@@ -1716,6 +1934,11 @@ MainView::MainView(PolyHostPluginProcessor& processorIn,
 
     addAndMakeVisible(macroMappingsView);
     macroMappingsView.setVisible(false);
+
+    addAndMakeVisible(recordingView);
+    recordingView.setVisible(false);
+    recordingView.onCloseView = [this] { hideRecordingView(); };
+    recordingView.onStatusChanged = [this] { repaint(); };
 
     addAndMakeVisible(contentPlaceholder);
     contentPlaceholder.setJustificationType(juce::Justification::centred);
@@ -2044,6 +2267,7 @@ juce::StringArray MainView::getMenuBarNames()
 {
     juce::StringArray names;
     names.add("File");
+    names.add("Presets");
 
     if (menuExtension != nullptr)
     {
@@ -2098,6 +2322,9 @@ juce::PopupMenu MainView::getMenuForIndex(int topLevelMenuIndex,
         return menu;
     }
 
+    if (menuName == "Presets")
+        return buildDynamicPresetMenu();
+
     if (menuExtension != nullptr
         && menuExtension->getAdditionalMenuNames().contains(menuName))
     {
@@ -2107,7 +2334,19 @@ juce::PopupMenu MainView::getMenuForIndex(int topLevelMenuIndex,
     if (menuName == "MIDI")
     {
         if (menuExtension != nullptr)
-            menuExtension->addAdditionalItemsToMenu(menuName, menu);
+        {
+            menuExtension->addAdditionalItemsToMenu(
+                menuName,
+                menu);
+        }
+        else
+        {
+            menu.addItem(
+                commandMidiOutputSettings,
+                "MIDI Settings...");
+
+            menu.addSeparator();
+        }
 
         menu.addItem(commandMidiMonitor, "MIDI Monitor");
         menu.addItem(commandRefreshMidiDevices, "Refresh MIDI Devices");
@@ -2119,6 +2358,15 @@ juce::PopupMenu MainView::getMenuForIndex(int topLevelMenuIndex,
     if (menuName == "Options")
     {
         menu.addItem(commandPointerControlSettings, "Pointer Control Settings");
+
+        if (menuExtension != nullptr)
+        {
+            menu.addItem(commandRecording,
+                         "Recording",
+                         true,
+                         recordingView.isVisible());
+        }
+
         menu.addSeparator();
 
         juce::PopupMenu pluginRepairsMenu;
@@ -2186,11 +2434,19 @@ void MainView::menuItemSelected(int menuItemID,
         return;
     }
 
+    const int dynamicPresetIndex = menuItemID - commandDynamicPresetBase;
+
+    if (juce::isPositiveAndBelow(dynamicPresetIndex, dynamicPresetMenuFiles.size()))
+    {
+        loadDynamicPreset(menuItemID);
+        return;
+    }
+
     switch (menuItemID)
     {
         case commandNewPreset:
             if (promptToSaveIfNeeded())
-                createNewPreset();
+                requestNewPreset();
             break;
 
         case commandNewTab:
@@ -2212,6 +2468,10 @@ void MainView::menuItemSelected(int menuItemID,
         case commandLoadPreset:
             if (promptToSaveIfNeeded())
                 loadPresetFromFile();
+            break;
+
+        case commandMidiOutputSettings:
+            showMidiOutputSettingsDialog();
             break;
 
         case commandMidiMonitor:
@@ -2256,6 +2516,10 @@ void MainView::menuItemSelected(int menuItemID,
 
         case commandPointerControlSettings:
             showPointerControlSettingsDialog();
+            break;
+
+        case commandRecording:
+            toggleRecordingView();
             break;
 
         case commandAutoSaveAfterPluginRepair:
@@ -2360,6 +2624,8 @@ bool MainView::keyPressed(const juce::KeyPress& key)
 
 void MainView::timerCallback()
 {
+    processor.sampleSuspensionDiagnostics();
+
     processPendingPointerMidi();
     pointerControl.handleExternalMouseMove();
     pointerControl.releaseDragIfIdle((double) appSettings.getPointerControlDragReturnDelayMs());
@@ -2439,23 +2705,46 @@ void MainView::timerCallback()
         lastKnownShowingState = currentShowingState;
 
         if (currentShowingState)
-            recoverCurrentTabAfterWindowReopen();
+        {
+            if (hostedEditor == nullptr)
+                refreshHostedEditorForWindowReopen();
+            else
+                DebugLog::write("[Window] show already has hosted editor; plugin reload skipped");
+        }
         else
+        {
             clearHostedEditorForWindowClose();
+        }
     }
 }
 
 void MainView::clearHostedEditor()
 {
+    DebugLog::write("[PresetTeardown] 01 editor clear entered | hasEditor="
+                    + juce::String(hostedEditor != nullptr ? "true" : "false"));
+
     if (hostedEditor != nullptr)
     {
         DebugLog::writeAdvanced("[HostedEditor] clearing hosted editor");
 
         if (auto* instance = processor.getCore().getMainPluginInstance())
+        {
+            DebugLog::write("[PresetTeardown] 02 editorBeingDeleted call begin");
             instance->editorBeingDeleted(hostedEditor.get());
+            DebugLog::write("[PresetTeardown] 03 editorBeingDeleted call returned");
+        }
+        else
+        {
+            DebugLog::write("[PresetTeardown] 03 editorBeingDeleted skipped | no plugin instance");
+        }
 
+        DebugLog::write("[PresetTeardown] 04 editor detach begin");
         editorHolder.removeChildComponent(hostedEditor.get());
+        DebugLog::write("[PresetTeardown] 05 editor detach returned");
+
+        DebugLog::write("[PresetTeardown] 06 editor delete begin");
         hostedEditor.reset();
+        DebugLog::write("[PresetTeardown] 07 editor delete returned");
     }
 
     lastObservedHostedEditorWidth = 0;
@@ -2464,6 +2753,8 @@ void MainView::clearHostedEditor()
 
     contentPlaceholder.setVisible(true);
     updatePointerEditOverlay();
+
+    DebugLog::write("[PresetTeardown] 08 editor clear complete");
 }
 
 bool MainView::promptToSaveIfNeeded()
@@ -2500,16 +2791,39 @@ bool MainView::promptToSaveIfNeeded()
     return true;
 }
 
-void MainView::createNewPreset()
+void MainView::requestNewPreset()
+{
+    DebugLog::write("[Preset] New Preset operation queued");
+
+    juce::MessageManager::callAsync(
+        [safeThis = juce::Component::SafePointer<MainView>(this)]
+        {
+            if (safeThis == nullptr)
+                return;
+
+            DebugLog::write("[Preset] queued New Preset operation begin");
+            safeThis->createNewPreset();
+        });
+}
+
+void MainView::createNewPreset(bool scheduleDeferredUiReset)
 {
     DebugLog::write("[Preset] createNewPreset requested");
 
+    ScopedPresetProcessingSuspension presetProcessingSuspension(
+        processor,
+        "New Preset");
+
+    DebugLog::write("[PresetTeardown] 00 New Preset teardown begin");
     clearHostedEditor();
+    DebugLog::write("[PresetTeardown] 09 editor clear returned to New Preset");
     soloedTabIndices.clear();
     manualBypassStates.clear();
 
     auto& core = processor.getCore();
+    DebugLog::write("[PresetTeardown] 10 core reset begin");
     core.resetForNewPreset();
+    DebugLog::write("[PresetTeardown] 19 core reset returned");
     presetController.clearForNewPreset();
 
     if (menuExtension != nullptr)
@@ -2522,13 +2836,76 @@ void MainView::createNewPreset()
     pendingMissingPluginPromptDelayTicks = 0;
     showingRoutingView = false;
 
-    auto* parentEditor = findParentComponentOfClass<PolyHostPluginEditor>();
-    if (parentEditor != nullptr)
-        parentEditor->setSize(800, 500);
+    if (! scheduleDeferredUiReset)
+    {
+        DebugLog::write(
+            "[PresetTeardown] 20 deferred UI reset skipped | caller will refresh");
+        return;
+    }
 
-    refreshFromCore();
-    repaint();
-    syncManualBypassStatesFromCore();
+    DebugLog::write("[PresetTeardown] 20 deferred UI reset scheduled");
+
+    juce::MessageManager::callAsync(
+        [safeThis = juce::Component::SafePointer<MainView>(this)]
+        {
+            if (safeThis == nullptr)
+                return;
+
+            DebugLog::write("[PresetTeardown] 21 deferred UI reset begin");
+            DebugLog::write("[PresetTeardown] 22 refreshFromCore begin");
+
+            {
+                const juce::ScopedValueSetter<bool> suppressResize(
+                    safeThis->suppressEmptyEditorResize,
+                    true);
+
+                safeThis->refreshFromCore();
+            }
+
+            DebugLog::write("[PresetTeardown] 23 refreshFromCore returned");
+
+            safeThis->repaint();
+            safeThis->syncManualBypassStatesFromCore();
+
+            DebugLog::write("[PresetTeardown] 24 delayed default editor resize scheduled");
+
+            juce::Timer::callAfterDelay(
+                150,
+                [safeThis]
+                {
+                    if (safeThis == nullptr)
+                        return;
+
+                    if (safeThis->recordingView.isVisible())
+                    {
+                        DebugLog::write(
+                            "[PresetTeardown] 25 delayed default editor resize skipped | Recording View visible");
+                        return;
+                    }
+
+                    auto& core = safeThis->processor.getCore();
+
+                    if (core.getMainPluginInstance() != nullptr
+                        || core.getNumTabs() != 1)
+                    {
+                        DebugLog::write(
+                            "[PresetTeardown] 25 delayed default editor resize skipped | state changed");
+                        return;
+                    }
+
+                    if (auto* parentEditor =
+                            safeThis->findParentComponentOfClass<PolyHostPluginEditor>())
+                    {
+                        DebugLog::write(
+                            "[PresetTeardown] 25 delayed default editor resize begin");
+                        parentEditor->setSize(800, 500);
+                        DebugLog::write(
+                            "[PresetTeardown] 25 delayed default editor resize returned");
+                    }
+                });
+
+            DebugLog::write("[PresetTeardown] 26 deferred UI reset complete");
+        });
 }
 
 void MainView::rebuildPresetDropdown()
@@ -2773,9 +3150,8 @@ void MainView::handlePresetSelection()
         DebugLog::write("[Preset] New Preset selected from dropdown");
 
         if (promptToSaveIfNeeded())
-            createNewPreset();
+            requestNewPreset();
 
-        refreshDirtyUiOnly();
         return;
     }
 
@@ -2944,7 +3320,11 @@ void MainView::updatePointerEditOverlay()
         return;
     }
 
-    if (showingRoutingView || showingMacroMappingsView || hostedEditor == nullptr || ! hostedEditor->isShowing())
+    if (showingRoutingView
+        || showingMacroMappingsView
+        || recordingView.isVisible()
+        || hostedEditor == nullptr
+        || ! hostedEditor->isShowing())
     {
         hidePointerEditOverlay();
         return;
@@ -2977,7 +3357,7 @@ void MainView::updatePointerEditOverlay()
 
 void MainView::refreshPointerControlTarget()
 {
-    if (showingRoutingView)
+    if (showingRoutingView || recordingView.isVisible())
     {
         pointerControl.clearTarget();
         lastPointerTargetBounds = {};
@@ -2985,7 +3365,7 @@ void MainView::refreshPointerControlTarget()
         lastPointerJumpPointCount = -1;
         lastPointerXccValue = -1;
         lastPointerYccValue = -1;
-        DebugLog::writeAdvanced("[PointerControl] refreshPointerControlTarget | skipped, showing routing view");
+        DebugLog::writeAdvanced("[PointerControl] refreshPointerControlTarget | skipped, showing non-plugin view");
         return;
     }
 
@@ -3534,19 +3914,15 @@ void MainView::rebuildTabButtons()
                                                    tab.type,
                                                    tab.selected,
                                                    processor.getCore().tabNeedsAttention(i)));
-        button->setTriggeredOnMouseDown(true);
 
-        button->onClick = [this, i, button]
+        button->onClick = [this, i]
         {
-            auto mods = juce::ModifierKeys::getCurrentModifiersRealtime();
-
-            if (mods.isRightButtonDown())
-            {
-                showTabContextMenuAsync(i, button);
-                return;
-            }
-
             selectTab(i);
+        };
+
+        button->onRightClick = [this, i, button]
+        {
+            showTabContextMenuAsync(i, button);
         };
 
         tabButtonsContainer.addAndMakeVisible(button);
@@ -3635,6 +4011,7 @@ void MainView::mapLastTouchedParameterToMacro()
 void MainView::showMacroMappingsView()
 {
     dismissMidiAssignmentsPopup();
+    recordingView.setVisible(false);
 
     if (showingMacroMappingsView)
     {
@@ -3654,6 +4031,61 @@ void MainView::showMacroMappingsView()
     if (auto* parentEditor = findParentComponentOfClass<PolyHostPluginEditor>())
         parentEditor->resizeToRoutingView();
 
+    updatePointerEditOverlay();
+}
+
+void MainView::toggleRecordingView()
+{
+    if (menuExtension == nullptr)
+        return;
+
+    if (recordingView.isVisible())
+    {
+        hideRecordingView();
+        return;
+    }
+
+    DebugLog::write("[Recording] Recording View opened");
+
+    dismissMidiAssignmentsPopup();
+    hidePointerEditOverlay();
+    showingRoutingView = false;
+    showingMacroMappingsView = false;
+    routingView.setVisible(false);
+    macroMappingsView.setVisible(false);
+    editorHolder.setVisible(false);
+
+    recordingView.refreshNow();
+    recordingView.setVisible(true);
+    recordingView.toFront(false);
+    resized();
+    repaint();
+
+    if (auto* parentEditor = findParentComponentOfClass<PolyHostPluginEditor>())
+        parentEditor->resizeToRoutingView();
+}
+
+void MainView::hideRecordingView()
+{
+    if (! recordingView.isVisible())
+        return;
+
+    DebugLog::write("[Recording] Recording View closed");
+
+    recordingView.setVisible(false);
+
+    if (! showingRoutingView && ! showingMacroMappingsView)
+    {
+        editorHolder.setVisible(true);
+
+        if (hostedEditor == nullptr)
+            refreshFromCore();
+        else
+            resizeParentEditorToFitHostedPlugin();
+    }
+
+    resized();
+    repaint();
     updatePointerEditOverlay();
 }
 
@@ -3736,6 +4168,7 @@ void MainView::toggleRoutingView()
                     + juce::String(showingRoutingView ? "true" : "false"));
 
     dismissMidiAssignmentsPopup();
+    recordingView.setVisible(false);
     showingRoutingView = ! showingRoutingView;
 
     if (showingRoutingView)
@@ -3891,6 +4324,7 @@ void MainView::selectTab(int tabIndex)
 
     dismissMidiAssignmentsPopup();
     hidePointerEditOverlay();
+    recordingView.setVisible(false);
 
     auto& core = processor.getCore();
 
@@ -4135,6 +4569,10 @@ void MainView::closeCurrentTab()
 {
     DebugLog::write("[Tabs] closeCurrentTab requested");
 
+    ScopedPresetProcessingSuspension presetProcessingSuspension(
+        processor,
+        "Close Tab");
+
     auto& core = processor.getCore();
 
     if (core.closeSelectedTab())
@@ -4224,14 +4662,32 @@ std::unique_ptr<juce::PluginDescription> MainView::choosePluginDescriptionForFil
 
 bool MainView::loadPluginFileIntoSelectedTabWithShellChoice(const juce::File& file)
 {
+    DebugLog::write("[PluginLoadDiagnostic] 70 UI load begin | path="
+                    + file.getFullPathName());
+
     auto description = choosePluginDescriptionForFile(file);
 
     if (description == nullptr)
+    {
+        DebugLog::write("[PluginLoadDiagnostic] 71 UI load stopped | no description selected");
         return false;
+    }
 
+    DebugLog::write("[PluginLoadDiagnostic] 72 description selected | name="
+                    + description->name
+                    + " | format="
+                    + description->pluginFormatName);
+
+    DebugLog::write("[PluginLoadDiagnostic] 73 hosted editor clear begin");
     clearHostedEditor();
+    DebugLog::write("[PluginLoadDiagnostic] 74 hosted editor clear returned");
 
-    return processor.getCore().loadMainSlotPluginFromDescription(*description);
+    DebugLog::write("[PluginLoadDiagnostic] 75 core load call begin");
+    const bool loaded =
+        processor.getCore().loadMainSlotPluginFromDescription(*description);
+    DebugLog::write("[PluginLoadDiagnostic] 76 core load call returned | success="
+                    + juce::String(loaded ? "true" : "false"));
+    return loaded;
 }
 
 void MainView::loadPluginIntoMainSlot()
@@ -4426,6 +4882,10 @@ void MainView::deleteCurrentPreset()
     {
         DebugLog::write("[Preset] deleteCurrentPreset success");
 
+        ScopedPresetProcessingSuspension presetProcessingSuspension(
+            processor,
+            "Delete Preset");
+
         clearHostedEditor();
 
         presetController.forgetFile(currentFile);
@@ -4488,9 +4948,11 @@ void MainView::savePresetAs()
     if (chooser.browseForFileToSave(true))
     {
         auto file = presetFileHelper.withXmlExtension(chooser.getResult());
-        saveSessionToFile(file);
-        refreshFromCore();
-        repaint();
+        const bool saved = saveSessionToFile(file);
+
+        DebugLog::write("[Preset] savePresetAs completed | success="
+                        + juce::String(saved ? "true" : "false")
+                        + " | hosted editor preserved");
     }
 }
 
@@ -4541,6 +5003,146 @@ void MainView::loadRecentPreset(int menuItemID)
     }
 }
 
+juce::PopupMenu MainView::buildDynamicPresetMenu()
+{
+    dynamicPresetMenuFiles.clear();
+
+    juce::PopupMenu menu;
+    auto presetsDirectory = AppSettings::getPresetsDirectory();
+
+    DebugLog::writeAdvanced("[PresetMenu] rebuild begin | root="
+                            + presetsDirectory.getFullPathName());
+
+    if (! presetsDirectory.isDirectory())
+    {
+        menu.addItem(commandDynamicPresetBase,
+                     "(Presets Folder Not Found)",
+                     false,
+                     false);
+        DebugLog::write("[PresetMenu] rebuild stopped | presets folder not found");
+        return menu;
+    }
+
+    juce::StringArray visitedDirectories;
+    const bool addedAnyPresets =
+        populateDynamicPresetMenu(menu,
+                                  presetsDirectory,
+                                  visitedDirectories,
+                                  0);
+
+    if (! addedAnyPresets)
+    {
+        menu.addItem(commandDynamicPresetBase,
+                     "(No Presets Found)",
+                     false,
+                     false);
+    }
+
+    DebugLog::writeAdvanced("[PresetMenu] rebuild complete | presets="
+                            + juce::String(dynamicPresetMenuFiles.size()));
+    return menu;
+}
+
+bool MainView::populateDynamicPresetMenu(juce::PopupMenu& menu,
+                                         const juce::File& directory,
+                                         juce::StringArray& visitedDirectories,
+                                         int depth)
+{
+    constexpr int maximumFolderDepth = 32;
+
+    if (depth > maximumFolderDepth || ! directory.isDirectory())
+        return false;
+
+    const auto directoryPath = directory.getFullPathName();
+
+    if (visitedDirectories.contains(directoryPath, true))
+        return false;
+
+    visitedDirectories.add(directoryPath);
+
+    auto childDirectories =
+        directory.findChildFiles(juce::File::findDirectories, false);
+
+    std::sort(childDirectories.begin(),
+              childDirectories.end(),
+              [](const juce::File& first, const juce::File& second)
+              {
+                  return first.getFileName().compareIgnoreCase(second.getFileName()) < 0;
+              });
+
+    bool addedAnyPresets = false;
+
+    for (const auto& childDirectory : childDirectories)
+    {
+        juce::PopupMenu subMenu;
+
+        if (populateDynamicPresetMenu(subMenu,
+                                      childDirectory,
+                                      visitedDirectories,
+                                      depth + 1))
+        {
+            menu.addSubMenu(childDirectory.getFileName(), subMenu);
+            addedAnyPresets = true;
+        }
+    }
+
+    auto presetFiles =
+        directory.findChildFiles(juce::File::findFiles, false, "*.xml");
+
+    std::sort(presetFiles.begin(),
+              presetFiles.end(),
+              [](const juce::File& first, const juce::File& second)
+              {
+                  return first.getFileName().compareIgnoreCase(second.getFileName()) < 0;
+              });
+
+    for (const auto& presetFile : presetFiles)
+    {
+        const int menuItemID =
+            commandDynamicPresetBase + dynamicPresetMenuFiles.size();
+
+        dynamicPresetMenuFiles.add(presetFile);
+        menu.addItem(menuItemID,
+                     presetFile.getFileNameWithoutExtension(),
+                     true,
+                     presetController.isCurrentFile(presetFile));
+        addedAnyPresets = true;
+    }
+
+    return addedAnyPresets;
+}
+
+void MainView::loadDynamicPreset(int menuItemID)
+{
+    const int presetIndex = menuItemID - commandDynamicPresetBase;
+
+    if (! juce::isPositiveAndBelow(presetIndex, dynamicPresetMenuFiles.size()))
+        return;
+
+    const auto presetFile = dynamicPresetMenuFiles.getReference(presetIndex);
+
+    if (! presetFile.existsAsFile())
+    {
+        DebugLog::write("[PresetMenu] selected preset no longer exists | file="
+                        + presetFile.getFullPathName());
+
+        juce::AlertWindow::showMessageBoxAsync(
+            juce::AlertWindow::WarningIcon,
+            "Preset Not Found",
+            "This preset file no longer exists:\n\n"
+                + presetFile.getFullPathName(),
+            "OK",
+            getWindowCenterTarget());
+        return;
+    }
+
+    DebugLog::write("[PresetMenu] preset selected | file="
+                    + presetFile.getFullPathName());
+
+    if (promptToSaveIfNeeded())
+        loadSessionFromFile(presetFile);
+}
+
 void MainView::refreshPointerMapSelector()
 {
     rebuildPointerMapDropdown();
@@ -4558,7 +5160,16 @@ bool MainView::saveSessionToFile(const juce::File& file)
             core.setRoutingViewSize(parentEditor->getWidth(), parentEditor->getHeight());
     }
 
-    auto sessionData = core.buildSessionData();
+    SessionData sessionData;
+
+    {
+        ScopedPresetProcessingSuspension presetProcessingSuspension(
+            processor,
+            "Save Preset State");
+
+        sessionData = core.buildSessionData();
+    }
+
     sessionData.name = file.getFileNameWithoutExtension();
 
     if (menuExtension != nullptr)
@@ -4617,8 +5228,9 @@ bool MainView::loadSessionFromFile(const juce::File& file)
         return false;
     }
 
+    const bool keepRecordingViewVisible = recordingView.isVisible();
+
     dismissMidiAssignmentsPopup();
-    clearHostedEditor();
     showingRoutingView = false;
     showingMacroMappingsView = false;
     soloedTabIndices.clear();
@@ -4626,79 +5238,98 @@ bool MainView::loadSessionFromFile(const juce::File& file)
 
     emptyLoadPluginButton.setVisible(false);
     contentPlaceholder.setText("Loading Preset...\n\nPlease wait...", juce::dontSendNotification);
-    contentPlaceholder.setVisible(true);
-    editorHolder.setVisible(true);
+    contentPlaceholder.setVisible(! keepRecordingViewVisible);
+    editorHolder.setVisible(! keepRecordingViewVisible);
     routingView.setVisible(false);
     macroMappingsView.setVisible(false);
+
+    if (keepRecordingViewVisible)
+        recordingView.toFront(false);
+
     resized();
     repaint();
     juce::MessageManager::getInstance()->runDispatchLoopUntil(10);
 
     juce::StringArray restoreWarnings;
+    bool restoreSucceeded = false;
+    bool shouldShowLoadReport = false;
 
-    if (processor.getCore().restoreSessionData(sessionData, restoreWarnings))
     {
+        ScopedPresetProcessingSuspension presetProcessingSuspension(
+            processor,
+            "Load Preset");
+
+        clearHostedEditor();
+
+        restoreSucceeded = processor.getCore().restoreSessionData(sessionData, restoreWarnings);
         warnings.addArray(restoreWarnings);
 
-        if (menuExtension != nullptr)
-            menuExtension->setCurrentHostTempoBpm(sessionData.hostTempoBpm);
-
-        buildAndStorePresetLoadReport(file, sessionData, warnings, true, {});
-
-        if (warnings.size() > 0)
-            DebugLog::write("[Preset] loadSessionFromFile success with warnings | count=" + juce::String(warnings.size()));
-        else
-            DebugLog::write("[Preset] loadSessionFromFile success");
-
-        presetController.rememberLoadedFile(file);
-
-        if (warnings.size() > 0)
-            processor.getCore().setStatusText("Preset loaded with warnings");
-        else
-            processor.getCore().setStatusText("Preset loaded");
-
-        lastKnownDirtyState = processor.getCore().isDirty();
-        refreshFromCore();
-        repaint();
-        syncManualBypassStatesFromCore();
-
-        pendingMissingPluginPrompt = false;
-        pendingMissingPluginPromptDelayTicks = 0;
-
-        if (processor.getCore().lastPresetLoadReportHadIssues())
+        if (restoreSucceeded)
         {
-            juce::Component::SafePointer<MainView> safeThis(this);
-            juce::MessageManager::callAsync([safeThis]
-            {
-                if (safeThis != nullptr)
-                    safeThis->showPresetLoadReportDialog(false);
-            });
-        }
+            if (menuExtension != nullptr)
+                menuExtension->setCurrentHostTempoBpm(sessionData.hostTempoBpm);
 
-        return true;
+            buildAndStorePresetLoadReport(file, sessionData, warnings, true, {});
+
+            if (warnings.size() > 0)
+                DebugLog::write("[Preset] loadSessionFromFile success with warnings | count=" + juce::String(warnings.size()));
+            else
+                DebugLog::write("[Preset] loadSessionFromFile success");
+
+            presetController.rememberLoadedFile(file);
+
+            if (warnings.size() > 0)
+                processor.getCore().setStatusText("Preset loaded with warnings");
+            else
+                processor.getCore().setStatusText("Preset loaded");
+
+            lastKnownDirtyState = processor.getCore().isDirty();
+            shouldShowLoadReport = processor.getCore().lastPresetLoadReportHadIssues();
+        }
+        else
+        {
+            DebugLog::write("[Preset] loadSessionFromFile failed during restoreSessionData");
+
+            buildAndStorePresetLoadReport(file,
+                                          sessionData,
+                                          warnings,
+                                          false,
+                                          "The preset was parsed, but the session could not be restored.");
+
+            processor.getCore().setStatusText("Preset load failed");
+            shouldShowLoadReport = true;
+        }
     }
 
-    DebugLog::write("[Preset] loadSessionFromFile failed during restoreSessionData");
-
-    warnings.addArray(restoreWarnings);
-    buildAndStorePresetLoadReport(file,
-                                  sessionData,
-                                  warnings,
-                                  false,
-                                  "The preset was parsed, but the session could not be restored.");
-
-    processor.getCore().setStatusText("Preset load failed");
-    refreshFromCore();
-    repaint();
-
+    DebugLog::write("[Preset] deferred preset UI refresh queued | success="
+                    + juce::String(restoreSucceeded ? "true" : "false"));
     juce::Component::SafePointer<MainView> safeThis(this);
-    juce::MessageManager::callAsync([safeThis]
+    juce::MessageManager::callAsync([safeThis, restoreSucceeded, shouldShowLoadReport]
     {
-        if (safeThis != nullptr)
+        if (safeThis == nullptr)
+            return;
+
+        DebugLog::write("[Preset] deferred preset UI refresh begin | success="
+                        + juce::String(restoreSucceeded ? "true" : "false"));
+
+        safeThis->refreshFromCore();
+        safeThis->repaint();
+
+        if (restoreSucceeded)
+        {
+            safeThis->syncManualBypassStatesFromCore();
+            safeThis->pendingMissingPluginPrompt = false;
+            safeThis->pendingMissingPluginPromptDelayTicks = 0;
+        }
+
+        DebugLog::write("[Preset] deferred preset UI refresh complete | success="
+                        + juce::String(restoreSucceeded ? "true" : "false"));
+
+        if (shouldShowLoadReport)
             safeThis->showPresetLoadReportDialog(false);
     });
 
-    return false;
+    return restoreSucceeded;
 }
 
 void MainView::refreshDirtyUiOnly()
@@ -4787,6 +5418,7 @@ void MainView::monitorHostedEditorSizeChanges()
     if (! isShowing()
         || showingRoutingView
         || showingMacroMappingsView
+        || recordingView.isVisible()
         || pointerControlEditModeEnabled
         || pointerEditGestureActive)
     {
@@ -4840,36 +5472,75 @@ void MainView::monitorHostedEditorSizeChanges()
 
 void MainView::refreshHostedEditor()
 {
-    DebugLog::writeAdvanced("[HostedEditor] refreshHostedEditor begin");
+    DebugLog::write("[PluginLoadDiagnostic] 80 editor refresh begin");
+
+    if (showingRoutingView
+        || showingMacroMappingsView
+        || recordingView.isVisible())
+    {
+        DebugLog::write(
+            "[PluginLoadDiagnostic] 80 editor refresh skipped | non-plugin view visible");
+        return;
+    }
 
     clearHostedEditor();
+
+    DebugLog::write("[PluginLoadDiagnostic] 81 editor clear returned");
 
     auto* instance = processor.getCore().getMainPluginInstance();
 
     if (instance == nullptr)
     {
-        DebugLog::writeAdvanced("[HostedEditor] no plugin instance");
-        resizeParentEditorToFitHostedPlugin();
+        DebugLog::write("[PluginLoadDiagnostic] 82 editor refresh stopped | no plugin instance");
+
+        if (suppressEmptyEditorResize)
+        {
+            DebugLog::write(
+                "[PluginLoadDiagnostic] 82 parent editor resize deferred | New Preset reset");
+        }
+        else
+        {
+            DebugLog::write(
+                "[PluginLoadDiagnostic] 82 default parent editor resize begin");
+            resizeParentEditorToFitHostedPlugin();
+            DebugLog::write(
+                "[PluginLoadDiagnostic] 82 default parent editor resize returned");
+        }
+
         return;
     }
 
-    if (! instance->hasEditor())
+    DebugLog::write("[PluginLoadDiagnostic] 83 hasEditor call begin");
+    const bool hasPluginEditor = instance->hasEditor();
+    DebugLog::write("[PluginLoadDiagnostic] 84 hasEditor call returned | hasEditor="
+                    + juce::String(hasPluginEditor ? "true" : "false"));
+
+    if (! hasPluginEditor)
     {
-        DebugLog::writeAdvanced("[HostedEditor] plugin has no editor");
         resizeParentEditorToFitHostedPlugin();
         return;
     }
 
-    hostedEditor.reset(instance->createEditorIfNeeded());
+    DebugLog::write("[PluginLoadDiagnostic] 90 createEditorIfNeeded call begin");
+    auto* createdEditor = instance->createEditorIfNeeded();
+    DebugLog::write("[PluginLoadDiagnostic] 91 createEditorIfNeeded call returned | success="
+                    + juce::String(createdEditor != nullptr ? "true" : "false"));
+    hostedEditor.reset(createdEditor);
+    DebugLog::write("[PluginLoadDiagnostic] 92 editor ownership transfer returned");
 
     if (hostedEditor != nullptr)
     {
-        DebugLog::writeAdvanced("[HostedEditor] editor created successfully");
+        DebugLog::write("[PluginLoadDiagnostic] 93 editor attach begin");
 
         editorHolder.addAndMakeVisible(hostedEditor.get());
         hostedEditor->setTopLeftPosition(0, 0);
         hostedEditor->setVisible(true);
         hostedEditor->toFront(true);
+
+        DebugLog::write("[PluginLoadDiagnostic] 94 editor attach returned | width="
+                        + juce::String(hostedEditor->getWidth())
+                        + " | height="
+                        + juce::String(hostedEditor->getHeight()));
 
         lastObservedHostedEditorWidth = hostedEditor->getWidth();
         lastObservedHostedEditorHeight = hostedEditor->getHeight();
@@ -4883,6 +5554,13 @@ void MainView::refreshHostedEditor()
         {
             if (safePtr == nullptr)
                 return;
+
+            if (safePtr->showingRoutingView
+                || safePtr->showingMacroMappingsView
+                || safePtr->recordingView.isVisible())
+            {
+                return;
+            }
 
             if (safePtr->hostedEditor != nullptr)
             {
@@ -4898,11 +5576,11 @@ void MainView::refreshHostedEditor()
     }
     else
     {
-        DebugLog::writeAdvanced("[HostedEditor] createEditorIfNeeded returned null");
         resizeParentEditorToFitHostedPlugin();
     }
 
     updatePointerEditOverlay();
+    DebugLog::write("[PluginLoadDiagnostic] 99 editor refresh complete");
 }
 
 void MainView::clearHostedEditorForWindowClose()
@@ -4917,7 +5595,9 @@ void MainView::recoverCurrentTabAfterWindowReopen()
 {
     DebugLog::write("[Window] recoverCurrentTabAfterWindowReopen requested");
 
-    if (showingRoutingView)
+    if (showingRoutingView
+        || showingMacroMappingsView
+        || recordingView.isVisible())
         return;
 
     auto& core = processor.getCore();
@@ -4941,7 +5621,9 @@ void MainView::recoverCurrentTabAfterWindowReopen()
         if (safePtr == nullptr)
             return;
 
-        if (safePtr->showingRoutingView)
+        if (safePtr->showingRoutingView
+            || safePtr->showingMacroMappingsView
+            || safePtr->recordingView.isVisible())
             return;
 
         auto& core = safePtr->processor.getCore();
@@ -4971,7 +5653,9 @@ void MainView::refreshHostedEditorForWindowReopen()
 {
     DebugLog::writeAdvanced("[Window] refreshHostedEditorForWindowReopen requested");
 
-    if (showingRoutingView)
+    if (showingRoutingView
+        || showingMacroMappingsView
+        || recordingView.isVisible())
         return;
 
     clearHostedEditor();
@@ -4981,7 +5665,9 @@ void MainView::refreshHostedEditorForWindowReopen()
         if (safePtr == nullptr)
             return;
 
-        if (safePtr->showingRoutingView)
+        if (safePtr->showingRoutingView
+            || safePtr->showingMacroMappingsView
+            || safePtr->recordingView.isVisible())
             return;
 
         safePtr->refreshHostedEditor();
@@ -5031,7 +5717,12 @@ void MainView::refreshFromCore()
     while (manualBypassStates.size() < core.getNumTabs())
         manualBypassStates.add(false);
 
-    if (! showingRoutingView && ! showingMacroMappingsView)
+    if (recordingView.isVisible())
+    {
+        DebugLog::writeAdvanced(
+            "[MainView] refreshFromCore | hosted editor refresh deferred while Recording View is visible");
+    }
+    else if (! showingRoutingView && ! showingMacroMappingsView)
         refreshHostedEditor();
     else
         clearHostedEditor();
@@ -5041,7 +5732,9 @@ void MainView::refreshFromCore()
     juce::String contentText;
     juce::String pluginIssueText;
 
-    if (showingRoutingView || showingMacroMappingsView)
+    if (showingRoutingView
+        || showingMacroMappingsView
+        || recordingView.isVisible())
     {
         emptyLoadPluginButton.setVisible(false);
         pluginIssueMessageEditor.setVisible(false);
@@ -5102,7 +5795,12 @@ void MainView::refreshFromCore()
 
     routingView.setVisible(showingRoutingView);
     macroMappingsView.setVisible(showingMacroMappingsView);
-    editorHolder.setVisible(! showingRoutingView && ! showingMacroMappingsView);
+    editorHolder.setVisible(! showingRoutingView
+                            && ! showingMacroMappingsView
+                            && ! recordingView.isVisible());
+
+    if (recordingView.isVisible())
+        recordingView.toFront(false);
 
     refreshDirtyUiOnly();
     resized();
@@ -5135,6 +5833,56 @@ void MainView::paint(juce::Graphics& g)
     g.fillRect(statusArea);
 
     statusArea.removeFromRight(150);
+
+    const auto audioRecordingStatus =
+        processor.getAudioRecordingController().getStatus();
+    const auto midiRecordingStatus =
+        processor.getMidiRecordingController().getStatus();
+    const bool midiRecordingActive =
+        midiRecordingStatus.recording;
+    const bool recordingActive =
+        audioRecordingStatus.recording
+        || midiRecordingActive;
+
+    if (recordingActive)
+    {
+        const double recordingSampleRate =
+            midiRecordingActive
+                ? midiRecordingStatus.sampleRate
+                : audioRecordingStatus.sampleRate;
+        const juce::int64 recordedSampleCount =
+            midiRecordingActive
+                ? midiRecordingStatus.recordedSamples
+                : audioRecordingStatus.recordedSamples;
+        const int totalSeconds =
+            recordingSampleRate > 0.0
+                ? static_cast<int>(recordedSampleCount
+                                   / recordingSampleRate)
+                : 0;
+        const int hours = totalSeconds / 3600;
+        const int minutes = (totalSeconds / 60) % 60;
+        const int seconds = totalSeconds % 60;
+        const auto elapsed =
+            juce::String(hours).paddedLeft('0', 2)
+            + ":"
+            + juce::String(minutes).paddedLeft('0', 2)
+            + ":"
+            + juce::String(seconds).paddedLeft('0', 2);
+
+        auto recordingIndicatorArea =
+            statusArea.removeFromRight(juce::jmin(138, statusArea.getWidth() / 2))
+                .reduced(4, 3);
+
+        g.setColour(juce::Colour(0xFFB31F32));
+        g.fillRoundedRectangle(recordingIndicatorArea.toFloat(), 4.0f);
+        g.setColour(juce::Colours::white);
+        g.setFont(juce::Font(juce::FontOptions(12.0f, juce::Font::bold)));
+        g.drawText((midiRecordingActive ? "MIDI REC  " : "REC  ")
+                       + elapsed,
+                   recordingIndicatorArea,
+                   juce::Justification::centred,
+                   false);
+    }
 
     auto& core = processor.getCore();
     juce::String statusSource = temporaryStatusMessage.isNotEmpty() ? temporaryStatusMessage
@@ -5290,6 +6038,7 @@ void MainView::resized()
     editorHolder.setBounds(contentBounds);
     routingView.setBounds(contentBounds);
     macroMappingsView.setBounds(contentBounds);
+    recordingView.setBounds(contentBounds);
 
     auto emptyLayoutArea = contentBounds.reduced(24, 0);
 
@@ -5679,11 +6428,26 @@ void MainView::showPluginDiagnosticsDialog(int tabIndex)
 {
     DebugLog::write("[UI] showPluginDiagnosticsDialog requested | tabIndex=" + juce::String(tabIndex));
 
-    auto diagnosticsText = processor.getCore().buildPluginDiagnosticsText(tabIndex);
+    auto diagnosticsText =
+        processor.getCore()
+            .buildPluginDiagnosticsText(
+                tabIndex);
 
-    auto content = std::make_unique<PluginDiagnosticsDialogContent>(diagnosticsText);
-    const int dialogWidth = content->getWidth();
-    const int dialogHeight = content->getHeight();
+    diagnosticsText
+        << "\n\n"
+        << processor
+            .buildProcessorDiagnosticsText();
+
+    auto content =
+        std::make_unique<
+            PluginDiagnosticsDialogContent>(
+                diagnosticsText);
+
+    const int dialogWidth =
+        content->getWidth();
+
+    const int dialogHeight =
+        content->getHeight();
 
     juce::DialogWindow::LaunchOptions options;
     options.content.setOwned(content.release());
@@ -5695,7 +6459,12 @@ void MainView::showPluginDiagnosticsDialog(int tabIndex)
     options.componentToCentreAround = getWindowCenterTarget();
 
     if (auto* window = options.launchAsync())
-        window->centreAroundComponent(getWindowCenterTarget(), dialogWidth, dialogHeight);
+    {
+        window->centreAroundComponent(
+            getWindowCenterTarget(),
+            dialogWidth,
+            dialogHeight);
+    }
 }
 
 void MainView::showAboutDialog()
@@ -5807,7 +6576,7 @@ bool MainView::openPluginPath(const juce::String& pluginPath,
     if (openInNewTab)
         return loadDroppedPluginInNewTab(file);
 
-    createNewPreset();
+    createNewPreset(false);
 
     auto& core = processor.getCore();
     core.setSelectedTabIndex(0);
@@ -5864,7 +6633,7 @@ int MainView::promptForDroppedPluginAction(const juce::File& droppedFile, int ta
     w.addButton("Replace Plugin", 2);
     w.addButton("Cancel", 0);
 
-    w.centreAroundComponent(getWindowCenterTarget(), 460, 220);
+    w.centreAroundComponent(getWindowCenterTarget(), 460, 250);
     return w.runModalLoop();
 }
 
@@ -6267,6 +7036,51 @@ void MainView::locateMissingPluginsNow()
         getWindowCenterTarget());
 }
 
+void MainView::showMidiOutputSettingsDialog()
+{
+    auto content =
+        std::make_unique<
+            MidiOutputSettingsDialogContent>(
+                processor);
+
+    const int dialogWidth =
+        content->getWidth();
+
+    const int dialogHeight =
+        content->getHeight();
+
+    juce::DialogWindow::LaunchOptions options;
+
+    options.content.setOwned(
+        content.release());
+
+    options.dialogTitle =
+        "MIDI Settings";
+
+    options.dialogBackgroundColour =
+        options.content->getLookAndFeel()
+            .findColour(
+                juce::ResizableWindow::
+                    backgroundColourId);
+
+    options.escapeKeyTriggersCloseButton =
+        true;
+
+    options.useNativeTitleBar = true;
+    options.resizable = false;
+
+    options.componentToCentreAround =
+        getWindowCenterTarget();
+
+    if (auto* window = options.launchAsync())
+    {
+        window->centreAroundComponent(
+            getWindowCenterTarget(),
+            dialogWidth,
+            dialogHeight);
+    }
+}
+
 void MainView::showPointerControlSettingsDialog()
 {
     float currentTolerance = 30.0f;
@@ -6278,4 +7092,3 @@ void MainView::showPointerControlSettingsDialog()
 
     PointerSettingsDialogue::show(appSettings, currentTolerance, getWindowCenterTarget());
 }
-

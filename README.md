@@ -14,7 +14,7 @@ See the demos at the bottom of the page for a few gifs of the Pointer Control in
 
 | Feature | Status - Some features only in APP or VST3 |
 |---|---|
-| VST2 **32-bit** in 64-bit host | 🔴 Needs plugin bridge — see below - planned |
+| VST2 **32-bit** in 64-bit host | 🔴 Needs plugin bridge — planned |
 | VST2 x64 | ✅ Working - Requires Steinberg VST2 SDK to build — see below |
 | VST3 x64 | ✅ Working - Full support for Shell VST's|
 | CLAP x64 | ✅ Once JUCE natively supports CLAP, then it will be added to PHI |
@@ -23,7 +23,7 @@ See the demos at the bottom of the page for a few gifs of the Pointer Control in
 | Tabbed interface (Synth: parallel + FX: serial) | ✅ Working |
 | Tab-ordering = FX routing order | ✅ Working |
 | Portable settings (no AppData/registry) | ✅ Working |
-| Audio / MIDI recording | 🔲 Planned for standalone |
+| Audio / MIDI recording | ✅ Working |
 | Pointer Control functionality | ✅ Working - Absolute knob mode (1) and 3x Relative knob modes (2),(3) and (4) |
 | Mouse button emulation | ✅ Working - (Left, Middle, Right buttons) |
 | Keyboard emulation | ✅ Working - (Limited to: Up, Down, Enter, mainly for menu navigation) |

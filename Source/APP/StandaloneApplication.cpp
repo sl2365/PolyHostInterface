@@ -2,9 +2,11 @@
 #include <juce_audio_plugin_client/Standalone/juce_StandaloneFilterWindow.h>
 #include <atomic>
 #include <cmath>
+#include <functional>
 
 #include "AppSettings.h"
 #include "ButtonStyling.h"
+#include "DebugLog.h"
 #include "PluginProcessor.h"
 #include "PluginEditor.h"
 
@@ -18,6 +20,12 @@ public:
         const juce::ScopedLock scopedLock(lock);
 
         sampleRate = newSampleRate > 0.0 ? newSampleRate : 44100.0;
+        samplePosition = 0;
+    }
+
+    void resetTimeline()
+    {
+        const juce::ScopedLock scopedLock(lock);
         samplePosition = 0;
     }
 
@@ -100,30 +108,454 @@ private:
     juce::int64 samplePosition = 0;
 };
 
+class StandaloneMidiOutputController final
+{
+public:
+    StandaloneMidiOutputController()
+    {
+        AppSettings settings;
+
+        sendGeneratedMidiToOutput.store(
+            settings.getStandaloneSendGeneratedMidiToOutput(),
+            std::memory_order_release);
+
+        midiThruEnabled.store(
+            settings.getStandaloneMidiThruEnabled(),
+            std::memory_order_release);
+
+        selectedDeviceIdentifier =
+            settings.getStandaloneMidiOutputDeviceIdentifier();
+
+        if (selectedDeviceIdentifier.isNotEmpty())
+            refreshSelectedOutputDevice();
+    }
+
+    ~StandaloneMidiOutputController()
+    {
+        const juce::ScopedLock scopedLock(outputLock);
+        closeCurrentOutputLocked();
+    }
+
+    juce::String getSelectedDeviceIdentifier() const
+    {
+        const juce::ScopedLock scopedLock(outputLock);
+        return selectedDeviceIdentifier;
+    }
+
+    bool isSelectedDeviceOpen() const
+    {
+        const juce::ScopedLock scopedLock(outputLock);
+        return midiOutput != nullptr;
+    }
+
+    bool selectOutputDevice(const juce::String& identifier)
+    {
+        return selectOutputDeviceInternal(identifier, true);
+    }
+
+    bool refreshSelectedOutputDevice()
+    {
+        const auto identifier = getSelectedDeviceIdentifier();
+
+        if (identifier.isEmpty())
+            return true;
+
+        bool deviceIsAvailable = false;
+
+        for (const auto& device :
+             juce::MidiOutput::getAvailableDevices())
+        {
+            if (device.identifier == identifier)
+            {
+                deviceIsAvailable = true;
+                break;
+            }
+        }
+
+        if (! deviceIsAvailable)
+        {
+            const juce::ScopedLock scopedLock(outputLock);
+            closeCurrentOutputLocked();
+            return false;
+        }
+
+        {
+            const juce::ScopedLock scopedLock(outputLock);
+
+            if (midiOutput != nullptr
+                && selectedDeviceIdentifier == identifier)
+            {
+                return true;
+            }
+        }
+
+        return selectOutputDeviceInternal(identifier, false);
+    }
+
+    bool getSendGeneratedMidiToOutput() const noexcept
+    {
+        return sendGeneratedMidiToOutput.load(
+            std::memory_order_acquire);
+    }
+
+    void setSendGeneratedMidiToOutput(bool shouldSend)
+    {
+        const bool wasSending =
+            sendGeneratedMidiToOutput.exchange(
+                shouldSend,
+                std::memory_order_acq_rel);
+
+        if (wasSending && ! shouldSend)
+            stopPendingOutputAndSendPanic();
+
+        AppSettings settings;
+        settings.setStandaloneSendGeneratedMidiToOutput(
+            shouldSend);
+    }
+
+    bool getMidiThruEnabled() const noexcept
+    {
+        return midiThruEnabled.load(
+            std::memory_order_acquire);
+    }
+
+    void setMidiThruEnabled(bool shouldEnable)
+    {
+        const bool wasEnabled =
+            midiThruEnabled.exchange(
+                shouldEnable,
+                std::memory_order_acq_rel);
+
+        if (wasEnabled && ! shouldEnable)
+            stopPendingOutputAndSendPanic();
+
+        AppSettings settings;
+        settings.setStandaloneMidiThruEnabled(
+            shouldEnable);
+    }
+
+    void sendInputMidi(const juce::MidiBuffer& midiMessages,
+                       double sampleRate) noexcept
+    {
+        if (! midiThruEnabled.load(std::memory_order_acquire))
+            return;
+
+        sendMidiBuffer(midiMessages, sampleRate);
+    }
+
+    void sendGeneratedMidi(
+        const juce::MidiBuffer& midiMessages,
+        double sampleRate) noexcept
+    {
+        if (! sendGeneratedMidiToOutput.load(
+                std::memory_order_acquire))
+        {
+            return;
+        }
+
+        sendMidiBuffer(midiMessages, sampleRate);
+    }
+
+private:
+    bool selectOutputDeviceInternal(
+        const juce::String& identifier,
+        bool shouldSave)
+    {
+        const auto trimmedIdentifier = identifier.trim();
+
+        if (trimmedIdentifier.isEmpty())
+        {
+            {
+                const juce::ScopedLock scopedLock(outputLock);
+                closeCurrentOutputLocked();
+                selectedDeviceIdentifier.clear();
+            }
+
+            if (shouldSave)
+            {
+                AppSettings settings;
+                settings.setStandaloneMidiOutputDeviceIdentifier(
+                    juce::String());
+            }
+
+            return true;
+        }
+
+        {
+            const juce::ScopedLock scopedLock(outputLock);
+
+            if (midiOutput != nullptr
+                && selectedDeviceIdentifier == trimmedIdentifier)
+            {
+                return true;
+            }
+        }
+
+        auto newOutput =
+            juce::MidiOutput::openDevice(trimmedIdentifier);
+
+        if (newOutput == nullptr)
+        {
+            DebugLog::write(
+                "[StandaloneMidiOutput] Could not open MIDI output | identifier="
+                + trimmedIdentifier);
+            return false;
+        }
+
+        newOutput->startBackgroundThread();
+
+        {
+            const juce::ScopedLock scopedLock(outputLock);
+            closeCurrentOutputLocked();
+            midiOutput = std::move(newOutput);
+            selectedDeviceIdentifier = trimmedIdentifier;
+        }
+
+        if (shouldSave)
+        {
+            AppSettings settings;
+            settings.setStandaloneMidiOutputDeviceIdentifier(
+                trimmedIdentifier);
+        }
+
+        DebugLog::write(
+            "[StandaloneMidiOutput] MIDI output opened | identifier="
+            + trimmedIdentifier);
+
+        return true;
+    }
+
+    void stopPendingOutputAndSendPanic()
+    {
+        const juce::ScopedLock scopedLock(outputLock);
+
+        if (midiOutput == nullptr)
+            return;
+
+        midiOutput->clearAllPendingMessages();
+        sendPanicLocked();
+    }
+
+    void closeCurrentOutputLocked()
+    {
+        if (midiOutput == nullptr)
+            return;
+
+        midiOutput->clearAllPendingMessages();
+        sendPanicLocked();
+        midiOutput->stopBackgroundThread();
+        midiOutput.reset();
+    }
+
+    void sendPanicLocked()
+    {
+        if (midiOutput == nullptr)
+            return;
+
+        for (int channel = 1; channel <= 16; ++channel)
+        {
+            midiOutput->sendMessageNow(
+                juce::MidiMessage::controllerEvent(channel, 64, 0));
+            midiOutput->sendMessageNow(
+                juce::MidiMessage::controllerEvent(channel, 66, 0));
+            midiOutput->sendMessageNow(
+                juce::MidiMessage::controllerEvent(channel, 67, 0));
+            midiOutput->sendMessageNow(
+                juce::MidiMessage::controllerEvent(channel, 121, 0));
+            midiOutput->sendMessageNow(
+                juce::MidiMessage::controllerEvent(channel, 123, 0));
+            midiOutput->sendMessageNow(
+                juce::MidiMessage::controllerEvent(channel, 120, 0));
+        }
+    }
+
+    void sendMidiBuffer(const juce::MidiBuffer& midiMessages,
+                        double sampleRate) noexcept
+    {
+        if (midiMessages.isEmpty() || sampleRate <= 0.0)
+            return;
+
+        const juce::ScopedTryLock scopedLock(outputLock);
+
+        if (! scopedLock.isLocked() || midiOutput == nullptr)
+            return;
+
+        midiOutput->sendBlockOfMessages(
+            midiMessages,
+            juce::Time::getMillisecondCounterHiRes() + 1.0,
+            sampleRate);
+    }
+
+    mutable juce::CriticalSection outputLock;
+    std::unique_ptr<juce::MidiOutput> midiOutput;
+    juce::String selectedDeviceIdentifier;
+    std::atomic<bool> sendGeneratedMidiToOutput { false };
+    std::atomic<bool> midiThruEnabled { false };
+
+    JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(
+        StandaloneMidiOutputController)
+};
+
 class StandalonePlayHeadTracker final
     : public PolyHostPluginProcessor::StandaloneAudioExtension
 {
 public:
+    enum class RecordingTransportState
+    {
+        Idle,
+        CountingIn,
+        StartingRecording,
+        WaitingForNote,
+        Recording
+    };
+
     explicit StandalonePlayHeadTracker(
-        StandalonePlayHead& playHeadIn)
-        : playHead(playHeadIn)
+        StandalonePlayHead& playHeadIn,
+        StandaloneMidiOutputController& midiOutputControllerIn)
+        : playHead(playHeadIn),
+          midiOutputController(midiOutputControllerIn)
     {
     }
 
-    void setMetronomeEnabled(bool shouldBeEnabled)
+    void setMetronomeMode(AppSettings::MetronomeMode mode)
     {
-        metronomeEnabled.store(shouldBeEnabled);
+        metronomeMode.store(mode, std::memory_order_release);
     }
 
-    bool isMetronomeEnabled() const
+    AppSettings::MetronomeMode getMetronomeMode() const
     {
-        return metronomeEnabled.load();
+        return metronomeMode.load(std::memory_order_acquire);
+    }
+
+    void setAudioRecordingController(
+        AudioRecordingController* controller)
+    {
+        audioRecordingController.store(
+            controller,
+            std::memory_order_release);
+
+        if (controller == nullptr
+            && midiRecordingController.load(
+                   std::memory_order_acquire) == nullptr)
+            recordingTransportState.store(
+                RecordingTransportState::Idle,
+                std::memory_order_release);
+    }
+
+    void setMidiRecordingController(
+        MidiRecordingController* controller)
+    {
+        midiRecordingController.store(
+            controller,
+            std::memory_order_release);
+
+        if (controller == nullptr
+            && audioRecordingController.load(
+                   std::memory_order_acquire) == nullptr)
+        {
+            recordingTransportState.store(
+                RecordingTransportState::Idle,
+                std::memory_order_release);
+        }
+    }
+
+    void armRecording(
+        AppSettings::RecordingCountInMode countInMode,
+        bool recordMidi)
+    {
+        activeRecordingIsMidi.store(
+            recordMidi,
+            std::memory_order_release);
+
+        recordingCountInMode.store(
+            countInMode,
+            std::memory_order_release);
+
+        if (countInMode
+            == AppSettings::RecordingCountInMode::WaitNote)
+        {
+            recordingTimelineResetRequested.store(
+                false,
+                std::memory_order_release);
+            playHeadTimelineResetRequested.store(
+                false,
+                std::memory_order_release);
+            recordingTransportState.store(
+                RecordingTransportState::WaitingForNote,
+                std::memory_order_release);
+            return;
+        }
+
+        recordingTimelineResetRequested.store(
+            true,
+            std::memory_order_release);
+        playHeadTimelineResetRequested.store(
+            true,
+            std::memory_order_release);
+
+        if (countInMode
+            == AppSettings::RecordingCountInMode::ZeroBars)
+        {
+            recordingTransportState.store(
+                RecordingTransportState::StartingRecording,
+                std::memory_order_release);
+            return;
+        }
+
+        recordingTransportState.store(
+            RecordingTransportState::CountingIn,
+            std::memory_order_release);
+    }
+
+    void cancelRecording()
+    {
+        recordingTransportState.store(
+            RecordingTransportState::Idle,
+            std::memory_order_release);
+        recordingTimelineResetRequested.store(
+            false,
+            std::memory_order_release);
+        playHeadTimelineResetRequested.store(
+            false,
+            std::memory_order_release);
+    }
+
+    void synchroniseRecordingState()
+    {
+        if (! isActiveControllerArmed())
+        {
+            recordingTransportState.store(
+                RecordingTransportState::Idle,
+                std::memory_order_release);
+        }
     }
 
     void prepareToPlay(double sampleRate,
                        int samplesPerBlock) override
     {
         juce::ignoreUnused(samplesPerBlock);
+
+        if (auto* controller =
+                audioRecordingController.load(
+                    std::memory_order_acquire))
+        {
+            if (controller->isRecording())
+            {
+                controller->stopRecording(
+                    "Recording stopped: audio device was restarted");
+            }
+        }
+
+        if (auto* controller =
+                midiRecordingController.load(
+                    std::memory_order_acquire))
+        {
+            if (controller->isRecording())
+            {
+                controller->stopRecording(
+                    "Recording stopped: audio device was restarted");
+            }
+        }
 
         currentSampleRate =
             sampleRate > 0.0 ? sampleRate : 44100.0;
@@ -135,6 +567,179 @@ public:
         clickPhase = 0.0;
         clickFrequencyHz = 1000.0;
         beatIndex = 0;
+        recordingTimelineSamples = 0;
+        countInTargetSamples = 0;
+        countInTempoBpm = 120.0;
+        midiCaptureTimelineSamples = 0;
+        currentMidiCaptureStartOffset = 0;
+        recordingTimelineResetRequested.store(
+            false,
+            std::memory_order_release);
+        playHeadTimelineResetRequested.store(
+            false,
+            std::memory_order_release);
+        recordingTransportState.store(
+            RecordingTransportState::Idle,
+            std::memory_order_release);
+    }
+
+    void processMidiInput(
+        const juce::MidiBuffer& midiMessages) noexcept override
+    {
+        midiOutputController.sendInputMidi(
+            midiMessages,
+            currentSampleRate);
+
+        auto transportState =
+            recordingTransportState.load(
+                std::memory_order_acquire);
+
+        currentMidiCaptureStartOffset = 0;
+
+        const bool timelineWasResetAtBlockStart =
+            transportState != RecordingTransportState::Idle
+            && playHeadTimelineResetRequested.exchange(
+                false,
+                std::memory_order_acq_rel);
+
+        if (timelineWasResetAtBlockStart)
+        {
+            resetStandaloneTimeline();
+        }
+
+        if (transportState
+            == RecordingTransportState::StartingRecording)
+        {
+            if (! isActiveControllerArmed())
+            {
+                auto expectedState =
+                    RecordingTransportState::StartingRecording;
+
+                recordingTransportState.compare_exchange_strong(
+                    expectedState,
+                    RecordingTransportState::Idle,
+                    std::memory_order_acq_rel,
+                    std::memory_order_acquire);
+                return;
+            }
+
+            auto expectedState =
+                RecordingTransportState::StartingRecording;
+
+            if (! recordingTransportState.compare_exchange_strong(
+                    expectedState,
+                    RecordingTransportState::Recording,
+                    std::memory_order_acq_rel,
+                    std::memory_order_acquire))
+            {
+                return;
+            }
+
+            recordingTimelineResetRequested.store(
+                true,
+                std::memory_order_release);
+
+            if (! timelineWasResetAtBlockStart)
+                resetStandaloneTimeline();
+
+            midiCaptureTimelineSamples = 0;
+            beginActiveControllerCapturing();
+            transportState = RecordingTransportState::Recording;
+        }
+        else if (transportState
+                 == RecordingTransportState::WaitingForNote)
+        {
+            int triggeringNoteOffset = -1;
+
+            for (const auto metadata : midiMessages)
+            {
+                if (metadata.numBytes > 0
+                    && metadata.numBytes <= 3
+                    && metadata.getMessage().isNoteOn())
+                {
+                    triggeringNoteOffset =
+                        juce::jmax(0, metadata.samplePosition);
+                    break;
+                }
+            }
+
+            if (triggeringNoteOffset < 0)
+                return;
+
+            if (! isActiveControllerArmed())
+            {
+                auto expectedState =
+                    RecordingTransportState::WaitingForNote;
+                recordingTransportState.compare_exchange_strong(
+                    expectedState,
+                    RecordingTransportState::Idle,
+                    std::memory_order_acq_rel,
+                    std::memory_order_acquire);
+                return;
+            }
+
+            auto expectedState =
+                RecordingTransportState::WaitingForNote;
+
+            if (! recordingTransportState.compare_exchange_strong(
+                    expectedState,
+                    RecordingTransportState::Recording,
+                    std::memory_order_acq_rel,
+                    std::memory_order_acquire))
+            {
+                return;
+            }
+
+            midiCaptureTimelineSamples = 0;
+            currentMidiCaptureStartOffset = triggeringNoteOffset;
+            beginActiveControllerCapturing();
+            transportState = RecordingTransportState::Recording;
+        }
+
+        if (transportState != RecordingTransportState::Recording
+            || ! activeRecordingIsMidi.load(
+                   std::memory_order_acquire))
+        {
+            return;
+        }
+
+        if (auto* controller =
+                midiRecordingController.load(
+                    std::memory_order_acquire))
+        {
+            controller->processExternalMidi(
+                midiMessages,
+                midiCaptureTimelineSamples,
+                currentMidiCaptureStartOffset,
+                playHead.getTempoBpm());
+        }
+    }
+
+    void processHostedMidiOutput(
+        const juce::MidiBuffer& midiMessages) noexcept override
+    {
+        midiOutputController.sendGeneratedMidi(
+            midiMessages,
+            currentSampleRate);
+
+        if (recordingTransportState.load(
+                std::memory_order_acquire)
+                != RecordingTransportState::Recording
+            || ! activeRecordingIsMidi.load(
+                   std::memory_order_acquire))
+        {
+            return;
+        }
+
+        if (auto* controller =
+                midiRecordingController.load(
+                    std::memory_order_acquire))
+        {
+            controller->processHostedMidiOutput(
+                midiMessages,
+                midiCaptureTimelineSamples,
+                currentMidiCaptureStartOffset);
+        }
     }
 
     void processOutputBlock(
@@ -142,10 +747,138 @@ public:
     {
         const int numSamples = buffer.getNumSamples();
 
-        if (metronomeEnabled.load())
-            renderMetronome(buffer);
+        auto transportState =
+            recordingTransportState.load(
+                std::memory_order_acquire);
+
+        const bool timelineResetPending =
+            transportState != RecordingTransportState::Idle
+            && playHeadTimelineResetRequested.load(
+                std::memory_order_acquire);
+
+        if (timelineResetPending)
+            transportState = RecordingTransportState::Idle;
+
+        if (transportState != RecordingTransportState::Idle
+            && ! isActiveControllerArmed())
+        {
+            auto expectedState = transportState;
+
+            recordingTransportState.compare_exchange_strong(
+                expectedState,
+                RecordingTransportState::Idle,
+                std::memory_order_acq_rel,
+                std::memory_order_acquire);
+
+            transportState = RecordingTransportState::Idle;
+        }
+
+        if (transportState != RecordingTransportState::Idle
+            && recordingTimelineResetRequested.exchange(
+                false,
+                std::memory_order_acq_rel))
+        {
+            recordingTimelineSamples = 0;
+            countInTargetSamples = 0;
+
+            if (transportState
+                == RecordingTransportState::CountingIn)
+            {
+                countInTempoBpm =
+                    juce::jmax(1.0, playHead.getTempoBpm());
+
+                const double countInBeats =
+                    static_cast<double>(
+                        getCountInBars(
+                            recordingCountInMode.load(
+                                std::memory_order_acquire)))
+                    * 4.0;
+
+                countInTargetSamples =
+                    static_cast<juce::int64>(
+                        std::ceil(countInBeats
+                                  * 60.0
+                                  * currentSampleRate
+                                  / countInTempoBpm));
+            }
+
+            samplesRemainingInClick = 0;
+            clickPhase = 0.0;
+            beatIndex = 0;
+        }
+
+        const bool shouldPreserveExistingTimeline =
+            recordingCountInMode.load(
+                std::memory_order_acquire)
+            == AppSettings::RecordingCountInMode::WaitNote;
+
+        const bool useRecordingTimeline =
+            ! shouldPreserveExistingTimeline
+            && (transportState == RecordingTransportState::CountingIn
+                || transportState == RecordingTransportState::Recording);
+
+        const int metronomeSamples =
+            transportState == RecordingTransportState::CountingIn
+                ? getCountInSamplesRemaining(numSamples)
+                : numSamples;
+
+        if (! timelineResetPending
+            && shouldRenderMetronome(transportState))
+        {
+            renderMetronome(
+                buffer,
+                useRecordingTimeline
+                    ? recordingTimelineSamples
+                    : processedSamples,
+                metronomeSamples,
+                transportState == RecordingTransportState::CountingIn
+                    ? countInTempoBpm
+                    : playHead.getTempoBpm());
+
+            if (metronomeSamples < numSamples)
+                samplesRemainingInClick = 0;
+        }
         else
             samplesRemainingInClick = 0;
+
+        if (transportState != RecordingTransportState::Idle)
+            recordingTimelineSamples += numSamples;
+
+        if (transportState == RecordingTransportState::Recording
+            && activeRecordingIsMidi.load(
+                std::memory_order_acquire))
+        {
+            const int capturedSamples =
+                juce::jmax(0,
+                           numSamples
+                               - juce::jlimit(0,
+                                              numSamples,
+                                              currentMidiCaptureStartOffset));
+
+            if (auto* midiController =
+                    midiRecordingController.load(
+                        std::memory_order_acquire))
+            {
+                midiController->advanceCapturedSamples(capturedSamples);
+            }
+
+            midiCaptureTimelineSamples += capturedSamples;
+            currentMidiCaptureStartOffset = 0;
+        }
+
+        if (transportState == RecordingTransportState::CountingIn
+            && isActiveControllerArmed()
+            && recordingTimelineSamples >= countInTargetSamples)
+        {
+            auto expectedState =
+                RecordingTransportState::CountingIn;
+
+            recordingTransportState.compare_exchange_strong(
+                expectedState,
+                RecordingTransportState::StartingRecording,
+                std::memory_order_acq_rel,
+                std::memory_order_acquire);
+        }
 
         processedSamples += numSamples;
         playHead.advance(numSamples);
@@ -155,17 +888,133 @@ public:
     {
         samplesRemainingInClick = 0;
         clickPhase = 0.0;
+        midiCaptureTimelineSamples = 0;
+        currentMidiCaptureStartOffset = 0;
+        recordingTransportState.store(
+            RecordingTransportState::Idle,
+            std::memory_order_release);
+        recordingTimelineResetRequested.store(
+            false,
+            std::memory_order_release);
+        playHeadTimelineResetRequested.store(
+            false,
+            std::memory_order_release);
     }
 
 private:
+    bool isActiveControllerArmed() const noexcept
+    {
+        if (activeRecordingIsMidi.load(
+                std::memory_order_acquire))
+        {
+            auto* controller =
+                midiRecordingController.load(
+                    std::memory_order_acquire);
+            return controller != nullptr && controller->isRecording();
+        }
+
+        auto* controller =
+            audioRecordingController.load(
+                std::memory_order_acquire);
+        return controller != nullptr && controller->isRecording();
+    }
+
+    void beginActiveControllerCapturing() noexcept
+    {
+        if (activeRecordingIsMidi.load(
+                std::memory_order_acquire))
+        {
+            if (auto* controller =
+                    midiRecordingController.load(
+                        std::memory_order_acquire))
+            {
+                controller->beginCapturing(playHead.getTempoBpm());
+            }
+
+            return;
+        }
+
+        if (auto* controller =
+                audioRecordingController.load(
+                    std::memory_order_acquire))
+        {
+            controller->beginCapturing();
+        }
+    }
+
+    void resetStandaloneTimeline()
+    {
+        playHead.resetTimeline();
+        processedSamples = 0;
+    }
+
+    static int getCountInBars(
+        AppSettings::RecordingCountInMode mode) noexcept
+    {
+        switch (mode)
+        {
+            case AppSettings::RecordingCountInMode::OneBar:
+                return 1;
+            case AppSettings::RecordingCountInMode::TwoBars:
+                return 2;
+            case AppSettings::RecordingCountInMode::FourBars:
+                return 4;
+            case AppSettings::RecordingCountInMode::EightBars:
+                return 8;
+            case AppSettings::RecordingCountInMode::ZeroBars:
+            case AppSettings::RecordingCountInMode::WaitNote:
+            default:
+                return 0;
+        }
+    }
+
+    bool shouldRenderMetronome(
+        RecordingTransportState transportState) const
+    {
+        const auto mode = getMetronomeMode();
+
+        if (mode == AppSettings::MetronomeMode::On)
+            return true;
+
+        if (mode != AppSettings::MetronomeMode::RecordOnly)
+            return false;
+
+        return transportState == RecordingTransportState::CountingIn
+               || transportState == RecordingTransportState::WaitingForNote
+               || transportState == RecordingTransportState::Recording;
+    }
+
+    int getCountInSamplesRemaining(int blockSize) const
+    {
+        if (blockSize <= 0 || currentSampleRate <= 0.0)
+            return 0;
+
+        const auto remainingSamples =
+            juce::jmax<juce::int64>(
+                0,
+                countInTargetSamples
+                    - recordingTimelineSamples);
+
+        return static_cast<int>(
+            juce::jlimit<juce::int64>(
+                0,
+                blockSize,
+                remainingSamples));
+    }
+
     void renderMetronome(
-        juce::AudioBuffer<float>& buffer)
+        juce::AudioBuffer<float>& buffer,
+        juce::int64 timelineStartSample,
+        int samplesToRender,
+        double tempoBpm)
     {
         const int numOutputChannels =
             buffer.getNumChannels();
 
         const int numSamples =
-            buffer.getNumSamples();
+            juce::jlimit(0,
+                         buffer.getNumSamples(),
+                         samplesToRender);
 
         if (numOutputChannels <= 0
             || numSamples <= 0
@@ -174,8 +1023,7 @@ private:
             return;
         }
 
-        const double bpm =
-            juce::jmax(1.0, playHead.getTempoBpm());
+        const double bpm = juce::jmax(1.0, tempoBpm);
 
         const double samplesPerBeat =
             (60.0 / bpm) * currentSampleRate;
@@ -189,7 +1037,7 @@ private:
              ++sample)
         {
             const auto absoluteSample =
-                processedSamples + sample;
+                timelineStartSample + sample;
 
             const auto previousBeat =
                 static_cast<int>(
@@ -261,8 +1109,31 @@ private:
     }
 
     StandalonePlayHead& playHead;
-    std::atomic<bool> metronomeEnabled { false };
+    StandaloneMidiOutputController& midiOutputController;
+    std::atomic<AppSettings::MetronomeMode> metronomeMode {
+        AppSettings::MetronomeMode::Off
+    };
+    std::atomic<AudioRecordingController*> audioRecordingController {
+        nullptr
+    };
+    std::atomic<MidiRecordingController*> midiRecordingController {
+        nullptr
+    };
+    std::atomic<RecordingTransportState> recordingTransportState {
+        RecordingTransportState::Idle
+    };
+    std::atomic<bool> activeRecordingIsMidi { false };
+    std::atomic<AppSettings::RecordingCountInMode> recordingCountInMode {
+        AppSettings::RecordingCountInMode::ZeroBars
+    };
+    std::atomic<bool> recordingTimelineResetRequested { false };
+    std::atomic<bool> playHeadTimelineResetRequested { false };
     juce::int64 processedSamples = 0;
+    juce::int64 recordingTimelineSamples = 0;
+    juce::int64 midiCaptureTimelineSamples = 0;
+    juce::int64 countInTargetSamples = 0;
+    int currentMidiCaptureStartOffset = 0;
+    double countInTempoBpm = 120.0;
     int samplesRemainingInClick = 0;
     double clickPhase = 0.0;
     double clickFrequencyHz = 1000.0;
@@ -270,10 +1141,11 @@ private:
     double currentSampleRate = 44100.0;
 };
 
-class StandaloneTempoControls final : public juce::Component
+class StandaloneTempoControls final : public juce::Component,
+                                      private juce::Timer
 {
 public:
-    static constexpr int preferredWidth = 218;
+    static constexpr int preferredWidth = 252;
     static constexpr int preferredHeight = 32;
 
     StandaloneTempoControls(
@@ -289,6 +1161,21 @@ public:
         AppSettings settings;
         defaultTempoBpm = settings.getDefaultTempoBpm();
         playHead.setTempoBpm(defaultTempoBpm);
+        playHeadTracker.setMetronomeMode(
+            settings.getMetronomeMode());
+
+        addAndMakeVisible(recordButton);
+        recordButton.setName("Recording");
+        recordButton.setWantsKeyboardFocus(false);
+        recordButton.onClick = [this]
+        {
+            toggleRecording();
+        };
+        recordButton.onRightClick = [this]
+        {
+            if (recordingViewToggleCallback)
+                recordingViewToggleCallback();
+        };
 
         addAndMakeVisible(beatIndicator);
 
@@ -323,10 +1210,7 @@ public:
         addAndMakeVisible(metronomeButton);
         metronomeButton.onClick = [this]
         {
-            playHeadTracker.setMetronomeEnabled(
-                ! playHeadTracker.isMetronomeEnabled());
-
-            metronomeButton.repaint();
+            cycleMetronomeMode();
         };
 
         addAndMakeVisible(tapTempoButton);
@@ -336,6 +1220,12 @@ public:
         };
 
         refreshUi();
+        startTimerHz(5);
+    }
+
+    ~StandaloneTempoControls() override
+    {
+        stopTimer();
     }
 
     double getTempoBpm() const
@@ -353,6 +1243,12 @@ public:
         setTempoBpm(bpm, false);
     }
 
+    void setRecordingViewToggleCallback(
+        std::function<void()> callback)
+    {
+        recordingViewToggleCallback = std::move(callback);
+    }
+
     void resized() override
     {
         auto area = getLocalBounds().reduced(2, 0);
@@ -362,6 +1258,14 @@ public:
 
         const int buttonHeight =
             ButtonStyling::defaultButtonHeight();
+
+        auto recordBounds = area.removeFromRight(buttonWidth);
+        recordButton.setBounds(
+            recordBounds.withSizeKeepingCentre(
+                recordBounds.getWidth(),
+                buttonHeight));
+
+        area.removeFromRight(2);
 
         auto tapBounds = area.removeFromRight(buttonWidth);
         tapTempoButton.setBounds(
@@ -744,6 +1648,146 @@ private:
         refreshUi();
     }
 
+    void cycleMetronomeMode()
+    {
+        const auto currentMode =
+            playHeadTracker.getMetronomeMode();
+
+        AppSettings::MetronomeMode nextMode =
+            AppSettings::MetronomeMode::Off;
+
+        if (currentMode == AppSettings::MetronomeMode::Off)
+            nextMode = AppSettings::MetronomeMode::On;
+        else if (currentMode == AppSettings::MetronomeMode::On)
+            nextMode = AppSettings::MetronomeMode::RecordOnly;
+
+        playHeadTracker.setMetronomeMode(nextMode);
+
+        AppSettings settings;
+        settings.setMetronomeMode(nextMode);
+        refreshUi();
+    }
+
+    void toggleRecording()
+    {
+        if (processor == nullptr)
+            return;
+
+        auto& audioController =
+            processor->getAudioRecordingController();
+        auto& midiController =
+            processor->getMidiRecordingController();
+
+        if (audioController.isRecording()
+            || midiController.isRecording())
+        {
+            const bool wasCapturing =
+                audioController.isCapturing()
+                || midiController.isCapturing();
+
+            playHeadTracker.cancelRecording();
+
+            if (audioController.isRecording())
+            {
+                audioController.stopRecording(
+                    wasCapturing
+                        ? "Recording stopped"
+                        : "Recording cancelled");
+            }
+
+            if (midiController.isRecording())
+            {
+                midiController.stopRecording(
+                    wasCapturing
+                        ? "Recording stopped"
+                        : "Recording cancelled");
+            }
+
+            refreshRecordingButton();
+            return;
+        }
+
+        const bool recordMidi =
+            midiController.isMidiModeSelected();
+
+        const auto result =
+            recordMidi
+                ? midiController.armRecording()
+                : audioController.armRecording();
+
+        if (result.wasOk())
+        {
+            AppSettings settings;
+            playHeadTracker.armRecording(
+                settings.getRecordingCountInMode(),
+                recordMidi);
+        }
+
+        refreshRecordingButton();
+
+        if (result.failed())
+        {
+            juce::AlertWindow::showMessageBoxAsync(
+                juce::AlertWindow::WarningIcon,
+                recordMidi
+                    ? "MIDI Recording Failed"
+                    : "Audio Recording Failed",
+                result.getErrorMessage(),
+                "OK",
+                this);
+        }
+    }
+
+    void refreshRecordingButton()
+    {
+        playHeadTracker.synchroniseRecordingState();
+
+        if (processor == nullptr)
+        {
+            recordButton.setEnabled(false);
+            recordButton.setTooltip("Recording unavailable");
+            recordButton.repaint();
+            return;
+        }
+
+        const auto audioStatus =
+            processor->getAudioRecordingController().getStatus();
+        const auto midiStatus =
+            processor->getMidiRecordingController().getStatus();
+        const bool anyArmed = audioStatus.armed || midiStatus.armed;
+        const bool anyRecording =
+            audioStatus.recording || midiStatus.recording;
+        const bool activeModeIsMidi =
+            midiStatus.armed
+            || (! audioStatus.armed
+                && processor->getMidiRecordingController()
+                       .isMidiModeSelected());
+        const double selectedSampleRate =
+            activeModeIsMidi
+                ? midiStatus.sampleRate
+                : audioStatus.sampleRate;
+        const juce::String modeName =
+            activeModeIsMidi ? "MIDI" : "Audio";
+
+        recordButton.setEnabled(
+            anyArmed || selectedSampleRate > 0.0);
+        const juce::String primaryTooltip =
+            anyRecording
+                ? "Stop " + modeName + " Recording"
+                : anyArmed
+                    ? "Cancel " + modeName + " Recording"
+                    : "Start " + modeName + " Recording";
+        recordButton.setTooltip(
+            primaryTooltip
+            + "\nRight-click: Toggle Recording View");
+        recordButton.repaint();
+    }
+
+    void timerCallback() override
+    {
+        refreshRecordingButton();
+    }
+
     void refreshUi()
     {
         tempoEditor.setText(
@@ -761,16 +1805,61 @@ private:
             + juce::String(defaultTempoBpm, 1)
             + ".");
 
+        const auto metronomeMode =
+            playHeadTracker.getMetronomeMode();
+
+        if (metronomeMode == AppSettings::MetronomeMode::On)
+            metronomeButton.setTooltip("Metronome: On");
+        else if (metronomeMode == AppSettings::MetronomeMode::RecordOnly)
+            metronomeButton.setTooltip("Metronome: Record Only");
+        else
+            metronomeButton.setTooltip("Metronome: Off");
+
         metronomeButton.repaint();
+        refreshRecordingButton();
     }
 
     PolyHostPluginProcessor* processor = nullptr;
     StandalonePlayHead& playHead;
     StandalonePlayHeadTracker& playHeadTracker;
     double defaultTempoBpm = 120.0;
+    std::function<void()> recordingViewToggleCallback;
     juce::Array<double> tapTimesMs;
     BeatIndicatorComponent beatIndicator;
     TempoTextEditor tempoEditor;
+
+    ButtonStyling::ToolbarIconButton recordButton
+    {
+        0,
+        "Start Recording",
+        juce::String::charToString((juce_wchar) 0xe7c8),
+        ButtonStyling::ToolbarIconButton::ContentType::IconGlyph,
+        ButtonStyling::defaultButtonWidth(),
+        {},
+        ButtonStyling::defaultBackground(),
+        0,
+        ButtonStyling::defaultIconSize(),
+        [this]
+        {
+            if (processor != nullptr)
+            {
+                const auto& audioController =
+                    processor->getAudioRecordingController();
+                const auto& midiController =
+                    processor->getMidiRecordingController();
+
+                if (audioController.isCapturing()
+                    || midiController.isCapturing())
+                    return ButtonStyling::destructiveBackground();
+
+                if (audioController.isRecording()
+                    || midiController.isRecording())
+                    return juce::Colour(0xFFE67E22);
+            }
+
+            return ButtonStyling::defaultBackground();
+        }
+    };
 
     ButtonStyling::ToolbarIconButton resetTempoButton
     {
@@ -790,7 +1879,21 @@ private:
         ButtonStyling::defaultButtonWidth(),
         [this]
         {
-            return playHeadTracker.isMetronomeEnabled();
+            return playHeadTracker.getMetronomeMode()
+                   == AppSettings::MetronomeMode::On;
+        },
+        ButtonStyling::defaultBackground(),
+        0,
+        ButtonStyling::defaultIconSize(),
+        [this]
+        {
+            if (playHeadTracker.getMetronomeMode()
+                == AppSettings::MetronomeMode::RecordOnly)
+            {
+                return ButtonStyling::destructiveBackground();
+            }
+
+            return ButtonStyling::defaultBackground();
         }
     };
 
@@ -921,14 +2024,533 @@ private:
     bool isResizing = false;
 };
 
+class StandaloneMidiSettingsComponent final
+    : public juce::Component
+{
+public:
+    explicit StandaloneMidiSettingsComponent(
+        juce::StandalonePluginHolder& holderIn,
+        StandaloneMidiOutputController& midiOutputControllerIn)
+        : holder(holderIn),
+          midiOutputController(midiOutputControllerIn),
+          deviceListContent(*this)
+    {
+        setOpaque(true);
+        setSize(500, 500);
+
+        outputDeviceGroup.setText(
+            "MIDI Output Device");
+
+        outputDeviceGroup.setColour(
+            juce::GroupComponent::textColourId,
+            getLookAndFeel().findColour(
+                juce::Label::textColourId));
+
+        outputDeviceGroup.setColour(
+            juce::GroupComponent::outlineColourId,
+            getLookAndFeel().findColour(
+                juce::GroupComponent::outlineColourId));
+
+        addAndMakeVisible(outputDeviceGroup);
+
+        outputDeviceLabel.setText(
+            "MIDI Output:",
+            juce::dontSendNotification);
+
+        outputDeviceLabel.setJustificationType(
+            juce::Justification::centredLeft);
+
+        addAndMakeVisible(outputDeviceLabel);
+
+        outputDeviceCombo.setTooltip(
+            "Choose the hardware or virtual MIDI output that PHI will use.");
+
+        outputDeviceCombo.onChange = [this]
+        {
+            handleOutputDeviceSelection();
+        };
+
+        addAndMakeVisible(outputDeviceCombo);
+
+        sendGeneratedMidiButton.setButtonText(
+            "Send generated MIDI to output");
+
+        sendGeneratedMidiButton.setTooltip(
+            "Send MIDI produced by hosted arpeggiators, sequencers and MIDI effects to the selected output.");
+
+        sendGeneratedMidiButton.setToggleState(
+            midiOutputController
+                .getSendGeneratedMidiToOutput(),
+            juce::dontSendNotification);
+
+        sendGeneratedMidiButton.onClick = [this]
+        {
+            midiOutputController
+                .setSendGeneratedMidiToOutput(
+                    sendGeneratedMidiButton
+                        .getToggleState());
+        };
+
+        addAndMakeVisible(sendGeneratedMidiButton);
+
+        midiThruButton.setButtonText(
+            "MIDI Thru");
+
+        midiThruButton.setTooltip(
+            "Forward original MIDI from enabled input devices to the selected output.");
+
+        midiThruButton.setToggleState(
+            midiOutputController.getMidiThruEnabled(),
+            juce::dontSendNotification);
+
+        midiThruButton.onClick = [this]
+        {
+            midiOutputController.setMidiThruEnabled(
+                midiThruButton.getToggleState());
+        };
+
+        addAndMakeVisible(midiThruButton);
+
+        outputInfoLabel.setText(
+            "Generated MIDI is produced by hosted arpeggiators, sequencers\n"
+            "and MIDI effects. MIDI Thru forwards original MIDI received\n"
+            "from enabled input devices. Do not route the output back to PHI,\n"
+            "as this can create duplicate notes or a MIDI feedback loop.",
+            juce::dontSendNotification);
+
+        outputInfoLabel.setJustificationType(
+            juce::Justification::topLeft);
+
+        outputInfoLabel.setFont(
+            juce::Font(
+                juce::FontOptions(13.0f)));
+
+        addAndMakeVisible(outputInfoLabel);
+
+        inputDevicesGroup.setText(
+            "MIDI Input Devices");
+
+        inputDevicesGroup.setColour(
+            juce::GroupComponent::textColourId,
+            getLookAndFeel().findColour(
+                juce::Label::textColourId));
+
+        inputDevicesGroup.setColour(
+            juce::GroupComponent::outlineColourId,
+            getLookAndFeel().findColour(
+                juce::GroupComponent::
+                    outlineColourId));
+
+        addAndMakeVisible(inputDevicesGroup);
+
+        viewport.setViewedComponent(
+            &deviceListContent,
+            false);
+
+        viewport.setScrollBarsShown(
+            true,
+            false);
+
+        viewport.setScrollBarThickness(12);
+        viewport.setWantsKeyboardFocus(false);
+
+        addAndMakeVisible(viewport);
+
+        refreshButton.setButtonText(
+            "Refresh Devices");
+
+        refreshButton.setTooltip(
+            "Refresh the available MIDI input and output devices.");
+
+        refreshButton.onClick = [this]
+        {
+            rebuildDeviceLists();
+        };
+
+        addAndMakeVisible(refreshButton);
+
+        rebuildDeviceLists();
+    }
+
+    ~StandaloneMidiSettingsComponent() override
+    {
+        viewport.setViewedComponent(
+            nullptr,
+            false);
+    }
+
+    void paint(juce::Graphics& g) override
+    {
+        g.fillAll(
+            getLookAndFeel().findColour(
+                juce::ResizableWindow::
+                    backgroundColourId));
+    }
+
+    void resized() override
+    {
+        auto area =
+            getLocalBounds().reduced(14);
+
+        auto controlsArea =
+            area.removeFromBottom(30);
+
+        refreshButton.setBounds(
+            controlsArea.removeFromRight(130));
+
+        area.removeFromBottom(10);
+
+        auto outputArea =
+            area.removeFromTop(216);
+
+        outputDeviceGroup.setBounds(outputArea);
+
+        auto outputContentArea =
+            outputArea.reduced(14);
+
+        outputContentArea.removeFromTop(10);
+
+        auto outputRow =
+            outputContentArea.removeFromTop(30);
+
+        outputDeviceLabel.setBounds(
+            outputRow.removeFromLeft(88));
+
+        outputRow.removeFromLeft(6);
+
+        outputDeviceCombo.setBounds(outputRow);
+
+        outputContentArea.removeFromTop(4);
+
+        sendGeneratedMidiButton.setBounds(
+            outputContentArea.removeFromTop(26));
+
+        outputContentArea.removeFromTop(4);
+
+        midiThruButton.setBounds(
+            outputContentArea.removeFromTop(26));
+
+        outputContentArea.removeFromTop(6);
+
+        outputInfoLabel.setBounds(outputContentArea);
+
+        area.removeFromTop(10);
+
+        inputDevicesGroup.setBounds(area);
+
+        auto listArea =
+            area.reduced(12);
+
+        listArea.removeFromTop(10);
+
+        viewport.setBounds(listArea);
+
+        deviceListContent.setSize(
+            juce::jmax(
+                1,
+                viewport.getWidth() - 14),
+            deviceListContent.getRequiredHeight());
+    }
+
+private:
+    class DeviceListContent final
+        : public juce::Component
+    {
+    public:
+        explicit DeviceListContent(
+            StandaloneMidiSettingsComponent& ownerIn)
+            : owner(ownerIn)
+        {
+            setOpaque(true);
+        }
+
+        void rebuild()
+        {
+            deviceButtons.clear(true);
+
+            const auto devices =
+                juce::MidiInput::
+                    getAvailableDevices();
+
+            for (const auto& device : devices)
+            {
+                auto* button =
+                    deviceButtons.add(
+                        new juce::ToggleButton(
+                            device.name));
+
+                button->setClickingTogglesState(
+                    true);
+
+                button->setToggleState(
+                    owner.holder.deviceManager
+                        .isMidiInputDeviceEnabled(
+                            device.identifier),
+                    juce::dontSendNotification);
+
+                button->setColour(
+                    juce::ToggleButton::textColourId,
+                    getLookAndFeel().findColour(
+                        juce::Label::textColourId));
+
+                button->setTooltip(
+                    "Enable or disable this MIDI input device.");
+
+                const auto identifier =
+                    device.identifier;
+
+                button->onClick =
+                    [this, identifier, button]
+                    {
+                        owner.setMidiInputEnabled(
+                            identifier,
+                            button->getToggleState());
+                    };
+
+                addAndMakeVisible(button);
+            }
+
+            setSize(
+                juce::jmax(1, getWidth()),
+                getRequiredHeight());
+
+            resized();
+            repaint();
+        }
+
+        int getRequiredHeight() const
+        {
+            if (deviceButtons.isEmpty())
+                return 54;
+
+            return 12
+                + deviceButtons.size() * 32;
+        }
+
+        void paint(juce::Graphics& g) override
+        {
+            g.fillAll(
+                getLookAndFeel().findColour(
+                    juce::TextEditor::
+                        backgroundColourId));
+
+            g.setColour(
+                getLookAndFeel().findColour(
+                    juce::TextEditor::
+                        outlineColourId));
+
+            g.drawRect(
+                getLocalBounds(),
+                1);
+
+            if (deviceButtons.isEmpty())
+            {
+                g.setColour(
+                    getLookAndFeel().findColour(
+                        juce::Label::
+                            textColourId));
+
+                g.setFont(
+                    juce::Font(
+                        juce::FontOptions(14.0f)));
+
+                g.drawText(
+                    "No MIDI input devices found",
+                    getLocalBounds().reduced(12),
+                    juce::Justification::centred,
+                    true);
+            }
+        }
+
+        void resized() override
+        {
+            auto area =
+                getLocalBounds().reduced(10, 6);
+
+            for (auto* button : deviceButtons)
+            {
+                if (button == nullptr)
+                    continue;
+
+                button->setBounds(
+                    area.removeFromTop(26));
+
+                area.removeFromTop(6);
+            }
+        }
+
+    private:
+        StandaloneMidiSettingsComponent& owner;
+
+        juce::OwnedArray<
+            juce::ToggleButton>
+            deviceButtons;
+    };
+
+    void rebuildDeviceLists()
+    {
+        midiOutputController.refreshSelectedOutputDevice();
+        rebuildOutputDeviceList();
+        deviceListContent.rebuild();
+        resized();
+    }
+
+    void rebuildOutputDeviceList()
+    {
+        const juce::ScopedValueSetter<bool> rebuildingSetter(
+            isRebuildingOutputDevices,
+            true);
+
+        outputDeviceCombo.clear(
+            juce::dontSendNotification);
+
+        outputDeviceIdentifiers.clear();
+
+        outputDeviceIdentifiers.add(juce::String());
+        outputDeviceCombo.addItem(
+            "No MIDI Output",
+            1);
+
+        const auto selectedIdentifier =
+            midiOutputController
+                .getSelectedDeviceIdentifier();
+
+        int selectedItemId = 1;
+
+        for (const auto& device :
+             juce::MidiOutput::getAvailableDevices())
+        {
+            outputDeviceIdentifiers.add(
+                device.identifier);
+
+            const int itemId =
+                outputDeviceIdentifiers.size();
+
+            outputDeviceCombo.addItem(
+                device.name,
+                itemId);
+
+            if (device.identifier == selectedIdentifier)
+                selectedItemId = itemId;
+        }
+
+        if (selectedIdentifier.isNotEmpty()
+            && selectedItemId == 1)
+        {
+            outputDeviceIdentifiers.add(
+                selectedIdentifier);
+
+            selectedItemId =
+                outputDeviceIdentifiers.size();
+
+            outputDeviceCombo.addItem(
+                "Saved MIDI output (unavailable)",
+                selectedItemId);
+
+            outputDeviceCombo.setItemEnabled(
+                selectedItemId,
+                false);
+        }
+
+        outputDeviceCombo.setSelectedId(
+            selectedItemId,
+            juce::dontSendNotification);
+    }
+
+    void handleOutputDeviceSelection()
+    {
+        if (isRebuildingOutputDevices)
+            return;
+
+        const int selectedIndex =
+            outputDeviceCombo.getSelectedId() - 1;
+
+        if (! juce::isPositiveAndBelow(
+                selectedIndex,
+                outputDeviceIdentifiers.size()))
+        {
+            return;
+        }
+
+        const auto identifier =
+            outputDeviceIdentifiers[selectedIndex];
+
+        if (midiOutputController.selectOutputDevice(identifier))
+            return;
+
+        rebuildOutputDeviceList();
+
+        juce::AlertWindow::showMessageBoxAsync(
+            juce::AlertWindow::WarningIcon,
+            "MIDI Output",
+            "PHI could not open the selected MIDI output. It may already be in use by another application.",
+            "OK");
+    }
+
+    void setMidiInputEnabled(
+        const juce::String& identifier,
+        bool shouldBeEnabled)
+    {
+        holder.deviceManager
+            .setMidiInputDeviceEnabled(
+                identifier,
+                shouldBeEnabled);
+
+        saveEnabledMidiInputs();
+    }
+
+    void saveEnabledMidiInputs()
+    {
+        juce::StringArray enabledIdentifiers;
+
+        for (const auto& device :
+             juce::MidiInput::
+                 getAvailableDevices())
+        {
+            if (holder.deviceManager
+                    .isMidiInputDeviceEnabled(
+                        device.identifier))
+            {
+                enabledIdentifiers
+                    .addIfNotAlreadyThere(
+                        device.identifier);
+            }
+        }
+
+        AppSettings settings;
+
+        settings.setEnabledMidiDeviceIdentifiers(
+            enabledIdentifiers);
+
+        holder.saveAudioDeviceState();
+    }
+
+    juce::StandalonePluginHolder& holder;
+    StandaloneMidiOutputController& midiOutputController;
+    juce::GroupComponent outputDeviceGroup;
+    juce::Label outputDeviceLabel;
+    juce::ComboBox outputDeviceCombo;
+    juce::ToggleButton sendGeneratedMidiButton;
+    juce::ToggleButton midiThruButton;
+    juce::Label outputInfoLabel;
+    juce::StringArray outputDeviceIdentifiers;
+    bool isRebuildingOutputDevices = false;
+    juce::GroupComponent inputDevicesGroup;
+    DeviceListContent deviceListContent;
+    juce::Viewport viewport;
+    juce::TextButton refreshButton;
+};
+
 class StandaloneMenuExtension final : public MainView::MenuExtension
 {
 public:
     StandaloneMenuExtension(
         juce::StandalonePluginHolder& holderIn,
         StandalonePlayHead& playHeadIn,
-        StandalonePlayHeadTracker& playHeadTrackerIn)
+        StandalonePlayHeadTracker& playHeadTrackerIn,
+        StandaloneMidiOutputController& midiOutputControllerIn)
         : holder(holderIn),
+          midiOutputController(midiOutputControllerIn),
           tempoControls(
               static_cast<PolyHostPluginProcessor*>(
                   holderIn.processor.get()),
@@ -972,6 +2594,13 @@ public:
         tempoControls.setTempoBpmFromPreset(bpm);
     }
 
+    void setRecordingViewToggleCallback(
+        std::function<void()> callback)
+    {
+        tempoControls.setRecordingViewToggleCallback(
+            std::move(callback));
+    }
+
     juce::PopupMenu getAdditionalMenuForName(
         const juce::String& menuName) override
     {
@@ -979,7 +2608,7 @@ public:
 
         if (menuName == "Audio")
             menu.addItem(commandAudioSettings,
-                         "Audio Settings...");
+                         "Audio Settings");
 
         return menu;
     }
@@ -998,44 +2627,9 @@ public:
         if (menuName != "MIDI")
             return;
 
-        midiInputDevices =
-            juce::MidiInput::getAvailableDevices();
-
-        juce::PopupMenu devicesMenu;
-
-        if (midiInputDevices.isEmpty())
-        {
-            devicesMenu.addItem(
-                commandNoMidiInputs,
-                "No MIDI input devices found",
-                false,
-                false);
-        }
-        else
-        {
-            for (int index = 0;
-                 index < midiInputDevices.size();
-                 ++index)
-            {
-                const auto& device =
-                    midiInputDevices.getReference(index);
-
-                const bool isEnabled =
-                    holder.deviceManager
-                        .isMidiInputDeviceEnabled(
-                            device.identifier);
-
-                devicesMenu.addItem(
-                    commandMidiInputBase + index,
-                    device.name,
-                    true,
-                    isEnabled);
-            }
-        }
-
-        menu.addSubMenu(
-            "Select MIDI Devices",
-            devicesMenu);
+        menu.addItem(
+            commandMidiSettings,
+            "MIDI Settings...");
 
         menu.addSeparator();
     }
@@ -1046,6 +2640,12 @@ public:
         if (menuItemID == commandAudioSettings)
         {
             showAudioSettingsDialog();
+            return true;
+        }
+
+        if (menuItemID == commandMidiSettings)
+        {
+            showMidiSettingsDialog();
             return true;
         }
 
@@ -1060,29 +2660,6 @@ public:
             return true;
         }
 
-        const int deviceIndex =
-            menuItemID - commandMidiInputBase;
-
-        if (deviceIndex >= 0
-            && deviceIndex < midiInputDevices.size())
-        {
-            const auto& device =
-                midiInputDevices.getReference(deviceIndex);
-
-            const bool currentlyEnabled =
-                holder.deviceManager
-                    .isMidiInputDeviceEnabled(
-                        device.identifier);
-
-            holder.deviceManager
-                .setMidiInputDeviceEnabled(
-                    device.identifier,
-                    ! currentlyEnabled);
-
-            saveEnabledMidiInputs();
-            return true;
-        }
-
         return false;
     }
 
@@ -1090,10 +2667,41 @@ private:
     enum CommandIds
     {
         commandAudioSettings = 10001,
-        commandNoMidiInputs = 10002,
-        commandQuit = 10003,
-        commandMidiInputBase = 10100
+        commandMidiSettings = 10002,
+        commandQuit = 10003
     };
+
+    void showMidiSettingsDialog()
+    {
+        auto content =
+            std::make_unique<
+                StandaloneMidiSettingsComponent>(
+                    holder,
+                    midiOutputController);
+
+        content->setSize(500, 500);
+
+        juce::DialogWindow::LaunchOptions options;
+
+        options.content.setOwned(
+            content.release());
+
+        options.dialogTitle =
+            "MIDI Settings";
+
+        options.dialogBackgroundColour =
+            options.content->getLookAndFeel()
+                .findColour(
+                    juce::ResizableWindow::
+                        backgroundColourId);
+
+        options.escapeKeyTriggersCloseButton =
+            true;
+
+        options.useNativeTitleBar = true;
+        options.resizable = false;
+        options.launchAsync();
+    }
 
     void showAudioSettingsDialog()
     {
@@ -1163,34 +2771,9 @@ private:
         options.launchAsync();
     }
 
-    void saveEnabledMidiInputs()
-    {
-        juce::StringArray enabledIdentifiers;
-
-        for (const auto& device :
-             juce::MidiInput::getAvailableDevices())
-        {
-            if (holder.deviceManager
-                    .isMidiInputDeviceEnabled(
-                        device.identifier))
-            {
-                enabledIdentifiers
-                    .addIfNotAlreadyThere(
-                        device.identifier);
-            }
-        }
-
-        AppSettings settings;
-        settings.setEnabledMidiDeviceIdentifiers(
-            enabledIdentifiers);
-
-        holder.saveAudioDeviceState();
-    }
-
     juce::StandalonePluginHolder& holder;
+    StandaloneMidiOutputController& midiOutputController;
     StandaloneTempoControls tempoControls;
-    juce::Array<juce::MidiDeviceInfo>
-        midiInputDevices;
 };
 
 class PolyHostStandaloneWindow final : public juce::DocumentWindow
@@ -1207,7 +2790,8 @@ public:
           pluginHolder(std::move(pluginHolderIn)),
           menuExtension(*pluginHolder,
                         playHead,
-                        playHeadTracker)
+                        playHeadTracker,
+                        midiOutputController)
     {
         setUsingNativeTitleBar(true);
 
@@ -1236,6 +2820,10 @@ public:
         }
 
         processor->setPlayHead(&playHead);
+        playHeadTracker.setAudioRecordingController(
+            &processor->getAudioRecordingController());
+        playHeadTracker.setMidiRecordingController(
+            &processor->getMidiRecordingController());
         processor->setStandaloneAudioExtension(
             &playHeadTracker);
         pluginHolder->startPlaying();
@@ -1254,6 +2842,17 @@ public:
                 mainView = childMainView;
                 break;
             }
+        }
+
+        if (mainView != nullptr)
+        {
+            menuExtension.setRecordingViewToggleCallback(
+                [safeMainView =
+                     juce::Component::SafePointer<MainView>(mainView)]
+                {
+                    if (safeMainView != nullptr)
+                        safeMainView->toggleRecordingView();
+                });
         }
 
         constexpr int sharedMenuBarHeight = 24;
@@ -1286,16 +2885,27 @@ public:
 
     ~PolyHostStandaloneWindow() override
     {
+        const auto metronomeModeToSave =
+            playHeadTracker.getMetronomeMode();
+
         if (pluginHolder != nullptr)
             pluginHolder->stopPlaying();
 
         if (processor != nullptr)
         {
             processor->setStandaloneAudioExtension(nullptr);
+            playHeadTracker.setAudioRecordingController(nullptr);
+            playHeadTracker.setMidiRecordingController(nullptr);
             processor->setPlayHead(nullptr);
         }
 
         clearContentComponent();
+
+        {
+            AppSettings settings;
+            settings.setMetronomeMode(metronomeModeToSave);
+        }
+
         pluginHolder.reset();
     }
 
@@ -1309,9 +2919,19 @@ public:
     {
         if (pluginHolder != nullptr)
         {
+            DebugLog::write("[Shutdown] audio stop begin");
+            pluginHolder->stopPlaying();
+            DebugLog::write("[Shutdown] audio stop returned");
+
             saveMidiInputState();
+
+            DebugLog::write("[Shutdown] hosted plugin state save begin");
             pluginHolder->savePluginState();
+            DebugLog::write("[Shutdown] hosted plugin state save returned");
+
+            DebugLog::write("[Shutdown] audio device state save begin");
             pluginHolder->saveAudioDeviceState();
+            DebugLog::write("[Shutdown] audio device state save returned");
         }
     }
 
@@ -1321,15 +2941,13 @@ public:
         if (pluginHolder == nullptr || mainView == nullptr)
             return false;
 
-        if (! openInNewTab)
-            pluginHolder->stopPlaying();
+        pluginHolder->stopPlaying();
 
         const bool loaded =
             mainView->openPluginPath(pluginPath,
                                      openInNewTab);
 
-        if (! openInNewTab)
-            pluginHolder->startPlaying();
+        pluginHolder->startPlaying();
 
         return loaded;
     }
@@ -1375,8 +2993,12 @@ private:
             enabledIdentifiers);
     }
 
+    StandaloneMidiOutputController midiOutputController;
     StandalonePlayHead playHead;
-    StandalonePlayHeadTracker playHeadTracker { playHead };
+    StandalonePlayHeadTracker playHeadTracker {
+        playHead,
+        midiOutputController
+    };
     std::unique_ptr<juce::StandalonePluginHolder> pluginHolder;
     StandaloneMenuExtension menuExtension;
     PolyHostPluginProcessor* processor = nullptr;
@@ -1436,20 +3058,49 @@ public:
     void initialise(
         const juce::String& commandLine) override
     {
+        const auto pluginPaths =
+            getPluginPathsFromCommandLine(commandLine);
+
+        if (! pluginPaths.isEmpty())
+            standaloneProperties.removeValue("filterState");
+
         mainWindow = std::make_unique<PolyHostStandaloneWindow>(
             getApplicationName(),
             createPluginHolder());
 
         mainWindow->setVisible(true);
-        openPluginPaths(commandLine, true);
+
+        if (! pluginPaths.isEmpty())
+        {
+            DebugLog::write("[ExternalOpen] startup plugin load queued until window is visible");
+
+            juce::MessageManager::callAsync([this, commandLine]
+            {
+                if (mainWindow == nullptr)
+                    return;
+
+                DebugLog::write("[ExternalOpen] queued startup plugin load begin | windowShowing="
+                                + juce::String(mainWindow->isShowing() ? "true" : "false"));
+                openPluginPaths(commandLine, true);
+                DebugLog::write("[ExternalOpen] queued startup plugin load complete");
+            });
+        }
     }
 
     void shutdown() override
     {
         if (mainWindow != nullptr)
-            mainWindow->savePluginState();
+        {
+            DebugLog::write("[Shutdown] window hide begin");
+            mainWindow->setVisible(false);
+            DebugLog::write("[Shutdown] window hide returned");
 
+            mainWindow->savePluginState();
+        }
+
+        DebugLog::write("[Shutdown] window destruction begin");
         mainWindow.reset();
+        DebugLog::write("[Shutdown] window destruction returned");
 
         if (auto stateXml =
                 standaloneProperties.createXml(
@@ -1460,6 +3111,8 @@ public:
             settings.setAudioDeviceState(
                 stateXml->toString());
         }
+
+        DebugLog::write("[Shutdown] complete");
     }
 
     void systemRequestedQuit() override

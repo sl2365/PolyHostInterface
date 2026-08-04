@@ -149,6 +149,33 @@ namespace ButtonStyling
                           float iconFontHeightIn = defaultIconSize(),
                           std::function<juce::Colour()> baseColourProviderIn = {});
 
+        std::function<void()> onRightClick;
+
+        void mouseDown(const juce::MouseEvent& event) override
+        {
+            if (event.mods.isRightButtonDown() && onRightClick)
+            {
+                suppressNextMouseUp = true;
+                onRightClick();
+                return;
+            }
+
+            suppressNextMouseUp = false;
+            juce::ToolbarButton::mouseDown(event);
+        }
+
+        void mouseUp(const juce::MouseEvent& event) override
+        {
+            if (suppressNextMouseUp)
+            {
+                suppressNextMouseUp = false;
+                repaint();
+                return;
+            }
+
+            juce::ToolbarButton::mouseUp(event);
+        }
+
         bool isVisuallyActive() const;
 
         void setBackgroundColour(juce::Colour newColour)
@@ -178,6 +205,7 @@ namespace ButtonStyling
         std::function<bool()> isActiveProvider;
         juce::Colour baseColour;
         std::function<juce::Colour()> baseColourProvider;
+        bool suppressNextMouseUp = false;
     };
 
     class SmallIconButton final : public juce::Button

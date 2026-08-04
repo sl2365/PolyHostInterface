@@ -110,6 +110,8 @@ public:
     void setMidiInputAssignedToTab(int tabIndex, const juce::String& inputName, bool shouldBeAssigned);
     void toggleMidiInputAssignedToTab(int tabIndex, const juce::String& inputName);
     void refreshAvailableMidiInputs();
+    void requestMidiReleaseReset();
+    bool consumeMidiOutputResetRequested();
     void sendMidiPanic();
 
     void setRoutingViewSize(int width, int height);
@@ -196,6 +198,33 @@ private:
         std::unique_ptr<juce::AudioPluginInstance> pluginInstance;
         PluginSlotType pluginType = PluginSlotType::Empty;
         juce::MidiBuffer midiScratchBuffer;
+        juce::MidiBuffer midiInputScratchBuffer;
+        bool hasProducedGeneratedMidi = false;
+
+        std::atomic<juce::uint32> diagnosticProcessCallsStarted { 0 };
+        std::atomic<juce::uint32> diagnosticProcessCallsCompleted { 0 };
+        std::atomic<juce::uint32> diagnosticParameterCallbacks { 0 };
+        std::atomic<juce::uint32> diagnosticProcessorChangedCallbacks { 0 };
+        std::atomic<juce::uint32> diagnosticLastBlockParameterCallbacks { 0 };
+        std::atomic<juce::uint32> diagnosticLastBlockProcessorChangedCallbacks { 0 };
+
+        std::atomic<int> diagnosticLastProcessMicros { 0 };
+        std::atomic<int> diagnosticMaxProcessMicros { 0 };
+        std::atomic<int> diagnosticLastMidiEventCount { 0 };
+        std::atomic<int> diagnosticMaxMidiEventCount { 0 };
+        std::atomic<int> diagnosticLastReleaseEventCount { 0 };
+        std::atomic<int> diagnosticMaxReleaseEventCount { 0 };
+        std::atomic<bool> diagnosticLastInvalidAudio { false };
+
+        std::atomic<juce::uint32> diagnosticHostedPanicDetections { 0 };
+        std::atomic<int> diagnosticPanicProcessMicros { 0 };
+        std::atomic<int> diagnosticPanicMidiEventCount { 0 };
+        std::atomic<int> diagnosticPanicReleaseEventCount { 0 };
+        std::atomic<bool> diagnosticPanicInvalidAudio { false };
+        std::atomic<juce::uint32> diagnosticPanicParameterCallbacks { 0 };
+        std::atomic<juce::uint32> diagnosticPanicProcessorChangedCallbacks { 0 };
+        std::atomic<juce::uint32> diagnosticProcessingFaultCount { 0 };
+
         juce::AudioBuffer<float> audioScratchBuffer;
         int audioScratchChannelCapacity = 2;
         int audioScratchSampleCapacity = 512;
@@ -323,11 +352,17 @@ private:
     double currentSampleRate = 44100.0;
     int currentBlockSize = 512;
     std::atomic<bool> playbackPrepared { false };
+    std::atomic<bool> pendingMidiReleaseReset { false };
+    std::atomic<bool> pendingMidiPanic { false };
+    std::atomic<bool> midiOutputResetReady { false };
 
     static constexpr int hostBufferChannelCapacity = 2;
     int hostBufferSampleCapacity = 512;
     juce::AudioBuffer<float> hostInputScratchBuffer;
     juce::AudioBuffer<float> finalOutputScratchBuffer;
+    juce::MidiBuffer hostMidiInputScratchBuffer;
+    juce::MidiBuffer midiReleaseResetScratchBuffer;
+    juce::MidiBuffer midiPanicScratchBuffer;
     juce::Array<int> fxIndexScratch;
 
     int routingViewWidth = 800;

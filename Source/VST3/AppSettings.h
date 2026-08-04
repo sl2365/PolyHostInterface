@@ -7,6 +7,23 @@ public:
     static constexpr int defaultWindowWidth  = 850;
     static constexpr int defaultWindowHeight = 400;
 
+    enum class MetronomeMode
+    {
+        Off = 0,
+        On = 1,
+        RecordOnly = 2
+    };
+
+    enum class RecordingCountInMode
+    {
+        ZeroBars = 0,
+        OneBar = 1,
+        TwoBars = 2,
+        FourBars = 4,
+        EightBars = 8,
+        WaitNote = 9
+    };
+
     bool getDebugLoggingEnabled() const;
     void setDebugLoggingEnabled(bool shouldEnable);
 
@@ -43,6 +60,16 @@ public:
     juce::StringArray getEnabledMidiDeviceIdentifiers() const;
     void setEnabledMidiDeviceIdentifiers(const juce::StringArray& identifiers);
 
+    juce::String getStandaloneMidiOutputDeviceIdentifier() const;
+    void setStandaloneMidiOutputDeviceIdentifier(
+        const juce::String& identifier);
+
+    bool getStandaloneSendGeneratedMidiToOutput() const;
+    void setStandaloneSendGeneratedMidiToOutput(bool shouldSend);
+
+    bool getStandaloneMidiThruEnabled() const;
+    void setStandaloneMidiThruEnabled(bool shouldEnable);
+
     juce::String getAudioDeviceName() const;
     void setAudioDeviceName(const juce::String& name);
 
@@ -51,6 +78,22 @@ public:
 
     double getDefaultTempoBpm() const;
     void setDefaultTempoBpm(double bpm);
+
+    MetronomeMode getMetronomeMode() const;
+    void setMetronomeMode(MetronomeMode mode);
+
+    RecordingCountInMode getRecordingCountInMode() const;
+    void setRecordingCountInMode(RecordingCountInMode mode);
+
+    bool getMidiRecordingModeSelected() const;
+    void setMidiRecordingModeSelected(bool shouldSelectMidi);
+
+    bool getRecordExternalMidiNotes() const;
+    bool getRecordExternalMidiControllers() const;
+    bool getRecordHostedMidiOutput() const;
+    void setMidiRecordingSources(bool recordExternalNotes,
+                                 bool recordExternalControllers,
+                                 bool recordHostedOutput);
 
     bool getAutoSaveAfterPluginRepair() const;
     void setAutoSaveAfterPluginRepair(bool shouldAutoSave);

@@ -254,7 +254,7 @@ RoutingView::RoutingView()
     titleLabel.setColour(juce::Label::textColourId, juce::Colours::white);
     addAndMakeVisible(titleLabel);
 
-    midiHelpLabel.setText("NOTE: Enabled MIDI devices for new tabs follows current MIDI menu auto-assign setting. Use the MIDI button to adjust per-tab settings.",
+    midiHelpLabel.setText("Choose where each tab receives audio and MIDI, and where its output is sent. Changes apply immediately.",
                           juce::dontSendNotification);
     midiHelpLabel.setJustificationType(juce::Justification::centredLeft);
     midiHelpLabel.setColour(juce::Label::textColourId, juce::Colours::lightgrey);

@@ -5,6 +5,12 @@ static constexpr const char* kRootTag           = "PolyHostSettings";
 static constexpr const char* kMidiDevice        = "midiDevice";
 static constexpr const char* kAudioDevice       = "audioDevice";
 static constexpr const char* kDefaultTempoBpm   = "defaultTempoBpm";
+static constexpr const char* kMetronomeMode     = "metronomeMode";
+static constexpr const char* kRecordingCountInMode = "recordingCountInMode";
+static constexpr const char* kMidiRecordingModeSelected = "midiRecordingModeSelected";
+static constexpr const char* kRecordExternalMidiNotes = "recordExternalMidiNotes";
+static constexpr const char* kRecordExternalMidiControllers = "recordExternalMidiControllers";
+static constexpr const char* kRecordHostedMidiOutput = "recordHostedMidiOutput";
 static constexpr const char* kAudioDeviceState  = "audioDeviceState";
 static constexpr const char* kAutoSaveAfterPluginRepair     = "autoSaveAfterPluginRepair";
 static constexpr const char* kMidiAutoAssignMode            = "midiAutoAssignMode";
@@ -14,6 +20,9 @@ static constexpr const char* kPathAttribute                 = "path";
 static constexpr const char* kEnabledMidiDevices            = "EnabledMidiDevices";
 static constexpr const char* kDeviceTag                     = "Device";
 static constexpr const char* kIdentifierAttribute           = "identifier";
+static constexpr const char* kStandaloneMidiOutputDeviceIdentifier = "standaloneMidiOutputDeviceIdentifier";
+static constexpr const char* kStandaloneSendGeneratedMidiToOutput = "standaloneSendGeneratedMidiToOutput";
+static constexpr const char* kStandaloneMidiThruEnabled = "standaloneMidiThruEnabled";
 static constexpr const char* kNameAttribute                 = "name";
 static constexpr const char* kDebugLoggingEnabled           = "debugLoggingEnabled";
 static constexpr const char* kAdvancedDebugLoggingEnabled   = "advancedDebugLoggingEnabled";
@@ -216,6 +225,111 @@ void AppSettings::setDefaultTempoBpm(double bpm)
     bpm = std::round(bpm * 10.0) / 10.0;
 
     xml->setAttribute(kDefaultTempoBpm, bpm);
+    save();
+}
+
+AppSettings::MetronomeMode AppSettings::getMetronomeMode() const
+{
+    const int storedMode = juce::jlimit(
+        static_cast<int>(MetronomeMode::Off),
+        static_cast<int>(MetronomeMode::RecordOnly),
+        xml->getIntAttribute(kMetronomeMode,
+                             static_cast<int>(MetronomeMode::Off)));
+
+    return static_cast<MetronomeMode>(storedMode);
+}
+
+void AppSettings::setMetronomeMode(MetronomeMode mode)
+{
+    const int storedMode = juce::jlimit(
+        static_cast<int>(MetronomeMode::Off),
+        static_cast<int>(MetronomeMode::RecordOnly),
+        static_cast<int>(mode));
+
+    xml->setAttribute(kMetronomeMode, storedMode);
+    save();
+}
+
+AppSettings::RecordingCountInMode
+AppSettings::getRecordingCountInMode() const
+{
+    const int storedMode = xml->getIntAttribute(
+        kRecordingCountInMode,
+        static_cast<int>(RecordingCountInMode::ZeroBars));
+
+    switch (static_cast<RecordingCountInMode>(storedMode))
+    {
+        case RecordingCountInMode::OneBar:
+        case RecordingCountInMode::TwoBars:
+        case RecordingCountInMode::FourBars:
+        case RecordingCountInMode::EightBars:
+        case RecordingCountInMode::WaitNote:
+            return static_cast<RecordingCountInMode>(storedMode);
+
+        case RecordingCountInMode::ZeroBars:
+        default:
+            return RecordingCountInMode::ZeroBars;
+    }
+}
+
+void AppSettings::setRecordingCountInMode(
+    RecordingCountInMode mode)
+{
+    switch (mode)
+    {
+        case RecordingCountInMode::ZeroBars:
+        case RecordingCountInMode::OneBar:
+        case RecordingCountInMode::TwoBars:
+        case RecordingCountInMode::FourBars:
+        case RecordingCountInMode::EightBars:
+        case RecordingCountInMode::WaitNote:
+            break;
+
+        default:
+            mode = RecordingCountInMode::ZeroBars;
+            break;
+    }
+
+    xml->setAttribute(kRecordingCountInMode,
+                      static_cast<int>(mode));
+    save();
+}
+
+bool AppSettings::getMidiRecordingModeSelected() const
+{
+    return xml->getBoolAttribute(kMidiRecordingModeSelected, false);
+}
+
+void AppSettings::setMidiRecordingModeSelected(bool shouldSelectMidi)
+{
+    xml->setAttribute(kMidiRecordingModeSelected, shouldSelectMidi);
+    save();
+}
+
+bool AppSettings::getRecordExternalMidiNotes() const
+{
+    return xml->getBoolAttribute(kRecordExternalMidiNotes, true);
+}
+
+bool AppSettings::getRecordExternalMidiControllers() const
+{
+    return xml->getBoolAttribute(kRecordExternalMidiControllers, true);
+}
+
+bool AppSettings::getRecordHostedMidiOutput() const
+{
+    return xml->getBoolAttribute(kRecordHostedMidiOutput, false);
+}
+
+void AppSettings::setMidiRecordingSources(
+    bool recordExternalNotes,
+    bool recordExternalControllers,
+    bool recordHostedOutput)
+{
+    xml->setAttribute(kRecordExternalMidiNotes, recordExternalNotes);
+    xml->setAttribute(kRecordExternalMidiControllers,
+                      recordExternalControllers);
+    xml->setAttribute(kRecordHostedMidiOutput, recordHostedOutput);
     save();
 }
 
@@ -474,6 +588,55 @@ void AppSettings::setEnabledMidiDeviceIdentifiers(const juce::StringArray& ident
     }
 
     xml->addChildElement(devicesXml.release());
+    save();
+}
+
+juce::String AppSettings::getStandaloneMidiOutputDeviceIdentifier() const
+{
+    return xml->getStringAttribute(
+                  kStandaloneMidiOutputDeviceIdentifier)
+        .trim();
+}
+
+void AppSettings::setStandaloneMidiOutputDeviceIdentifier(
+    const juce::String& identifier)
+{
+    const auto trimmedIdentifier = identifier.trim();
+
+    if (trimmedIdentifier.isEmpty())
+        xml->removeAttribute(kStandaloneMidiOutputDeviceIdentifier);
+    else
+        xml->setAttribute(kStandaloneMidiOutputDeviceIdentifier,
+                          trimmedIdentifier);
+
+    save();
+}
+
+bool AppSettings::getStandaloneSendGeneratedMidiToOutput() const
+{
+    return xml->getBoolAttribute(
+        kStandaloneSendGeneratedMidiToOutput,
+        false);
+}
+
+void AppSettings::setStandaloneSendGeneratedMidiToOutput(
+    bool shouldSend)
+{
+    xml->setAttribute(kStandaloneSendGeneratedMidiToOutput,
+                      shouldSend);
+    save();
+}
+
+bool AppSettings::getStandaloneMidiThruEnabled() const
+{
+    return xml->getBoolAttribute(kStandaloneMidiThruEnabled,
+                                 false);
+}
+
+void AppSettings::setStandaloneMidiThruEnabled(bool shouldEnable)
+{
+    xml->setAttribute(kStandaloneMidiThruEnabled,
+                      shouldEnable);
     save();
 }
 

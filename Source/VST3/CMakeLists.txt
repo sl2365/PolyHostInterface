@@ -1,7 +1,7 @@
 cmake_minimum_required(VERSION 3.22)
 
 # ── VST3 Plugin Version ────────────────────────────────────────────────────────
-set(POLYHOST_VERSION "2.2.53")
+set(POLYHOST_VERSION "2.5.8")
 
 project(PolyHostInterface VERSION ${POLYHOST_VERSION} LANGUAGES CXX)
 
@@ -29,7 +29,7 @@ juce_add_plugin(PolyHostPlugin
     BUNDLE_ID "com.PolyHostInterface.plugin"
     IS_SYNTH FALSE
     NEEDS_MIDI_INPUT TRUE
-    NEEDS_MIDI_OUTPUT FALSE
+    NEEDS_MIDI_OUTPUT TRUE
     IS_MIDI_EFFECT FALSE
     EDITOR_WANTS_KEYBOARD_FOCUS FALSE
     COPY_PLUGIN_AFTER_BUILD FALSE
@@ -71,6 +71,12 @@ target_sources(PolyHostPlugin PRIVATE
     RoutingView.h
     MacroMappingsView.cpp
     MacroMappingsView.h
+    AudioRecordingController.cpp
+    AudioRecordingController.h
+    MidiRecordingController.cpp
+    MidiRecordingController.h
+    RecordingView.cpp
+    RecordingView.h
     DebugLog.cpp
     DebugLog.h
 )

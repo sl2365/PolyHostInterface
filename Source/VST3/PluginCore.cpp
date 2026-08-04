@@ -2,6 +2,7 @@
 #include "DebugLog.h"
 #include <algorithm>
 #include <cmath>
+#include <cstring>
 
 namespace
 {
@@ -534,6 +535,50 @@ namespace
         pluginData.pluginVersion = xml.getStringAttribute("pluginVersion");
         return pluginData;
     }
+
+    bool processHostedPluginCppGuard(
+        juce::AudioPluginInstance& instance,
+        juce::AudioBuffer<float>& audioBuffer,
+        juce::MidiBuffer& midiMessages) noexcept
+    {
+        try
+        {
+            instance.processBlock(
+                audioBuffer,
+                midiMessages);
+
+            return true;
+        }
+        catch (...)
+        {
+            return false;
+        }
+    }
+
+    bool processHostedPluginCrashGuard(
+        juce::AudioPluginInstance& instance,
+        juce::AudioBuffer<float>& audioBuffer,
+        juce::MidiBuffer& midiMessages) noexcept
+    {
+       #if JUCE_WINDOWS && defined(_MSC_VER)
+        __try
+        {
+            return processHostedPluginCppGuard(
+                instance,
+                audioBuffer,
+                midiMessages);
+        }
+        __except (1)
+        {
+            return false;
+        }
+       #else
+        return processHostedPluginCppGuard(
+            instance,
+            audioBuffer,
+            midiMessages);
+       #endif
+    }
 }
 
 PluginCore::PluginCore()
@@ -834,6 +879,83 @@ void PluginCore::prepareToPlay(double sampleRate, int samplesPerBlock)
     hostInputScratchBuffer.clear();
     finalOutputScratchBuffer.clear();
 
+    hostMidiInputScratchBuffer.clear();
+    hostMidiInputScratchBuffer.ensureSize(
+        64 * 1024);
+
+    midiReleaseResetScratchBuffer.clear();
+    midiReleaseResetScratchBuffer.ensureSize(
+        8 * 1024);
+
+    for (int channel = 1;
+         channel <= 16;
+         ++channel)
+    {
+        midiReleaseResetScratchBuffer.addEvent(
+            juce::MidiMessage::controllerEvent(
+                channel,
+                64,
+                0),
+            0);
+
+        midiReleaseResetScratchBuffer.addEvent(
+            juce::MidiMessage::controllerEvent(
+                channel,
+                66,
+                0),
+            0);
+
+        midiReleaseResetScratchBuffer.addEvent(
+            juce::MidiMessage::controllerEvent(
+                channel,
+                67,
+                0),
+            0);
+
+        midiReleaseResetScratchBuffer.addEvent(
+            juce::MidiMessage::controllerEvent(
+                channel,
+                121,
+                0),
+            0);
+
+        midiReleaseResetScratchBuffer.addEvent(
+            juce::MidiMessage::controllerEvent(
+                channel,
+                123,
+                0),
+            0);
+
+        midiReleaseResetScratchBuffer.addEvent(
+            juce::MidiMessage::controllerEvent(
+                channel,
+                120,
+                0),
+            0);
+    }
+
+    midiPanicScratchBuffer.clear();
+    midiPanicScratchBuffer.ensureSize(
+        8 * 1024);
+
+    midiPanicScratchBuffer.addEvents(
+        midiReleaseResetScratchBuffer,
+        0,
+        1,
+        0);
+
+    pendingMidiReleaseReset.store(
+        false,
+        std::memory_order_relaxed);
+
+    pendingMidiPanic.store(
+        false,
+        std::memory_order_relaxed);
+
+    midiOutputResetReady.store(
+        false,
+        std::memory_order_relaxed);
+
     fxIndexScratch.clearQuick();
     fxIndexScratch.ensureStorageAllocated(
         hostedTabs.size());
@@ -846,6 +968,12 @@ void PluginCore::prepareToPlay(double sampleRate, int samplesPerBlock)
         tab->midiScratchBuffer.clear();
         tab->midiScratchBuffer.ensureSize(
             64 * 1024);
+
+        tab->midiInputScratchBuffer.clear();
+        tab->midiInputScratchBuffer.ensureSize(
+            64 * 1024);
+
+        tab->hasProducedGeneratedMidi = false;
 
         if (tab->pluginInstance != nullptr)
         {
@@ -912,14 +1040,85 @@ void PluginCore::processBlock(juce::AudioBuffer<float>& buffer,
                               juce::MidiBuffer& midiMessages,
                               juce::AudioPlayHead* playHead)
 {
+    const int numSamples = buffer.getNumSamples();
+    const int hostChannels = buffer.getNumChannels();
+
     if (! playbackPrepared.load())
+    {
+        midiMessages.clear();
         return;
+    }
+
+    hostMidiInputScratchBuffer.clear();
+
+    bool midiReleaseResetRequested = false;
+    bool midiPanicRequested = false;
+
+    if (numSamples > 0)
+    {
+        hostMidiInputScratchBuffer.addEvents(
+            midiMessages,
+            0,
+            numSamples,
+            0);
+
+        midiReleaseResetRequested =
+            pendingMidiReleaseReset.exchange(
+                false,
+                std::memory_order_acq_rel);
+
+        midiPanicRequested =
+            pendingMidiPanic.exchange(
+                false,
+                std::memory_order_acq_rel);
+
+        if (midiPanicRequested
+            || midiReleaseResetRequested)
+        {
+            midiOutputResetReady.store(
+                true,
+                std::memory_order_release);
+        }
+
+        if (midiPanicRequested)
+        {
+            hostMidiInputScratchBuffer.addEvents(
+                midiPanicScratchBuffer,
+                0,
+                numSamples,
+                0);
+        }
+        else if (midiReleaseResetRequested)
+        {
+            hostMidiInputScratchBuffer.addEvents(
+                midiReleaseResetScratchBuffer,
+                0,
+                numSamples,
+                0);
+        }
+    }
+
+    midiMessages.clear();
+
+    if (midiPanicRequested)
+    {
+        midiMessages.addEvents(
+            midiPanicScratchBuffer,
+            0,
+            numSamples,
+            0);
+    }
+    else if (midiReleaseResetRequested)
+    {
+        midiMessages.addEvents(
+            midiReleaseResetScratchBuffer,
+            0,
+            numSamples,
+            0);
+    }
 
     if (hostedTabs.isEmpty())
         return;
-
-    const int numSamples = buffer.getNumSamples();
-    const int hostChannels = buffer.getNumChannels();
 
     if (numSamples <= 0 || hostChannels <= 0)
         return;
@@ -949,10 +1148,10 @@ void PluginCore::processBlock(juce::AudioBuffer<float>& buffer,
     auto clearAndRecordInvalidAudio =
         [this, &containsNonFiniteSamples](
             juce::AudioBuffer<float>& audioBuffer,
-            int tabIndex) noexcept
+            int tabIndex) noexcept -> bool
         {
             if (! containsNonFiniteSamples(audioBuffer))
-                return;
+                return false;
 
             audioBuffer.clear();
 
@@ -963,6 +1162,251 @@ void PluginCore::processBlock(juce::AudioBuffer<float>& buffer,
             invalidAudioBlockCount.fetch_add(
                 1,
                 std::memory_order_relaxed);
+
+            return true;
+        };
+
+    auto midiEventsMatch =
+        [](const auto& lhsMetadata,
+           const auto& rhsMetadata) noexcept
+        {
+            if (lhsMetadata.samplePosition
+                != rhsMetadata.samplePosition)
+            {
+                return false;
+            }
+
+            const auto& lhsMessage =
+                lhsMetadata.getMessage();
+
+            const auto& rhsMessage =
+                rhsMetadata.getMessage();
+
+            const int dataSize =
+                lhsMessage.getRawDataSize();
+
+            if (dataSize
+                != rhsMessage.getRawDataSize())
+            {
+                return false;
+            }
+
+            if (dataSize <= 0)
+                return true;
+
+            return std::memcmp(
+                       lhsMessage.getRawData(),
+                       rhsMessage.getRawData(),
+                       static_cast<size_t>(
+                           dataSize))
+                == 0;
+        };
+
+    auto isMidiReleaseMessage =
+        [](const juce::MidiMessage& message) noexcept
+        {
+            if (message.isNoteOff())
+                return true;
+
+            if (! message.isController())
+                return false;
+
+            const int controller =
+                message.getControllerNumber();
+
+            const int value =
+                message.getControllerValue();
+
+            return (controller == 64 && value < 64)
+                || (controller == 66 && value < 64)
+                || (controller == 67 && value < 64)
+                || controller == 120
+                || controller == 121
+                || controller == 123;
+        };
+
+    auto appendGeneratedMidiEvents =
+        [this,
+         &midiMessages,
+         &midiEventsMatch,
+         &isMidiReleaseMessage](
+            const juce::MidiBuffer& processedMidi,
+            const juce::MidiBuffer& inputMidi,
+            auto& tabState) -> bool
+        {
+            int processedEventCount = 0;
+            int releaseEventCount = 0;
+
+            for (const auto metadata :
+                 processedMidi)
+            {
+                ++processedEventCount;
+
+                if (isMidiReleaseMessage(
+                        metadata.getMessage()))
+                {
+                    ++releaseEventCount;
+                }
+            }
+
+            tabState.diagnosticLastMidiEventCount.store(
+                processedEventCount,
+                std::memory_order_relaxed);
+
+            tabState.diagnosticLastReleaseEventCount.store(
+                releaseEventCount,
+                std::memory_order_relaxed);
+
+            int recordedMaxMidiEvents =
+                tabState.diagnosticMaxMidiEventCount.load(
+                    std::memory_order_relaxed);
+
+            while (processedEventCount > recordedMaxMidiEvents
+                   && ! tabState.diagnosticMaxMidiEventCount
+                            .compare_exchange_weak(
+                                recordedMaxMidiEvents,
+                                processedEventCount,
+                                std::memory_order_relaxed,
+                                std::memory_order_relaxed))
+            {
+            }
+
+            int recordedMaxReleaseEvents =
+                tabState.diagnosticMaxReleaseEventCount.load(
+                    std::memory_order_relaxed);
+
+            while (releaseEventCount > recordedMaxReleaseEvents
+                   && ! tabState.diagnosticMaxReleaseEventCount
+                            .compare_exchange_weak(
+                                recordedMaxReleaseEvents,
+                                releaseEventCount,
+                                std::memory_order_relaxed,
+                                std::memory_order_relaxed))
+            {
+            }
+
+            constexpr int hostedPanicBurstThreshold =
+                64;
+
+            const bool isHostedPanicBurst =
+                releaseEventCount
+                    >= hostedPanicBurstThreshold
+                && releaseEventCount * 4
+                    >= processedEventCount * 3;
+
+            if (isHostedPanicBurst)
+            {
+                tabState.diagnosticHostedPanicDetections.fetch_add(
+                    1,
+                    std::memory_order_relaxed);
+
+                tabState.diagnosticPanicProcessMicros.store(
+                    tabState.diagnosticLastProcessMicros.load(
+                        std::memory_order_relaxed),
+                    std::memory_order_relaxed);
+
+                tabState.diagnosticPanicMidiEventCount.store(
+                    processedEventCount,
+                    std::memory_order_relaxed);
+
+                tabState.diagnosticPanicReleaseEventCount.store(
+                    releaseEventCount,
+                    std::memory_order_relaxed);
+
+                tabState.diagnosticPanicInvalidAudio.store(
+                    tabState.diagnosticLastInvalidAudio.load(
+                        std::memory_order_relaxed),
+                    std::memory_order_relaxed);
+
+                tabState.diagnosticPanicParameterCallbacks.store(
+                    tabState.diagnosticLastBlockParameterCallbacks.load(
+                        std::memory_order_relaxed),
+                    std::memory_order_relaxed);
+
+                tabState.diagnosticPanicProcessorChangedCallbacks.store(
+                    tabState.diagnosticLastBlockProcessorChangedCallbacks.load(
+                        std::memory_order_relaxed),
+                    std::memory_order_relaxed);
+
+                midiOutputResetReady.store(
+                    true,
+                    std::memory_order_release);
+
+                tabState.hasProducedGeneratedMidi =
+                    false;
+
+                return true;
+            }
+
+            int processedEventIndex = 0;
+
+            for (const auto processedMetadata :
+                 processedMidi)
+            {
+                int matchingInputCount = 0;
+
+                for (const auto inputMetadata :
+                     inputMidi)
+                {
+                    if (midiEventsMatch(
+                            processedMetadata,
+                            inputMetadata))
+                    {
+                        ++matchingInputCount;
+                    }
+                }
+
+                int matchingProcessedCount = 0;
+                int comparisonIndex = 0;
+
+                for (const auto comparisonMetadata :
+                     processedMidi)
+                {
+                    if (comparisonIndex
+                        > processedEventIndex)
+                    {
+                        break;
+                    }
+
+                    if (midiEventsMatch(
+                            processedMetadata,
+                            comparisonMetadata))
+                    {
+                        ++matchingProcessedCount;
+                    }
+
+                    ++comparisonIndex;
+                }
+
+                const bool isAdditionalEvent =
+                    matchingProcessedCount
+                    > matchingInputCount;
+
+                if (isAdditionalEvent)
+                {
+                    tabState.hasProducedGeneratedMidi =
+                        true;
+                }
+
+                const auto& message =
+                    processedMetadata.getMessage();
+
+                const bool shouldAppend =
+                    isAdditionalEvent
+                    || (tabState.hasProducedGeneratedMidi
+                        && isMidiReleaseMessage(message));
+
+                if (shouldAppend)
+                {
+                    midiMessages.addEvent(
+                        message,
+                        processedMetadata.samplePosition);
+                }
+
+                ++processedEventIndex;
+            }
+
+            return false;
         };
 
     if (hostChannels > hostBufferChannelCapacity
@@ -1126,9 +1570,19 @@ void PluginCore::processBlock(juce::AudioBuffer<float>& buffer,
 
         buildMidiBufferForTab(
             i,
-            midiMessages,
+            hostMidiInputScratchBuffer,
             synthMidi,
             tab->bypassed);
+
+        auto& synthInputMidi =
+            tab->midiInputScratchBuffer;
+
+        synthInputMidi.clear();
+        synthInputMidi.addEvents(
+            synthMidi,
+            0,
+            numSamples,
+            0);
 
         const int totalInputChannels =
             juce::jmax(
@@ -1178,15 +1632,124 @@ void PluginCore::processBlock(juce::AudioBuffer<float>& buffer,
         for (int ch = inputChannelsToPreserve; ch < synthBuffer.getNumChannels(); ++ch)
             synthBuffer.clear(ch, 0, numSamples);
 
-        instance->setPlayHead(playHead);
-        instance->processBlock(synthBuffer, synthMidi);
+        const auto parameterCallbacksBefore =
+            tab->diagnosticParameterCallbacks.load(
+                std::memory_order_relaxed);
 
-        clearAndRecordInvalidAudio(
-            synthBuffer,
-            i);
+        const auto processorChangedCallbacksBefore =
+            tab->diagnosticProcessorChangedCallbacks.load(
+                std::memory_order_relaxed);
+
+        instance->setPlayHead(playHead);
+
+        tab->diagnosticProcessCallsStarted.fetch_add(
+            1,
+            std::memory_order_relaxed);
+
+        const auto processStartTicks =
+            juce::Time::getHighResolutionTicks();
+
+        const bool processCompleted =
+            processHostedPluginCrashGuard(
+                *instance,
+                synthBuffer,
+                synthMidi);
+
+        const auto processEndTicks =
+            juce::Time::getHighResolutionTicks();
+
+        if (! processCompleted)
+        {
+            tab->diagnosticProcessingFaultCount.fetch_add(
+                1,
+                std::memory_order_relaxed);
+
+            tab->hasProducedGeneratedMidi =
+                false;
+
+            synthBuffer.clear();
+            synthMidi.clear();
+
+            midiOutputResetReady.store(
+                true,
+                std::memory_order_release);
+
+            continue;
+        }
+
+        const int processMicros =
+            juce::roundToInt(
+                juce::jlimit(
+                    0.0,
+                    2147483647.0,
+                    juce::Time::highResolutionTicksToSeconds(
+                        processEndTicks
+                        - processStartTicks)
+                        * 1000000.0));
+
+        tab->diagnosticLastProcessMicros.store(
+            processMicros,
+            std::memory_order_relaxed);
+
+        int recordedMaxProcessMicros =
+            tab->diagnosticMaxProcessMicros.load(
+                std::memory_order_relaxed);
+
+        while (processMicros > recordedMaxProcessMicros
+               && ! tab->diagnosticMaxProcessMicros
+                        .compare_exchange_weak(
+                            recordedMaxProcessMicros,
+                            processMicros,
+                            std::memory_order_relaxed,
+                            std::memory_order_relaxed))
+        {
+        }
+
+        tab->diagnosticProcessCallsCompleted.fetch_add(
+            1,
+            std::memory_order_relaxed);
+
+        const auto parameterCallbacksAfter =
+            tab->diagnosticParameterCallbacks.load(
+                std::memory_order_relaxed);
+
+        const auto processorChangedCallbacksAfter =
+            tab->diagnosticProcessorChangedCallbacks.load(
+                std::memory_order_relaxed);
+
+        tab->diagnosticLastBlockParameterCallbacks.store(
+            parameterCallbacksAfter
+                - parameterCallbacksBefore,
+            std::memory_order_relaxed);
+
+        tab->diagnosticLastBlockProcessorChangedCallbacks.store(
+            processorChangedCallbacksAfter
+                - processorChangedCallbacksBefore,
+            std::memory_order_relaxed);
+
+        if (midiPanicRequested)
+            instance->reset();
+
+        const bool invalidAudioDetected =
+            clearAndRecordInvalidAudio(
+                synthBuffer,
+                i);
+
+        tab->diagnosticLastInvalidAudio.store(
+            invalidAudioDetected,
+            std::memory_order_relaxed);
 
         if (tab->bypassed)
             continue;
+
+        if (! midiPanicRequested
+            && ! midiReleaseResetRequested)
+        {
+            appendGeneratedMidiEvents(
+                synthMidi,
+                synthInputMidi,
+                *tab);
+        }
 
         const int nextFxTab =
             findNextPreparedFxTab(i);
@@ -1260,8 +1823,18 @@ void PluginCore::processBlock(juce::AudioBuffer<float>& buffer,
 
         buildMidiBufferForTab(
             tabIndex,
-            midiMessages,
+            hostMidiInputScratchBuffer,
             fxMidi);
+
+        auto& fxInputMidi =
+            tab->midiInputScratchBuffer;
+
+        fxInputMidi.clear();
+        fxInputMidi.addEvents(
+            fxMidi,
+            0,
+            numSamples,
+            0);
 
         const int totalInputChannels =
             juce::jmax(
@@ -1306,14 +1879,104 @@ void PluginCore::processBlock(juce::AudioBuffer<float>& buffer,
                 numSamples);
         }
 
+        const auto parameterCallbacksBefore =
+            tab->diagnosticParameterCallbacks.load(
+                std::memory_order_relaxed);
+
+        const auto processorChangedCallbacksBefore =
+            tab->diagnosticProcessorChangedCallbacks.load(
+                std::memory_order_relaxed);
+
         instance->setPlayHead(playHead);
+
+        tab->diagnosticProcessCallsStarted.fetch_add(
+            1,
+            std::memory_order_relaxed);
+
+        const auto processStartTicks =
+            juce::Time::getHighResolutionTicks();
+
         instance->processBlock(
             fxBuffer,
             fxMidi);
 
-        clearAndRecordInvalidAudio(
-            fxBuffer,
-            tabIndex);
+        const auto processEndTicks =
+            juce::Time::getHighResolutionTicks();
+
+        const int processMicros =
+            juce::roundToInt(
+                juce::jlimit(
+                    0.0,
+                    2147483647.0,
+                    juce::Time::highResolutionTicksToSeconds(
+                        processEndTicks
+                        - processStartTicks)
+                        * 1000000.0));
+
+        tab->diagnosticLastProcessMicros.store(
+            processMicros,
+            std::memory_order_relaxed);
+
+        int recordedMaxProcessMicros =
+            tab->diagnosticMaxProcessMicros.load(
+                std::memory_order_relaxed);
+
+        while (processMicros > recordedMaxProcessMicros
+               && ! tab->diagnosticMaxProcessMicros
+                        .compare_exchange_weak(
+                            recordedMaxProcessMicros,
+                            processMicros,
+                            std::memory_order_relaxed,
+                            std::memory_order_relaxed))
+        {
+        }
+
+        tab->diagnosticProcessCallsCompleted.fetch_add(
+            1,
+            std::memory_order_relaxed);
+
+        const auto parameterCallbacksAfter =
+            tab->diagnosticParameterCallbacks.load(
+                std::memory_order_relaxed);
+
+        const auto processorChangedCallbacksAfter =
+            tab->diagnosticProcessorChangedCallbacks.load(
+                std::memory_order_relaxed);
+
+        tab->diagnosticLastBlockParameterCallbacks.store(
+            parameterCallbacksAfter
+                - parameterCallbacksBefore,
+            std::memory_order_relaxed);
+
+        tab->diagnosticLastBlockProcessorChangedCallbacks.store(
+            processorChangedCallbacksAfter
+                - processorChangedCallbacksBefore,
+            std::memory_order_relaxed);
+
+        if (midiPanicRequested)
+            instance->reset();
+
+        const bool invalidAudioDetected =
+            clearAndRecordInvalidAudio(
+                fxBuffer,
+                tabIndex);
+
+        tab->diagnosticLastInvalidAudio.store(
+            invalidAudioDetected,
+            std::memory_order_relaxed);
+
+        if (! midiPanicRequested
+            && ! midiReleaseResetRequested)
+        {
+            const bool hostedPanicBurst =
+                appendGeneratedMidiEvents(
+                    fxMidi,
+                    fxInputMidi,
+                    *tab);
+
+            if (hostedPanicBurst)
+                instance->reset();
+        }
 
         const int nextFxTab =
             fxListIndex + 1 < fxIndices.size()
@@ -2755,6 +3418,154 @@ juce::String PluginCore::buildPluginDiagnosticsText(int tabIndex) const
     addLine("Tail Length Seconds", juce::String(instance->getTailLengthSeconds(), 3));
     addLine("Parameter Count", juce::String(instance->getParameters().size()));
 
+    addSection("Hosted Runtime Diagnostics");
+    addLine(
+        "Process Calls Started",
+        juce::String(
+            (int64) hostedTab
+                ->diagnosticProcessCallsStarted.load(
+                    std::memory_order_relaxed)));
+
+    addLine(
+        "Process Calls Completed",
+        juce::String(
+            (int64) hostedTab
+                ->diagnosticProcessCallsCompleted.load(
+                    std::memory_order_relaxed)));
+
+    addLine(
+        "Last Process Time us",
+        juce::String(
+            hostedTab
+                ->diagnosticLastProcessMicros.load(
+                    std::memory_order_relaxed)));
+
+    addLine(
+        "Maximum Process Time us",
+        juce::String(
+            hostedTab
+                ->diagnosticMaxProcessMicros.load(
+                    std::memory_order_relaxed)));
+
+    addLine(
+        "Last MIDI Event Count",
+        juce::String(
+            hostedTab
+                ->diagnosticLastMidiEventCount.load(
+                    std::memory_order_relaxed)));
+
+    addLine(
+        "Maximum MIDI Event Count",
+        juce::String(
+            hostedTab
+                ->diagnosticMaxMidiEventCount.load(
+                    std::memory_order_relaxed)));
+
+    addLine(
+        "Last Release Event Count",
+        juce::String(
+            hostedTab
+                ->diagnosticLastReleaseEventCount.load(
+                    std::memory_order_relaxed)));
+
+    addLine(
+        "Maximum Release Event Count",
+        juce::String(
+            hostedTab
+                ->diagnosticMaxReleaseEventCount.load(
+                    std::memory_order_relaxed)));
+
+    addLine(
+        "Last Invalid Audio",
+        boolText(
+            hostedTab
+                ->diagnosticLastInvalidAudio.load(
+                    std::memory_order_relaxed)));
+
+    addLine(
+        "Parameter Callbacks Total",
+        juce::String(
+            (int64) hostedTab
+                ->diagnosticParameterCallbacks.load(
+                    std::memory_order_relaxed)));
+
+    addLine(
+        "Processor Changed Callbacks Total",
+        juce::String(
+            (int64) hostedTab
+                ->diagnosticProcessorChangedCallbacks.load(
+                    std::memory_order_relaxed)));
+
+    addLine(
+        "Last Block Parameter Callbacks",
+        juce::String(
+            (int64) hostedTab
+                ->diagnosticLastBlockParameterCallbacks.load(
+                    std::memory_order_relaxed)));
+
+    addLine(
+        "Last Block Processor Changed Callbacks",
+        juce::String(
+            (int64) hostedTab
+                ->diagnosticLastBlockProcessorChangedCallbacks.load(
+                    std::memory_order_relaxed)));
+
+    addLine(
+        "Hosted Panic Detections",
+        juce::String(
+            (int64) hostedTab
+                ->diagnosticHostedPanicDetections.load(
+                    std::memory_order_relaxed)));
+
+    addLine(
+        "Panic Process Time us",
+        juce::String(
+            hostedTab
+                ->diagnosticPanicProcessMicros.load(
+                    std::memory_order_relaxed)));
+
+    addLine(
+        "Panic MIDI Event Count",
+        juce::String(
+            hostedTab
+                ->diagnosticPanicMidiEventCount.load(
+                    std::memory_order_relaxed)));
+
+    addLine(
+        "Panic Release Event Count",
+        juce::String(
+            hostedTab
+                ->diagnosticPanicReleaseEventCount.load(
+                    std::memory_order_relaxed)));
+
+    addLine(
+        "Panic Invalid Audio",
+        boolText(
+            hostedTab
+                ->diagnosticPanicInvalidAudio.load(
+                    std::memory_order_relaxed)));
+
+    addLine(
+        "Panic Parameter Callbacks",
+        juce::String(
+            (int64) hostedTab
+                ->diagnosticPanicParameterCallbacks.load(
+                    std::memory_order_relaxed)));
+
+    addLine(
+        "Panic Processor Changed Callbacks",
+        juce::String(
+            (int64) hostedTab
+                ->diagnosticPanicProcessorChangedCallbacks.load(
+                    std::memory_order_relaxed)));
+
+    addLine(
+        "Processing Faults Caught",
+        juce::String(
+            (int64) hostedTab
+                ->diagnosticProcessingFaultCount.load(
+                    std::memory_order_relaxed)));
+
     addSection("Location / State");
     addLine("Loaded Path", hostedTab->slot != nullptr ? hostedTab->slot->getPluginPath() : juce::String());
     addLine("File / Identifier", description.fileOrIdentifier);
@@ -3107,9 +3918,14 @@ bool PluginCore::scanPluginDescriptionsForFile(const juce::String& pluginPath,
 
     const juce::File pluginFile(pluginPath);
 
+    DebugLog::write("[PluginLoadDiagnostic] 01 scan begin | path="
+                    + pluginFile.getFullPathName());
+
     if (! pluginFile.exists())
     {
         errorMessage = "Plugin file does not exist";
+        DebugLog::write("[PluginLoadDiagnostic] 02 scan rejected | reason="
+                        + errorMessage);
         return false;
     }
 
@@ -3122,6 +3938,8 @@ bool PluginCore::scanPluginDescriptionsForFile(const juce::String& pluginPath,
     if (! isVST3 && ! isVST2)
     {
         errorMessage = "Unsupported plugin format";
+        DebugLog::write("[PluginLoadDiagnostic] 02 scan rejected | reason="
+                        + errorMessage);
         return false;
     }
 
@@ -3172,13 +3990,21 @@ bool PluginCore::scanPluginDescriptionsForFile(const juce::String& pluginPath,
 
         if (isVST3 && formatIsVST3)
         {
+            DebugLog::write("[PluginLoadDiagnostic] 03 format scan call begin | format="
+                            + format->getName());
             format->findAllTypesForFile(typesFound, pluginPath);
+            DebugLog::write("[PluginLoadDiagnostic] 04 format scan call returned | types="
+                            + juce::String(typesFound.size()));
             break;
         }
 
         if (isVST2 && formatIsVST2)
         {
+            DebugLog::write("[PluginLoadDiagnostic] 03 format scan call begin | format="
+                            + format->getName());
             format->findAllTypesForFile(typesFound, pluginPath);
+            DebugLog::write("[PluginLoadDiagnostic] 04 format scan call returned | types="
+                            + juce::String(typesFound.size()));
             break;
         }
     }
@@ -3186,19 +4012,38 @@ bool PluginCore::scanPluginDescriptionsForFile(const juce::String& pluginPath,
     if (typesFound.isEmpty())
     {
         errorMessage = "No plugin type found in file";
+        DebugLog::write("[PluginLoadDiagnostic] 05 scan failed | reason="
+                        + errorMessage);
         return false;
     }
+
+    DebugLog::write("[PluginLoadDiagnostic] 06 scan complete | types="
+                    + juce::String(typesFound.size())
+                    + " | firstName="
+                    + typesFound[0]->name
+                    + " | firstFormat="
+                    + typesFound[0]->pluginFormatName);
 
     return true;
 }
 
 bool PluginCore::loadMainSlotPluginFromDescription(const juce::PluginDescription& description)
 {
+    DebugLog::write("[PluginLoadDiagnostic] 10 core load begin | name="
+                    + description.name
+                    + " | format="
+                    + description.pluginFormatName
+                    + " | path="
+                    + description.fileOrIdentifier);
+
     auto* selectedTab =
         getSelectedHostedTab();
 
     if (selectedTab == nullptr)
+    {
+        DebugLog::write("[PluginLoadDiagnostic] 11 core load stopped | reason=no selected tab");
         return false;
+    }
 
     if (isPolyHostInterfaceVst3Description(
             description))
@@ -3229,12 +4074,17 @@ bool PluginCore::loadMainSlotPluginFromDescription(const juce::PluginDescription
         return false;
     }
 
+    DebugLog::write("[PluginLoadDiagnostic] 12 previous plugin unload begin");
     unloadMainSlotPlugin();
+    DebugLog::write("[PluginLoadDiagnostic] 13 previous plugin unload returned");
 
     selectedTab = getSelectedHostedTab();
 
     if (selectedTab == nullptr)
+    {
+        DebugLog::write("[PluginLoadDiagnostic] 14 core load stopped | reason=selected tab lost after unload");
         return false;
+    }
 
     juce::String errorMessage;
 
@@ -3271,10 +4121,22 @@ bool PluginCore::loadMainSlotPluginFromDescription(const juce::PluginDescription
         if (isVST2 && ! formatIsVST2)
             continue;
 
+        DebugLog::write("[PluginLoadDiagnostic] 20 instance creation call begin | format="
+                        + format->getName()
+                        + " | sampleRate="
+                        + juce::String(sampleRateToUse, 2)
+                        + " | blockSize="
+                        + juce::String(blockSizeToUse));
+
         instance = format->createInstanceFromDescription(description,
                                                          sampleRateToUse,
                                                          blockSizeToUse,
                                                          errorMessage);
+
+        DebugLog::write("[PluginLoadDiagnostic] 21 instance creation call returned | success="
+                        + juce::String(instance != nullptr ? "true" : "false")
+                        + " | error="
+                        + errorMessage);
 
         if (instance != nullptr)
             break;
@@ -3289,28 +4151,52 @@ bool PluginCore::loadMainSlotPluginFromDescription(const juce::PluginDescription
         selectedTab->slot->setPluginPath(description.fileOrIdentifier);
         selectedTab->slot->setLastError(fullError);
         statusText = "Load failed: " + fullError;
+        DebugLog::write("[PluginLoadDiagnostic] 22 core load failed | reason="
+                        + fullError);
         return false;
     }
 
     if (playbackPrepared.load())
+    {
+        DebugLog::write("[PluginLoadDiagnostic] 30 prepareToPlay call begin");
         instance->prepareToPlay(currentSampleRate, currentBlockSize);
+        DebugLog::write("[PluginLoadDiagnostic] 31 prepareToPlay call returned");
+    }
+    else
+    {
+        DebugLog::write("[PluginLoadDiagnostic] 31 prepareToPlay skipped | playback not prepared");
+    }
 
     selectedTab->pluginType =
         slotTypeFromDescription(description);
+
+    DebugLog::write("[PluginLoadDiagnostic] 40 channel query begin");
+
+    const int totalInputChannels =
+        instance->getTotalNumInputChannels();
+
+    const int totalOutputChannels =
+        instance->getTotalNumOutputChannels();
+
+    DebugLog::write("[PluginLoadDiagnostic] 41 channel query returned | inputs="
+                    + juce::String(totalInputChannels)
+                    + " | outputs="
+                    + juce::String(totalOutputChannels));
 
     selectedTab->audioScratchChannelCapacity =
         juce::jmax(
             hostBufferChannelCapacity,
             juce::jmax(
-                juce::jmax(
-                    0,
-                    instance->getTotalNumInputChannels()),
-                juce::jmax(
-                    0,
-                    instance->getTotalNumOutputChannels())));
+                juce::jmax(0, totalInputChannels),
+                juce::jmax(0, totalOutputChannels)));
 
     selectedTab->audioScratchSampleCapacity =
         hostBufferSampleCapacity;
+
+    DebugLog::write("[PluginLoadDiagnostic] 42 scratch buffer allocation begin | channels="
+                    + juce::String(selectedTab->audioScratchChannelCapacity)
+                    + " | samples="
+                    + juce::String(selectedTab->audioScratchSampleCapacity));
 
     selectedTab->audioScratchBuffer.setSize(
         selectedTab->audioScratchChannelCapacity,
@@ -3321,11 +4207,17 @@ bool PluginCore::loadMainSlotPluginFromDescription(const juce::PluginDescription
 
     selectedTab->audioScratchBuffer.clear();
 
+    DebugLog::write("[PluginLoadDiagnostic] 43 scratch buffer allocation returned");
+
+    DebugLog::write("[PluginLoadDiagnostic] 50 instance ownership transfer begin");
     selectedTab->pluginInstance =
         std::move(instance);
+    DebugLog::write("[PluginLoadDiagnostic] 51 instance ownership transfer returned");
 
+    DebugLog::write("[PluginLoadDiagnostic] 52 listener attach begin");
     attachToHostedPlugin(
         selectedTab->pluginInstance.get());
+    DebugLog::write("[PluginLoadDiagnostic] 53 listener attach returned");
 
     selectedTab->slot->setPluginLoaded(true);
     selectedTab->slot->setLoadedPluginName(description.name);
@@ -3339,6 +4231,7 @@ bool PluginCore::loadMainSlotPluginFromDescription(const juce::PluginDescription
     clearTabRestoreIssue(*selectedTab);
 
     statusText = "Plugin instantiated";
+    DebugLog::write("[PluginLoadDiagnostic] 60 core load complete");
     markDirty();
     suppressDirtyMarkingFor(1500);
     return true;
@@ -3435,23 +4328,43 @@ void PluginCore::unloadMainSlotPlugin()
 
 void PluginCore::resetForNewPreset()
 {
-    playbackPrepared.store(false);
+    DebugLog::write("[PresetTeardown] 11 core reset entered | tabs="
+                    + juce::String(hostedTabs.size()));
 
-    for (auto* tab : hostedTabs)
+    for (int tabIndex = 0;
+         tabIndex < hostedTabs.size();
+         ++tabIndex)
     {
+        auto* tab = hostedTabs[tabIndex];
+
         if (tab == nullptr)
             continue;
 
+        DebugLog::write("[PresetTeardown] 12 listener detach begin | tab="
+                        + juce::String(tabIndex));
         detachFromHostedPlugin(tab->pluginInstance.get());
+        DebugLog::write("[PresetTeardown] 13 listener detach returned | tab="
+                        + juce::String(tabIndex));
 
         if (tab->pluginInstance != nullptr)
         {
+            DebugLog::write("[PresetTeardown] 14 releaseResources call begin | tab="
+                            + juce::String(tabIndex));
             tab->pluginInstance->releaseResources();
+            DebugLog::write("[PresetTeardown] 15 releaseResources call returned | tab="
+                            + juce::String(tabIndex));
+
+            DebugLog::write("[PresetTeardown] 16 plugin instance delete begin | tab="
+                            + juce::String(tabIndex));
             tab->pluginInstance.reset();
+            DebugLog::write("[PresetTeardown] 17 plugin instance delete returned | tab="
+                            + juce::String(tabIndex));
         }
     }
 
+    DebugLog::write("[PresetTeardown] 18 hosted tabs clear begin");
     hostedTabs.clear();
+    DebugLog::write("[PresetTeardown] 18 hosted tabs clear returned");
     selectedTabIndex = 0;
 
     sessionDocument.clear();
@@ -3467,6 +4380,8 @@ void PluginCore::resetForNewPreset()
 
     addTab("Empty");
     markClean();
+
+    DebugLog::write("[PresetTeardown] 18 core reset complete");
 }
 
 juce::AudioPluginInstance* PluginCore::getMainPluginInstance() const
@@ -4384,8 +5299,22 @@ void PluginCore::audioProcessorParameterChanged(
     const int tabIndex =
         findHostedTabIndexForProcessor(processor);
 
-    if (tabIndex < 0)
+    if (! juce::isPositiveAndBelow(
+            tabIndex,
+            hostedTabs.size()))
+    {
         return;
+    }
+
+    auto* tab =
+        hostedTabs[tabIndex];
+
+    if (tab == nullptr)
+        return;
+
+    tab->diagnosticParameterCallbacks.fetch_add(
+        1,
+        std::memory_order_relaxed);
 
     const auto captureExpiry =
         pointerAutomationCaptureExpiryMs.load(
@@ -4435,15 +5364,37 @@ void PluginCore::audioProcessorParameterChanged(
     markDirty();
 }
 
-void PluginCore::audioProcessorChanged(juce::AudioProcessor* processor,
-                                       const juce::AudioProcessorListener::ChangeDetails& details)
+void PluginCore::audioProcessorChanged(
+    juce::AudioProcessor* processor,
+    const juce::AudioProcessorListener::ChangeDetails& details)
 {
     juce::ignoreUnused(details);
 
-    auto* selectedTab = getSelectedHostedTab();
+    const int tabIndex =
+        findHostedTabIndexForProcessor(
+            processor);
 
-    if (selectedTab == nullptr || processor != selectedTab->pluginInstance.get())
+    if (juce::isPositiveAndBelow(
+            tabIndex,
+            hostedTabs.size()))
+    {
+        if (auto* tab = hostedTabs[tabIndex])
+        {
+            tab->diagnosticProcessorChangedCallbacks.fetch_add(
+                1,
+                std::memory_order_relaxed);
+        }
+    }
+
+    auto* selectedTab =
+        getSelectedHostedTab();
+
+    if (selectedTab == nullptr
+        || processor
+            != selectedTab->pluginInstance.get())
+    {
         return;
+    }
 
     if (isDirtyMarkingSuppressed())
         return;
@@ -4451,45 +5402,26 @@ void PluginCore::audioProcessorChanged(juce::AudioProcessor* processor,
     markDirty();
 }
 
+void PluginCore::requestMidiReleaseReset()
+{
+    pendingMidiReleaseReset.store(
+        true,
+        std::memory_order_release);
+}
+
+bool PluginCore::consumeMidiOutputResetRequested()
+{
+    return midiOutputResetReady.exchange(
+        false,
+        std::memory_order_acq_rel);
+}
+
 void PluginCore::sendMidiPanic()
 {
-    juce::MidiBuffer panicMidi;
+    pendingMidiPanic.store(
+        true,
+        std::memory_order_release);
 
-    for (int channel = 1; channel <= 16; ++channel)
-    {
-        panicMidi.addEvent(juce::MidiMessage::controllerEvent(channel, 64, 0), 0);   // Sustain off
-        panicMidi.addEvent(juce::MidiMessage::controllerEvent(channel, 66, 0), 0);   // Sostenuto off
-        panicMidi.addEvent(juce::MidiMessage::controllerEvent(channel, 67, 0), 0);   // Soft pedal off
-        panicMidi.addEvent(juce::MidiMessage::controllerEvent(channel, 121, 0), 0);  // Reset all controllers
-        panicMidi.addEvent(juce::MidiMessage::controllerEvent(channel, 123, 0), 0);  // All notes off
-        panicMidi.addEvent(juce::MidiMessage::controllerEvent(channel, 120, 0), 0);  // All sound off
-
-        for (int note = 0; note < 128; ++note)
-            panicMidi.addEvent(juce::MidiMessage::noteOff(channel, note), 0);
-    }
-
-    const int numSamples = juce::jmax(1, currentBlockSize);
-
-    for (int i = 0; i < hostedTabs.size(); ++i)
-    {
-        auto* tab = hostedTabs[i];
-
-        if (tab == nullptr || tab->pluginInstance == nullptr || tab->bypassed)
-            continue;
-
-        auto* instance = tab->pluginInstance.get();
-
-        const int totalInputChannels = juce::jmax(0, instance->getTotalNumInputChannels());
-        const int totalOutputChannels = juce::jmax(0, instance->getTotalNumOutputChannels());
-        const int processChannels = juce::jmax(1, juce::jmax(totalInputChannels, totalOutputChannels));
-
-        juce::AudioBuffer<float> tempAudio(processChannels, numSamples);
-        tempAudio.clear();
-
-        juce::MidiBuffer panicCopy = panicMidi;
-        instance->processBlock(tempAudio, panicCopy);
-        instance->reset();
-    }
-
-    setStatusText("MIDI Panic sent");
+    setStatusText(
+        "MIDI Panic queued");
 }

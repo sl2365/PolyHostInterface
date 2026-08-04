@@ -117,6 +117,7 @@ PolyHostPluginProcessor::PolyHostPluginProcessor()
 
 PolyHostPluginProcessor::~PolyHostPluginProcessor()
 {
+    audioRecordingController.stopRecording("Recording stopped: PHI is closing");
     core.setPointerAutomationCallback({});
 
     cancelPendingUpdate();
@@ -127,6 +128,69 @@ PolyHostPluginProcessor::~PolyHostPluginProcessor()
 void PolyHostPluginProcessor::prepareToPlay(double sampleRate,
                                             int samplesPerBlock)
 {
+    diagnosticPrepareCalls.fetch_add(
+        1,
+        std::memory_order_relaxed);
+
+    processorMidiInputScratchBuffer.clear();
+    processorMidiInputScratchBuffer.ensureSize(
+        64 * 1024);
+
+    midiOutputResetScratchBuffer.clear();
+    midiOutputResetScratchBuffer.ensureSize(
+        8 * 1024);
+
+    for (int channel = 1;
+         channel <= 16;
+         ++channel)
+    {
+        midiOutputResetScratchBuffer.addEvent(
+            juce::MidiMessage::controllerEvent(
+                channel,
+                64,
+                0),
+            0);
+
+        midiOutputResetScratchBuffer.addEvent(
+            juce::MidiMessage::controllerEvent(
+                channel,
+                66,
+                0),
+            0);
+
+        midiOutputResetScratchBuffer.addEvent(
+            juce::MidiMessage::controllerEvent(
+                channel,
+                67,
+                0),
+            0);
+
+        midiOutputResetScratchBuffer.addEvent(
+            juce::MidiMessage::controllerEvent(
+                channel,
+                121,
+                0),
+            0);
+
+        midiOutputResetScratchBuffer.addEvent(
+            juce::MidiMessage::controllerEvent(
+                channel,
+                123,
+                0),
+            0);
+
+        midiOutputResetScratchBuffer.addEvent(
+            juce::MidiMessage::controllerEvent(
+                channel,
+                120,
+                0),
+            0);
+    }
+
+    pendingMidiOutputReset.store(
+        false,
+        std::memory_order_relaxed);
+
     core.prepareToPlay(sampleRate, samplesPerBlock);
 
     if (standaloneAudioExtension != nullptr)
@@ -134,11 +198,31 @@ void PolyHostPluginProcessor::prepareToPlay(double sampleRate,
         standaloneAudioExtension->prepareToPlay(
             sampleRate,
             samplesPerBlock);
+
+        audioRecordingController.prepareToPlay(
+            sampleRate,
+            samplesPerBlock);
+
+        midiRecordingController.prepareToPlay(
+            sampleRate,
+            samplesPerBlock);
+    }
+    else
+    {
+        audioRecordingController.releaseResources();
+        midiRecordingController.releaseResources();
     }
 }
 
 void PolyHostPluginProcessor::releaseResources()
 {
+    diagnosticReleaseCalls.fetch_add(
+        1,
+        std::memory_order_relaxed);
+
+    audioRecordingController.releaseResources();
+    midiRecordingController.releaseResources();
+
     if (standaloneAudioExtension != nullptr)
         standaloneAudioExtension->releaseResources();
 
@@ -149,6 +233,51 @@ void PolyHostPluginProcessor::processBlock(
     juce::AudioBuffer<float>& buffer,
     juce::MidiBuffer& midiMessages)
 {
+    auto ticksToMicros =
+        [](juce::int64 tickCount) noexcept
+        {
+            return juce::roundToInt(
+                juce::jlimit(
+                    0.0,
+                    2147483647.0,
+                    juce::Time::highResolutionTicksToSeconds(
+                        tickCount)
+                        * 1000000.0));
+        };
+
+    auto updateMaximum =
+        [](std::atomic<int>& target,
+           int value) noexcept
+        {
+            int recordedMaximum =
+                target.load(
+                    std::memory_order_relaxed);
+
+            while (value > recordedMaximum
+                   && ! target.compare_exchange_weak(
+                        recordedMaximum,
+                        value,
+                        std::memory_order_relaxed,
+                        std::memory_order_relaxed))
+            {
+            }
+        };
+
+    diagnosticProcessCallsStarted.fetch_add(
+        1,
+        std::memory_order_relaxed);
+
+    diagnosticLastProcessActivityMs.store(
+        juce::Time::getMillisecondCounter(),
+        std::memory_order_relaxed);
+
+    diagnosticLastInputMidiEventCount.store(
+        midiMessages.getNumEvents(),
+        std::memory_order_relaxed);
+
+    const auto processStartTicks =
+        juce::Time::getHighResolutionTicks();
+
     juce::ScopedNoDenormals noDenormals;
 
     for (auto i = getTotalNumInputChannels();
@@ -158,9 +287,27 @@ void PolyHostPluginProcessor::processBlock(
         buffer.clear(i, 0, buffer.getNumSamples());
     }
 
+    processorMidiInputScratchBuffer.clear();
+
+    if (buffer.getNumSamples() > 0)
+    {
+        processorMidiInputScratchBuffer.addEvents(
+            midiMessages,
+            0,
+            buffer.getNumSamples(),
+            0);
+    }
+
+    if (standaloneAudioExtension != nullptr)
+    {
+        standaloneAudioExtension->processMidiInput(
+            processorMidiInputScratchBuffer);
+    }
+
     for (const auto metadata : midiMessages)
     {
-        const auto& message = metadata.getMessage();
+        const auto& message =
+            metadata.getMessage();
 
         pushMidiMonitorEvent(message);
 
@@ -172,10 +319,165 @@ void PolyHostPluginProcessor::processBlock(
         }
     }
 
-    core.processBlock(buffer, midiMessages, getPlayHead());
+    const auto coreStartTicks =
+        juce::Time::getHighResolutionTicks();
+
+    core.processBlock(
+        buffer,
+        midiMessages,
+        getPlayHead());
+
+    const auto coreEndTicks =
+        juce::Time::getHighResolutionTicks();
+
+    const int coreMicros =
+        ticksToMicros(
+            coreEndTicks
+            - coreStartTicks);
+
+    diagnosticLastCoreMicros.store(
+        coreMicros,
+        std::memory_order_relaxed);
+
+    updateMaximum(
+        diagnosticMaxCoreMicros,
+        coreMicros);
 
     if (standaloneAudioExtension != nullptr)
-        standaloneAudioExtension->processOutputBlock(buffer);
+    {
+        standaloneAudioExtension->processHostedMidiOutput(
+            midiMessages);
+    }
+
+    const bool coreOutputResetRequested =
+        core.consumeMidiOutputResetRequested();
+
+    if (coreOutputResetRequested)
+    {
+        diagnosticCoreOutputResetRequests.fetch_add(
+            1,
+            std::memory_order_relaxed);
+    }
+
+    if (JucePlugin_ProducesMidiOutput != 0)
+    {
+        const bool localOutputResetRequested =
+            buffer.getNumSamples() > 0
+            && pendingMidiOutputReset.exchange(
+                false,
+                std::memory_order_acq_rel);
+
+        const bool outputResetRequested =
+            coreOutputResetRequested
+            || localOutputResetRequested;
+
+        if (outputResetRequested)
+        {
+            midiMessages.clear();
+
+            midiMessages.addEvents(
+                midiOutputResetScratchBuffer,
+                0,
+                buffer.getNumSamples(),
+                0);
+        }
+        else
+        {
+            if (! sendGeneratedMidiToHost.load(
+                    std::memory_order_relaxed))
+            {
+                midiMessages.clear();
+            }
+
+            if (midiThruEnabled.load(
+                    std::memory_order_relaxed))
+            {
+                midiMessages.addEvents(
+                    processorMidiInputScratchBuffer,
+                    0,
+                    buffer.getNumSamples(),
+                    0);
+            }
+        }
+    }
+
+    if (standaloneAudioExtension != nullptr)
+    {
+        audioRecordingController.processAudioBlock(buffer);
+
+        standaloneAudioExtension
+            ->processOutputBlock(buffer);
+    }
+
+    const auto processEndTicks =
+        juce::Time::getHighResolutionTicks();
+
+    const int processMicros =
+        ticksToMicros(
+            processEndTicks
+            - processStartTicks);
+
+    const int postCoreMicros =
+        ticksToMicros(
+            processEndTicks
+            - coreEndTicks);
+
+    diagnosticLastProcessMicros.store(
+        processMicros,
+        std::memory_order_relaxed);
+
+    diagnosticLastPostCoreMicros.store(
+        postCoreMicros,
+        std::memory_order_relaxed);
+
+    updateMaximum(
+        diagnosticMaxProcessMicros,
+        processMicros);
+
+    updateMaximum(
+        diagnosticMaxPostCoreMicros,
+        postCoreMicros);
+
+    if (processMicros >= 5000)
+    {
+        diagnosticBlocksOver5Ms.fetch_add(
+            1,
+            std::memory_order_relaxed);
+
+        diagnosticLastSlowProcessMicros.store(
+            processMicros,
+            std::memory_order_relaxed);
+
+        diagnosticLastSlowCoreMicros.store(
+            coreMicros,
+            std::memory_order_relaxed);
+
+        diagnosticLastSlowPostCoreMicros.store(
+            postCoreMicros,
+            std::memory_order_relaxed);
+    }
+
+    if (processMicros >= 10000)
+    {
+        diagnosticBlocksOver10Ms.fetch_add(
+            1,
+            std::memory_order_relaxed);
+    }
+
+    if (processMicros >= 20000)
+    {
+        diagnosticBlocksOver20Ms.fetch_add(
+            1,
+            std::memory_order_relaxed);
+    }
+
+    diagnosticLastOutputMidiEventCount.store(
+        midiMessages.getNumEvents(),
+        std::memory_order_relaxed);
+
+    diagnosticProcessCallsCompleted.fetch_add(
+        1,
+        std::memory_order_relaxed);
 }
 
 juce::AudioProcessorEditor* PolyHostPluginProcessor::createEditor()
@@ -200,7 +502,7 @@ bool PolyHostPluginProcessor::acceptsMidi() const
 
 bool PolyHostPluginProcessor::producesMidi() const
 {
-    return false;
+    return JucePlugin_ProducesMidiOutput != 0;
 }
 
 bool PolyHostPluginProcessor::isMidiEffect() const
@@ -256,6 +558,10 @@ bool PolyHostPluginProcessor::isBusesLayoutSupported(const BusesLayout& layouts)
 
 void PolyHostPluginProcessor::getStateInformation(juce::MemoryBlock& destData)
 {
+    diagnosticGetStateCalls.fetch_add(
+        1,
+        std::memory_order_relaxed);
+
     auto stateXml = std::make_unique<juce::XmlElement>("POLYHOST_STATE");
 
     stateXml->setAttribute(
@@ -271,6 +577,14 @@ void PolyHostPluginProcessor::getStateInformation(juce::MemoryBlock& destData)
     stateXml->setAttribute(
         "selectedTabIndex",
         core.getSelectedTabIndex());
+
+    stateXml->setAttribute(
+        "sendGeneratedMidiToHost",
+        getSendGeneratedMidiToHost());
+
+    stateXml->setAttribute(
+        "midiThruEnabled",
+        getMidiThruEnabled());
 
     auto sessionData = core.buildSessionData();
 
@@ -289,6 +603,10 @@ void PolyHostPluginProcessor::getStateInformation(juce::MemoryBlock& destData)
 
 void PolyHostPluginProcessor::setStateInformation(const void* data, int sizeInBytes)
 {
+    diagnosticSetStateCalls.fetch_add(
+        1,
+        std::memory_order_relaxed);
+
     const juce::ScopedLock stateRestoreLock(
         getCallbackLock());
 
@@ -307,6 +625,18 @@ void PolyHostPluginProcessor::setStateInformation(const void* data, int sizeInBy
     auto currentPresetFilePath = stateXml->getStringAttribute("currentPresetFile").trim();
     auto sessionDataXmlBase64 = stateXml->getStringAttribute("sessionDataXmlBase64");
     auto selectedTabIndex = stateXml->getIntAttribute("selectedTabIndex", 0);
+
+    sendGeneratedMidiToHost.store(
+        stateXml->getBoolAttribute(
+            "sendGeneratedMidiToHost",
+            true),
+        std::memory_order_relaxed);
+
+    midiThruEnabled.store(
+        stateXml->getBoolAttribute(
+            "midiThruEnabled",
+            false),
+        std::memory_order_relaxed);
 
     if (sessionName.isNotEmpty())
         core.setSessionName(sessionName);
@@ -492,6 +822,472 @@ PolyHostPluginProcessor::popPendingMidiMonitorEvents()
 PluginCore& PolyHostPluginProcessor::getCore()
 {
     return core;
+}
+
+AudioRecordingController& PolyHostPluginProcessor::getAudioRecordingController()
+{
+    return audioRecordingController;
+}
+
+MidiRecordingController& PolyHostPluginProcessor::getMidiRecordingController()
+{
+    return midiRecordingController;
+}
+
+void PolyHostPluginProcessor::
+    sampleSuspensionDiagnostics()
+{
+    diagnosticSuspensionSamples.fetch_add(
+        1,
+        std::memory_order_relaxed);
+
+    const bool outerSuspended =
+        isSuspended();
+
+    const bool previousOuterSuspended =
+        diagnosticOuterSuspendedNow.exchange(
+            outerSuspended,
+            std::memory_order_relaxed);
+
+    if (outerSuspended)
+    {
+        diagnosticOuterSuspendedObserved.store(
+            true,
+            std::memory_order_relaxed);
+    }
+
+    if (outerSuspended
+        != previousOuterSuspended)
+    {
+        diagnosticOuterSuspensionTransitions.fetch_add(
+            1,
+            std::memory_order_relaxed);
+    }
+
+    auto* hostedInstance =
+        core.getMainPluginInstance();
+
+    const bool hostedInstancePresent =
+        hostedInstance != nullptr;
+
+    const bool hostedSuspended =
+        hostedInstancePresent
+        && hostedInstance->isSuspended();
+
+    diagnosticHostedInstancePresentNow.store(
+        hostedInstancePresent,
+        std::memory_order_relaxed);
+
+    const bool previousHostedSuspended =
+        diagnosticHostedSuspendedNow.exchange(
+            hostedSuspended,
+            std::memory_order_relaxed);
+
+    if (hostedSuspended)
+    {
+        diagnosticHostedSuspendedObserved.store(
+            true,
+            std::memory_order_relaxed);
+    }
+
+    if (hostedSuspended
+        != previousHostedSuspended)
+    {
+        diagnosticHostedSuspensionTransitions.fetch_add(
+            1,
+            std::memory_order_relaxed);
+    }
+
+    const auto lastProcessActivityMs =
+        diagnosticLastProcessActivityMs.load(
+            std::memory_order_relaxed);
+
+    if (lastProcessActivityMs == 0)
+        return;
+
+    const auto currentTimeMs =
+        juce::Time::getMillisecondCounter();
+
+    const auto elapsedMs =
+        currentTimeMs
+        - lastProcessActivityMs;
+
+    const int processGapMs =
+        static_cast<int>(
+            juce::jmin(
+                elapsedMs,
+                static_cast<juce::uint32>(
+                    2147483647u)));
+
+    diagnosticCurrentProcessGapMs.store(
+        processGapMs,
+        std::memory_order_relaxed);
+
+    int recordedMaximumGap =
+        diagnosticMaximumProcessGapMs.load(
+            std::memory_order_relaxed);
+
+    while (processGapMs > recordedMaximumGap
+           && ! diagnosticMaximumProcessGapMs
+                    .compare_exchange_weak(
+                        recordedMaximumGap,
+                        processGapMs,
+                        std::memory_order_relaxed,
+                        std::memory_order_relaxed))
+    {
+    }
+
+    constexpr int inactiveThresholdMs =
+        250;
+
+    const bool processInactive =
+        processGapMs
+        >= inactiveThresholdMs;
+
+    const bool previousProcessInactive =
+        diagnosticProcessInactiveNow.exchange(
+            processInactive,
+            std::memory_order_relaxed);
+
+    if (processInactive)
+    {
+        diagnosticProcessInactiveObserved.store(
+            true,
+            std::memory_order_relaxed);
+    }
+
+    if (processInactive
+        != previousProcessInactive)
+    {
+        diagnosticProcessInactiveTransitions.fetch_add(
+            1,
+            std::memory_order_relaxed);
+    }
+}
+
+juce::String
+PolyHostPluginProcessor::
+    buildProcessorDiagnosticsText() const
+{
+    juce::String text;
+
+    auto addLine =
+        [&text](
+            const juce::String& name,
+            const juce::String& value)
+        {
+            text << name
+                 << ": "
+                 << value
+                 << "\n";
+        };
+
+    const auto started =
+        diagnosticProcessCallsStarted.load(
+            std::memory_order_relaxed);
+
+    const auto completed =
+        diagnosticProcessCallsCompleted.load(
+            std::memory_order_relaxed);
+
+    text << "Processor Runtime Diagnostics\n"
+         << "-----------------------------\n";
+
+    addLine(
+        "Current Sample Rate",
+        juce::String(
+            getSampleRate(),
+            1));
+
+    addLine(
+        "Current Block Size",
+        juce::String(
+            getBlockSize()));
+
+    addLine(
+        "Prepare Calls",
+        juce::String(
+            (juce::int64)
+                diagnosticPrepareCalls.load(
+                    std::memory_order_relaxed)));
+
+    addLine(
+        "Release Calls",
+        juce::String(
+            (juce::int64)
+                diagnosticReleaseCalls.load(
+                    std::memory_order_relaxed)));
+
+    addLine(
+        "Process Calls Started",
+        juce::String(
+            (juce::int64) started));
+
+    addLine(
+        "Process Calls Completed",
+        juce::String(
+            (juce::int64) completed));
+
+    addLine(
+        "Process Calls In Flight",
+        juce::String(
+            (juce::int64) started
+            - (juce::int64) completed));
+
+    addLine(
+        "Suspension Samples",
+        juce::String(
+            (juce::int64)
+                diagnosticSuspensionSamples.load(
+                    std::memory_order_relaxed)));
+
+    addLine(
+        "Outer Suspended Now",
+        diagnosticOuterSuspendedNow.load(
+            std::memory_order_relaxed)
+                ? "Yes"
+                : "No");
+
+    addLine(
+        "Outer Suspension Observed",
+        diagnosticOuterSuspendedObserved.load(
+            std::memory_order_relaxed)
+                ? "Yes"
+                : "No");
+
+    addLine(
+        "Outer Suspension Transitions",
+        juce::String(
+            (juce::int64)
+                diagnosticOuterSuspensionTransitions.load(
+                    std::memory_order_relaxed)));
+
+    addLine(
+        "Hosted Instance Present Now",
+        diagnosticHostedInstancePresentNow.load(
+            std::memory_order_relaxed)
+                ? "Yes"
+                : "No");
+
+    addLine(
+        "Hosted Suspended Now",
+        diagnosticHostedSuspendedNow.load(
+            std::memory_order_relaxed)
+                ? "Yes"
+                : "No");
+
+    addLine(
+        "Hosted Suspension Observed",
+        diagnosticHostedSuspendedObserved.load(
+            std::memory_order_relaxed)
+                ? "Yes"
+                : "No");
+
+    addLine(
+        "Hosted Suspension Transitions",
+        juce::String(
+            (juce::int64)
+                diagnosticHostedSuspensionTransitions.load(
+                    std::memory_order_relaxed)));
+
+    addLine(
+        "Current Process Activity Gap ms",
+        juce::String(
+            diagnosticCurrentProcessGapMs.load(
+                std::memory_order_relaxed)));
+
+    addLine(
+        "Maximum Process Activity Gap ms",
+        juce::String(
+            diagnosticMaximumProcessGapMs.load(
+                std::memory_order_relaxed)));
+
+    addLine(
+        "Process Inactive Now",
+        diagnosticProcessInactiveNow.load(
+            std::memory_order_relaxed)
+                ? "Yes"
+                : "No");
+
+    addLine(
+        "Process Inactive Observed",
+        diagnosticProcessInactiveObserved.load(
+            std::memory_order_relaxed)
+                ? "Yes"
+                : "No");
+
+    addLine(
+        "Process Inactive Transitions",
+        juce::String(
+            (juce::int64)
+                diagnosticProcessInactiveTransitions.load(
+                    std::memory_order_relaxed)));
+
+    addLine(
+        "Last Outer Process Time us",
+        juce::String(
+            diagnosticLastProcessMicros.load(
+                std::memory_order_relaxed)));
+
+    addLine(
+        "Maximum Outer Process Time us",
+        juce::String(
+            diagnosticMaxProcessMicros.load(
+                std::memory_order_relaxed)));
+
+    addLine(
+        "Last Core Time us",
+        juce::String(
+            diagnosticLastCoreMicros.load(
+                std::memory_order_relaxed)));
+
+    addLine(
+        "Maximum Core Time us",
+        juce::String(
+            diagnosticMaxCoreMicros.load(
+                std::memory_order_relaxed)));
+
+    addLine(
+        "Last Post-Core Time us",
+        juce::String(
+            diagnosticLastPostCoreMicros.load(
+                std::memory_order_relaxed)));
+
+    addLine(
+        "Maximum Post-Core Time us",
+        juce::String(
+            diagnosticMaxPostCoreMicros.load(
+                std::memory_order_relaxed)));
+
+    addLine(
+        "Blocks At Least 5 ms",
+        juce::String(
+            (juce::int64)
+                diagnosticBlocksOver5Ms.load(
+                    std::memory_order_relaxed)));
+
+    addLine(
+        "Blocks At Least 10 ms",
+        juce::String(
+            (juce::int64)
+                diagnosticBlocksOver10Ms.load(
+                    std::memory_order_relaxed)));
+
+    addLine(
+        "Blocks At Least 20 ms",
+        juce::String(
+            (juce::int64)
+                diagnosticBlocksOver20Ms.load(
+                    std::memory_order_relaxed)));
+
+    addLine(
+        "Last Slow Outer Time us",
+        juce::String(
+            diagnosticLastSlowProcessMicros.load(
+                std::memory_order_relaxed)));
+
+    addLine(
+        "Last Slow Core Time us",
+        juce::String(
+            diagnosticLastSlowCoreMicros.load(
+                std::memory_order_relaxed)));
+
+    addLine(
+        "Last Slow Post-Core Time us",
+        juce::String(
+            diagnosticLastSlowPostCoreMicros.load(
+                std::memory_order_relaxed)));
+
+    addLine(
+        "Last Input MIDI Event Count",
+        juce::String(
+            diagnosticLastInputMidiEventCount.load(
+                std::memory_order_relaxed)));
+
+    addLine(
+        "Last Output MIDI Event Count",
+        juce::String(
+            diagnosticLastOutputMidiEventCount.load(
+                std::memory_order_relaxed)));
+
+    addLine(
+        "Core Output Reset Requests",
+        juce::String(
+            (juce::int64)
+                diagnosticCoreOutputResetRequests.load(
+                    std::memory_order_relaxed)));
+
+    addLine(
+        "Get State Calls",
+        juce::String(
+            (juce::int64)
+                diagnosticGetStateCalls.load(
+                    std::memory_order_relaxed)));
+
+    addLine(
+        "Set State Calls",
+        juce::String(
+            (juce::int64)
+                diagnosticSetStateCalls.load(
+                    std::memory_order_relaxed)));
+
+    return text;
+}
+
+bool PolyHostPluginProcessor::
+    getSendGeneratedMidiToHost() const
+{
+    return sendGeneratedMidiToHost.load(
+        std::memory_order_relaxed);
+}
+
+void PolyHostPluginProcessor::
+    setSendGeneratedMidiToHost(
+        bool shouldSend)
+{
+    const bool previousValue =
+        sendGeneratedMidiToHost.exchange(
+            shouldSend,
+            std::memory_order_relaxed);
+
+    if (previousValue != shouldSend)
+    {
+        core.requestMidiReleaseReset();
+
+        pendingMidiOutputReset.store(
+            true,
+            std::memory_order_release);
+
+        updateHostDisplay();
+    }
+}
+
+bool PolyHostPluginProcessor::
+    getMidiThruEnabled() const
+{
+    return midiThruEnabled.load(
+        std::memory_order_relaxed);
+}
+
+void PolyHostPluginProcessor::
+    setMidiThruEnabled(
+        bool shouldEnable)
+{
+    const bool previousValue =
+        midiThruEnabled.exchange(
+            shouldEnable,
+            std::memory_order_relaxed);
+
+    if (previousValue != shouldEnable)
+    {
+        core.requestMidiReleaseReset();
+
+        pendingMidiOutputReset.store(
+            true,
+            std::memory_order_release);
+
+        updateHostDisplay();
+    }
 }
 
 void PolyHostPluginProcessor::setMacroParameterValue(
@@ -685,6 +1481,12 @@ void PolyHostPluginProcessor::
 void PolyHostPluginProcessor::setStandaloneAudioExtension(
     StandaloneAudioExtension* extension)
 {
+    if (extension == nullptr && standaloneAudioExtension != nullptr)
+    {
+        audioRecordingController.releaseResources();
+        midiRecordingController.releaseResources();
+    }
+
     standaloneAudioExtension = extension;
 }
 

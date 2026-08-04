@@ -3,6 +3,8 @@
 #include <array>
 #include <atomic>
 #include "PluginCore.h"
+#include "AudioRecordingController.h"
+#include "MidiRecordingController.h"
 
 class PolyHostPluginProcessor : public juce::AudioProcessor,
                                 private juce::AsyncUpdater,
@@ -83,6 +85,16 @@ public:
         const juce::MidiMessage& message);
 
     PluginCore& getCore();
+    AudioRecordingController& getAudioRecordingController();
+    MidiRecordingController& getMidiRecordingController();
+    void sampleSuspensionDiagnostics();
+    juce::String buildProcessorDiagnosticsText() const;
+
+    bool getSendGeneratedMidiToHost() const;
+    void setSendGeneratedMidiToHost(bool shouldSend);
+
+    bool getMidiThruEnabled() const;
+    void setMidiThruEnabled(bool shouldEnable);
 
     class StandaloneAudioExtension
     {
@@ -91,6 +103,12 @@ public:
 
         virtual void prepareToPlay(double sampleRate,
                                    int samplesPerBlock) = 0;
+
+        virtual void processMidiInput(
+            const juce::MidiBuffer& midiMessages) noexcept = 0;
+
+        virtual void processHostedMidiOutput(
+            const juce::MidiBuffer& midiMessages) noexcept = 0;
 
         virtual void processOutputBlock(
             juce::AudioBuffer<float>& buffer) = 0;
@@ -121,8 +139,60 @@ private:
     void endPointerAutomationGesture();
 
     StandaloneAudioExtension* standaloneAudioExtension = nullptr;
+    AudioRecordingController audioRecordingController;
+    MidiRecordingController midiRecordingController;
     PluginCore core;
     std::vector<MacroParameter*> macroParameters;
+    juce::MidiBuffer processorMidiInputScratchBuffer;
+    juce::MidiBuffer midiOutputResetScratchBuffer;
+    std::atomic<bool> sendGeneratedMidiToHost { true };
+    std::atomic<bool> midiThruEnabled { false };
+    std::atomic<bool> pendingMidiOutputReset { false };
+
+    std::atomic<juce::uint32> diagnosticPrepareCalls { 0 };
+    std::atomic<juce::uint32> diagnosticReleaseCalls { 0 };
+    std::atomic<juce::uint32> diagnosticProcessCallsStarted { 0 };
+    std::atomic<juce::uint32> diagnosticProcessCallsCompleted { 0 };
+
+    std::atomic<int> diagnosticLastProcessMicros { 0 };
+    std::atomic<int> diagnosticMaxProcessMicros { 0 };
+    std::atomic<int> diagnosticLastCoreMicros { 0 };
+    std::atomic<int> diagnosticMaxCoreMicros { 0 };
+    std::atomic<int> diagnosticLastPostCoreMicros { 0 };
+    std::atomic<int> diagnosticMaxPostCoreMicros { 0 };
+
+    std::atomic<juce::uint32> diagnosticBlocksOver5Ms { 0 };
+    std::atomic<juce::uint32> diagnosticBlocksOver10Ms { 0 };
+    std::atomic<juce::uint32> diagnosticBlocksOver20Ms { 0 };
+
+    std::atomic<int> diagnosticLastSlowProcessMicros { 0 };
+    std::atomic<int> diagnosticLastSlowCoreMicros { 0 };
+    std::atomic<int> diagnosticLastSlowPostCoreMicros { 0 };
+
+    std::atomic<int> diagnosticLastInputMidiEventCount { 0 };
+    std::atomic<int> diagnosticLastOutputMidiEventCount { 0 };
+    std::atomic<juce::uint32> diagnosticCoreOutputResetRequests { 0 };
+
+    std::atomic<juce::uint32> diagnosticGetStateCalls { 0 };
+    std::atomic<juce::uint32> diagnosticSetStateCalls { 0 };
+
+    std::atomic<juce::uint32> diagnosticSuspensionSamples { 0 };
+
+    std::atomic<bool> diagnosticOuterSuspendedNow { false };
+    std::atomic<bool> diagnosticOuterSuspendedObserved { false };
+    std::atomic<juce::uint32> diagnosticOuterSuspensionTransitions { 0 };
+
+    std::atomic<bool> diagnosticHostedInstancePresentNow { false };
+    std::atomic<bool> diagnosticHostedSuspendedNow { false };
+    std::atomic<bool> diagnosticHostedSuspendedObserved { false };
+    std::atomic<juce::uint32> diagnosticHostedSuspensionTransitions { 0 };
+
+    std::atomic<juce::uint32> diagnosticLastProcessActivityMs { 0 };
+    std::atomic<int> diagnosticCurrentProcessGapMs { 0 };
+    std::atomic<int> diagnosticMaximumProcessGapMs { 0 };
+    std::atomic<bool> diagnosticProcessInactiveNow { false };
+    std::atomic<bool> diagnosticProcessInactiveObserved { false };
+    std::atomic<juce::uint32> diagnosticProcessInactiveTransitions { 0 };
 
     std::atomic<int> pendingPointerAutomationMacroIndex { -1 };
     std::atomic<float> pendingPointerAutomationValue { 0.0f };
