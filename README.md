@@ -190,6 +190,15 @@ PolyHostInterface supports:
 - preset deletion
 - plugin path recovery for missing plugins
 
+### Recording
+Only in standalone mode. It is possible to record both Audio and MIDI output to WAV and MID files respectively. You can record only Audio or MIDI, but not both at the same time.
+
+Open the Record settings via: Options > Recording, or by right-clicking the Record button at the the top right of the interface.
+
+Select the recording mode via the toggle: Audio or MIDI.
+Select the Count-in method: 0 Bars=instant, Wait Note=Recording starts on receiving a MIDI note input.
+Recordings are listed in the right side of the window, double click to open wav files in your default Windows app.
+
 ### Missing Plugin Repair
 If a plugin cannot be found when loading a preset, PolyHostInterface can prompt you to locate the replacement file and restore the tab. Tabs will turn red to display there is an error with loading the plugin. Routing View will also turn a row red as a visual clue as well.
 
