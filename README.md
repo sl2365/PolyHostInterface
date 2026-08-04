@@ -12,7 +12,7 @@ See the demos at the bottom of the page for a few gifs of the Pointer Control in
 
 ## Feature Status
 
-| Feature | Status - Some features only in APP or VST3 |
+| Feature | Status - Some features only apply to APP or VST3 |
 |---|---|
 | VST2 **32-bit** in 64-bit host | 🔴 Needs plugin bridge — planned |
 | VST2 x64 | ✅ Working - Requires Steinberg VST2 SDK to build — see below |
@@ -92,7 +92,7 @@ Each mapping stores:
 - parameter name
 - parameter index
 
-Please note: Only use the Macros 001-128, ignore the MIDI CC 0|129 etc as these are for Host side control but I couldnt find a way to hide them.
+Please note: Only use the Macros 001-128, ignore the MIDI CC 0-129 etc as these are for Host side control but I couldnt find a way to hide them.
 
 ### Macro Mappings View
 This provides a complete list of all current macro assignments in the preset.
@@ -279,42 +279,39 @@ _Projects\_Tools\
  
 ```
 
-## Build Setup (one-time)
-Setup Steps for You
+## Build Setup
+Setup Steps:
 One-time installs (unavoidable for C++)
 
-    Visual Studio 2026 Community — free: https://visualstudio.microsoft.com/vs/community/
-        During install tick: Desktop development with C++
-
-Portable tools (no installer, just extract)
-
-    Go to https://cmake.org/download/
-    Find "Windows x64 ZIP" (e.g. cmake-4.3.1.x-windows-x86_64.zip)
-    Extract it so the structure is:
-    Projects\_Tools\cmake\bin\cmake.exe
-
-### 1. Visual Studio 2022 Community (free)
-https://visualstudio.microsoft.com/vs/community/
-During install tick: Desktop development with C++
-You never open Visual Studio. It only provides the C++ compiler that CMake calls.
-But this way allows you to use whatever editor you want.
+### 1. Visual Studio 2026 Community (free)
+	Download: https://visualstudio.microsoft.com/vs/community/
+	During install tick: Desktop development with C++
+	You never need to open Visual Studio. It only provides the C++ compiler that CMake calls.
+	But this way allows you to use whatever editor you want.
 
 ### 2. Portable CMake (no installer)
-Download the Windows x64 ZIP from: https://cmake.org/download/
-Extract so the result is: tools\cmake\bin\cmake.exe
+	Download the Windows x64 ZIP from: https://cmake.org/download/
+	Extract it so the structure is:
+	Projects\_Tools\cmake\bin\cmake.exe
 
-### 3. Build
-Double-click build.bat from the project root.
-First run downloads JUCE automatically (needs internet).
-After that, builds are fully offline.
-The finished exe appears in dist\PolyHostInterface.exe
+### 3. Install JUCE Portable
+	Download from: https://github.com/juce-framework/JUCE/releases
+	Get the latest version: juce-x.x.x-windows.zip
+	Extract to: _Projects\_Tools\JUCE
+
+### 4. VST2.4 sdk
+	Place this here: _Projects\_Tools\vstsdk2.4
+
+### 5. Build
+	Double-click build-BOTH.bat from the project root.
+	The finished exe/vst3 files appears in: dist\PolyHostInterface.exe
 
 ## Opening a Plugin
 1. Right-click any vst2, vst3 or clap file in File Explorer
 2. Open with > Choose another app
 3. Browse to PolyHostInterface.exe
 4. Tick "Always use this app" if you want it permanent
-This means that anytime you then double-click a plugin in Explorer, it will auto-open into the first tab of PolyHostInterface, or add a new tab with that plguin if already open. So only one instance can be run at present.
+This means that anytime you then double-click a plugin in Explorer, it will auto-open into the first tab of PolyHostInterface, or add a new tab with that plugin if already open. So only one instance can be run at present.
 
 ## VST2 Support
 If you have a copy of vstsdk2.4, place it here: {CMAKE_SOURCE_DIR}/tools/vstsdk2.4
