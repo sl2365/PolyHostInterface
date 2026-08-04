@@ -241,9 +241,10 @@ Copy/export behaviour:
 ## Project Folder Structure
 
 ```
+
 _Projects\PolyHost\              ← your project root
 │
-├── build-APP/VST3.bat           ← THE build script (run this)
+├── build-APP/BOTH/VST3.bat      ← The build script (run this)
 ├── README.md
 │
 │
@@ -268,13 +269,13 @@ _Projects\_Tools\
     │   └── bin\
     │       └── cmake.exe
     │
-    ├── vstsdk2.4\      		 ← drop your VST2.4 SDK here
-    │   └── pluginterfaces\
-    │       └── vst2.x\
-    │           └── aeffect.h    ← CMake checks for this file
- 	│
- 	└── clap\					 ← drop your CLAP SDK here
- 	   	└── CMakeLists.txt
+ 	├── JUCE\					 ← drop JUCE here
+ 	│  	└── CMakeLists.txt
+    │
+    └── vstsdk2.4\      		 ← drop your VST2.4 SDK here
+        └── pluginterfaces\
+            └── vst2.x\
+                └── aeffect.h    ← CMake checks for this file
  
  
 ```
@@ -289,14 +290,14 @@ One-time installs (unavoidable for C++)
 	You never need to open Visual Studio. It only provides the C++ compiler that CMake calls.
 	But this way allows you to use whatever editor you want.
 
-### 2. Portable CMake (no installer)
-	Download the Windows x64 ZIP from: https://cmake.org/download/
+### 2. Portable CMake (4.3.1)
+	Download the 'cmake-x.x.x-windows-x86_64.zip' from: https://cmake.org/download/
 	Extract it so the structure is:
 	Projects\_Tools\cmake\bin\cmake.exe
 
-### 3. Install JUCE Portable
+### 3. Install JUCE Portable (8.0.15)
 	Download from: https://github.com/juce-framework/JUCE/releases
-	Get the latest version: juce-x.x.x-windows.zip
+	Get the latest version: 'juce-x.x.x-windows.zip'
 	Extract to: _Projects\_Tools\JUCE
 
 ### 4. VST2.4 sdk
@@ -306,16 +307,11 @@ One-time installs (unavoidable for C++)
 	Double-click build-BOTH.bat from the project root.
 	The finished exe/vst3 files appears in: dist\PolyHostInterface.exe
 
-## Opening a Plugin
+## Opening a Plugin in PHI Standalone
 1. Right-click any vst2, vst3 or clap file in File Explorer
 2. Open with > Choose another app
 3. Browse to PolyHostInterface.exe
-4. Tick "Always use this app" if you want it permanent
-This means that anytime you then double-click a plugin in Explorer, it will auto-open into the first tab of PolyHostInterface, or add a new tab with that plugin if already open. So only one instance can be run at present.
-
-## VST2 Support
-If you have a copy of vstsdk2.4, place it here: {CMAKE_SOURCE_DIR}/tools/vstsdk2.4
-then run build.bat.
+4. Tick "Always use this app" if you want it permanent. This means that anytime you then double-click a plugin in Explorer, it will auto-open into the first tab of PolyHostInterface, or add a new tab with that plugin if already open. So only one instance can be run at present.
 
 ## Audio/MIDI Routing
 ```
@@ -337,12 +333,10 @@ MIDI Device(s)    Audio In from DAW/Host
 MIDI is always wired in parallel. Synth and FX audio routing is partially flexible, where plugins are in series and routing can be modified by entering the Routing page. Click the Routing toolbar button and a list of all tabs appears, use Up and Down buttons to manage the processing order.
 
 ## Credits
-
 Thanks to Stefan Matting and his [PointerCC](https://github.com/smatting/pointer-cc) app for the idea.
 
 
 # Demos
-
 These were made in [MuLab](https://www.mutools.com/index.html) DAW.
 All cursor movements and parameter adjustments are made using Hardware MIDI controllers, not a real mouse.
 
