@@ -1,7 +1,7 @@
 # Poly Host Interface
 
 [![Release](https://img.shields.io/github/v/release/sl2365/PolyHostInterface?style=flat-square&color=green)](https://github.com/sl2365/PolyHostInterface/releases/latest/download/PolyHostInterface.zip)
-	[![Release Date](https://img.shields.io/github/release-date/sl2365/PolyHostInterface?style=flat-square&color=green)](https://github.com/sl2365/PolyHostInterface/releases)
+[![Release Date](https://img.shields.io/github/release-date/sl2365/PolyHostInterface?style=flat-square&color=green)](https://github.com/sl2365/PolyHostInterface/releases)
 
 [![Commits Since Release](https://img.shields.io/github/commits-since/sl2365/PolyHostInterface/latest?style=flat-square&color=green)](https://github.com/sl2365/PolyHostInterface/activity)
 [![Last Commit](https://img.shields.io/github/last-commit/sl2365/PolyHostInterface?style=flat-square&color=green)](https://github.com/sl2365/PolyHostInterface/activity)
