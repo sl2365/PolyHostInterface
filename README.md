@@ -8,8 +8,6 @@
 
 [![Last Commit](https://img.shields.io/github/last-commit/sl2365/PolyHostInterface?style=flat-square&color=green)](https://github.com/sl2365/PolyHostInterface/activity)
 
-![Release](https://img.shields.io/github/v/release/YOUR-NAME/YOUR-REPOSITORY?style=flat-square&color=green)
-[![Release](https://img.shields.io/github/v/release/YOUR-NAME/YOUR-REPOSITORY?style=flat-square&color=green)](https://github.com/YOUR-NAME/YOUR-REPOSITORY/releases/latest)
 A lightweight, standalone tabbed VST2, VST3, (CLAP - Later when JUCE 9 released) plugin host for Windows.
 Play synths and route FX chains, driven by any MIDI device.
 Fully portable: stores all settings next to the exe/vst3, touches nothing else on the system.
