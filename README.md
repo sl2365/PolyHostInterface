@@ -1,6 +1,6 @@
 # Poly Host Interface
 
-[![Release](https://img.shields.io/github/v/release/sl2365/PolyHostInterface?style=flat-square&color=green)](https://github.com/sl2365/PolyHostInterface/releases/download/2.5.8/PolyHostInterface.zip)
+[![Release](https://img.shields.io/github/v/release/sl2365/PolyHostInterface?style=flat-square&color=green)](https://github.com/sl2365/PolyHostInterface/releases/latest/download/PolyHostInterface.zip)
 [![Release Date](https://img.shields.io/github/release-date/sl2365/PolyHostInterface?style=flat-square&color=green)](https://github.com/sl2365/PolyHostInterface/releases)
 
 [![Commits Since Release](https://img.shields.io/github/commits-since/sl2365/PolyHostInterface/latest?style=flat-square&color=green)](https://github.com/sl2365/PolyHostInterface/activity)
@@ -20,10 +20,10 @@ See the demos at the bottom of the page for a few gifs of the Pointer Control in
 
 | Feature | Status - Some features only apply to APP or VST3 |
 |---|---|
-| VST2 **32-bit** in 64-bit host | 🔴 Needs plugin bridge — planned |
+| VST2 **32-bit** in 64-bit host | ⚠️ Needs plugin bridge — planned |
 | VST2 x64 | ✅ Working - Requires Steinberg VST2 SDK to build — see below |
 | VST3 x64 | ✅ Working - Full support for Shell VST's|
-| CLAP x64 | ✅ Once JUCE natively supports CLAP, then it will be added to PHI |
+| CLAP x64 | ⚠️ Once JUCE natively supports CLAP, then it will be added to PHI |
 | MIDI 1.0 | ✅ Working |
 | MIDI 2.0 (Windows MIDI Services) | ⚠️ Requires JUCE 8+ and Windows 11 - planned |
 | Tabbed interface (Synth: parallel + FX: serial) | ✅ Working |
