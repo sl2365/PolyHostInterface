@@ -1,5 +1,10 @@
 # Poly Host Interface
 
+![Release](https://img.shields.io/github/v/release/sl2365/PolyHostInterface?style=flat-square&color=green)
+![Release Date](https://img.shields.io/github/release-date/sl2365/PolyHostInterface?style=flat-square&color=green)
+![Commits Since Release](https://img.shields.io/github/commits-since/sl2365/PolyHostInterface/latest?style=flat-square&color=green)
+![Last Commit](https://img.shields.io/github/last-commit/sl2365/PolyHostInterface?style=flat-square&color=green)
+
 A lightweight, standalone tabbed VST2, VST3, (CLAP - Later when JUCE 9 released) plugin host for Windows.
 Play synths and route FX chains, driven by any MIDI device.
 Fully portable: stores all settings next to the exe/vst3, touches nothing else on the system.
@@ -291,7 +296,7 @@ One-time installs (unavoidable for C++)
 	But this way allows you to use whatever editor you want.
 
 ### 2. Portable CMake (4.3.1)
-	Download the 'cmake-x.x.x-windows-x86_64.zip' from: https://cmake.org/download/
+	Download the 'Windows x64 ZIP cmake-x.x.x-windows-x86_64.zip' from: https://cmake.org/download/
 	Extract it so the structure is:
 	Projects\_Tools\cmake\bin\cmake.exe
 
