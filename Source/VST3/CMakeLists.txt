@@ -1,9 +1,9 @@
 cmake_minimum_required(VERSION 3.22)
 
 # ── VST3 Plugin Version ────────────────────────────────────────────────────────
-set(POLYHOST_VERSION "2.5.8")
+set(POLYHOST_VERSION "2.5.13")
 
-project(PolyHostInterface VERSION ${POLYHOST_VERSION} LANGUAGES CXX)
+project(PolyHostInterface VERSION ${POLYHOST_VERSION} LANGUAGES C CXX)
 
 set(CMAKE_MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
 set(CMAKE_CXX_STANDARD 17)

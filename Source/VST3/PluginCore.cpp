@@ -1562,6 +1562,12 @@ void PluginCore::processBlock(juce::AudioBuffer<float>& buffer,
             continue;
         }
 
+        if (tab->processingQuarantined.load(
+                std::memory_order_acquire))
+        {
+            continue;
+        }
+
         auto* instance =
             tab->pluginInstance.get();
 
@@ -1663,6 +1669,10 @@ void PluginCore::processBlock(juce::AudioBuffer<float>& buffer,
             tab->diagnosticProcessingFaultCount.fetch_add(
                 1,
                 std::memory_order_relaxed);
+
+            tab->processingQuarantined.store(
+                true,
+                std::memory_order_release);
 
             tab->hasProducedGeneratedMidi =
                 false;
@@ -2305,6 +2315,16 @@ void PluginCore::markClean()
 
 juce::String PluginCore::getStatusText() const
 {
+    if (const auto* selectedTab =
+            getSelectedHostedTab())
+    {
+        if (selectedTab->processingQuarantined.load(
+                std::memory_order_acquire))
+        {
+            return "Hosted plugin processing stopped after a fault";
+        }
+    }
+
     return statusText;
 }
 
@@ -3566,6 +3586,13 @@ juce::String PluginCore::buildPluginDiagnosticsText(int tabIndex) const
                 ->diagnosticProcessingFaultCount.load(
                     std::memory_order_relaxed)));
 
+    addLine(
+        "Processing Quarantined",
+        boolText(
+            hostedTab
+                ->processingQuarantined.load(
+                    std::memory_order_acquire)));
+
     addSection("Location / State");
     addLine("Loaded Path", hostedTab->slot != nullptr ? hostedTab->slot->getPluginPath() : juce::String());
     addLine("File / Identifier", description.fileOrIdentifier);
@@ -4210,6 +4237,9 @@ bool PluginCore::loadMainSlotPluginFromDescription(const juce::PluginDescription
     DebugLog::write("[PluginLoadDiagnostic] 43 scratch buffer allocation returned");
 
     DebugLog::write("[PluginLoadDiagnostic] 50 instance ownership transfer begin");
+    selectedTab->processingQuarantined.store(
+        false,
+        std::memory_order_release);
     selectedTab->pluginInstance =
         std::move(instance);
     DebugLog::write("[PluginLoadDiagnostic] 51 instance ownership transfer returned");
@@ -4313,6 +4343,10 @@ void PluginCore::unloadMainSlotPlugin()
 
     if (selectedTab == nullptr)
         return;
+
+    selectedTab->processingQuarantined.store(
+        false,
+        std::memory_order_release);
 
     detachFromHostedPlugin(selectedTab->pluginInstance.get());
 
@@ -4810,10 +4844,43 @@ bool PluginCore::restoreSessionData(const SessionData& sessionData,
     missingPlugins.clear();
     importUnclosedPluginLoadCrashMarker(warnings);
 
-    for (auto* tab : hostedTabs)
-        detachFromHostedPlugin(tab->pluginInstance.get());
+    DebugLog::write("[PresetTeardown] 11 preset restore teardown entered | tabs="
+                    + juce::String(hostedTabs.size()));
 
+    for (int tabIndex = 0;
+         tabIndex < hostedTabs.size();
+         ++tabIndex)
+    {
+        auto* tab = hostedTabs[tabIndex];
+
+        if (tab == nullptr)
+            continue;
+
+        DebugLog::write("[PresetTeardown] 12 listener detach begin | tab="
+                        + juce::String(tabIndex));
+        detachFromHostedPlugin(tab->pluginInstance.get());
+        DebugLog::write("[PresetTeardown] 13 listener detach returned | tab="
+                        + juce::String(tabIndex));
+
+        if (tab->pluginInstance != nullptr)
+        {
+            DebugLog::write("[PresetTeardown] 14 releaseResources call begin | tab="
+                            + juce::String(tabIndex));
+            tab->pluginInstance->releaseResources();
+            DebugLog::write("[PresetTeardown] 15 releaseResources call returned | tab="
+                            + juce::String(tabIndex));
+
+            DebugLog::write("[PresetTeardown] 16 plugin instance delete begin | tab="
+                            + juce::String(tabIndex));
+            tab->pluginInstance.reset();
+            DebugLog::write("[PresetTeardown] 17 plugin instance delete returned | tab="
+                            + juce::String(tabIndex));
+        }
+    }
+
+    DebugLog::write("[PresetTeardown] 18 hosted tabs clear begin");
     hostedTabs.clear();
+    DebugLog::write("[PresetTeardown] 18 hosted tabs clear returned");
     selectedTabIndex = 0;
     routingViewWidth = 800;
     routingViewHeight = 500;

@@ -23,7 +23,7 @@ if(POLYHOST_VERSION STREQUAL "")
         "Could not read POLYHOST_VERSION from ${PHI_SHARED_SOURCE_DIR}/CMakeLists.txt")
 endif()
 
-project(PolyHostInterfaceStandalone VERSION ${POLYHOST_VERSION} LANGUAGES CXX)
+project(PolyHostInterfaceStandalone VERSION ${POLYHOST_VERSION} LANGUAGES C CXX)
 
 set(CMAKE_MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
 set(CMAKE_CXX_STANDARD 17)

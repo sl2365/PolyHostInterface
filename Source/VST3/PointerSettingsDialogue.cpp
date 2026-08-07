@@ -503,11 +503,15 @@ namespace
 
             auto drawPanel = [&](const juce::Rectangle<int>& panelBounds)
             {
+                const auto panelArea = panelBounds.toFloat();
+
                 g.setColour(juce::Colour(0xFF575757));
-                g.fillRect(panelBounds);
+                g.fillRoundedRectangle(panelArea, 5.0f);
 
                 g.setColour(juce::Colours::white.withAlpha(0.18f));
-                g.drawRect(panelBounds, 1);
+                g.drawRoundedRectangle(panelArea.reduced(0.5f),
+                                       5.0f,
+                                       1.0f);
             };
 
             drawPanel(leftPanel);

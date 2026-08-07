@@ -170,6 +170,7 @@ juce::Result AudioRecordingController::armRecording()
     }
 
     recordedSamples.store(0, std::memory_order_release);
+    recordedBeats.store(0.0, std::memory_order_release);
     droppedBlocks.store(0, std::memory_order_release);
     captureEnabled.store(false, std::memory_order_release);
     activeWriter.store(writerToActivate, std::memory_order_release);
@@ -206,6 +207,18 @@ bool AudioRecordingController::isCapturing() const noexcept
            && isRecording();
 }
 
+juce::int64 AudioRecordingController::getRecordedSampleCount() const noexcept
+{
+    return recordedSamples.load(std::memory_order_acquire);
+}
+
+void AudioRecordingController::setRecordedBeatPosition(
+    double beats) noexcept
+{
+    recordedBeats.store(juce::jmax(0.0, beats),
+                        std::memory_order_release);
+}
+
 AudioRecordingController::Status AudioRecordingController::getStatus() const
 {
     Status status;
@@ -213,6 +226,7 @@ AudioRecordingController::Status AudioRecordingController::getStatus() const
     status.recording = isCapturing();
     status.sampleRate = currentSampleRate.load(std::memory_order_acquire);
     status.recordedSamples = recordedSamples.load(std::memory_order_acquire);
+    status.recordedBeats = recordedBeats.load(std::memory_order_acquire);
     status.droppedBlocks = droppedBlocks.load(std::memory_order_acquire);
 
     const juce::ScopedLock stateScopedLock(stateLock);

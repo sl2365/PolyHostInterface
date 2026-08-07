@@ -13,6 +13,7 @@ public:
         double sampleRate = 0.0;
         int bitDepth = 24;
         juce::int64 recordedSamples = 0;
+        double recordedBeats = 0.0;
         juce::uint32 droppedBlocks = 0;
         juce::File activeFile;
         juce::File lastCompletedFile;
@@ -33,6 +34,8 @@ public:
 
     bool isRecording() const noexcept;
     bool isCapturing() const noexcept;
+    juce::int64 getRecordedSampleCount() const noexcept;
+    void setRecordedBeatPosition(double beats) noexcept;
     Status getStatus() const;
 
     static juce::File getRecordingsDirectory();
@@ -52,6 +55,7 @@ private:
     std::atomic<double> currentSampleRate { 0.0 };
     std::atomic<int> currentMaximumBlockSize { 0 };
     std::atomic<juce::int64> recordedSamples { 0 };
+    std::atomic<double> recordedBeats { 0.0 };
     std::atomic<juce::uint32> droppedBlocks { 0 };
 
     juce::CriticalSection lifecycleLock;

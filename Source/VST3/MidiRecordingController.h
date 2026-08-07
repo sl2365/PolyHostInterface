@@ -22,6 +22,7 @@ public:
         bool recording = false;
         double sampleRate = 0.0;
         juce::int64 recordedSamples = 0;
+        double recordedBeats = 0.0;
         juce::uint32 recordedEvents = 0;
         juce::uint32 droppedEvents = 0;
         Options options;
@@ -53,6 +54,7 @@ public:
 
     bool isRecording() const noexcept;
     bool isCapturing() const noexcept;
+    void setRecordedBeatPosition(double beats) noexcept;
     Status getStatus() const;
 
     void setMidiModeSelected(bool shouldSelectMidi) noexcept;
@@ -131,6 +133,7 @@ private:
     mutable std::atomic<int> activeMidiCallbacks { 0 };
     std::atomic<double> currentSampleRate { 0.0 };
     std::atomic<juce::int64> recordedSamples { 0 };
+    std::atomic<double> recordedBeats { 0.0 };
     std::atomic<juce::uint32> recordedEvents { 0 };
     std::atomic<juce::uint32> droppedEvents { 0 };
 

@@ -572,6 +572,8 @@ public:
         countInTempoBpm = 120.0;
         midiCaptureTimelineSamples = 0;
         currentMidiCaptureStartOffset = 0;
+        recordingBeatPosition = 0.0;
+        lastAudioRecordedSamples = 0;
         recordingTimelineResetRequested.store(
             false,
             std::memory_order_release);
@@ -692,6 +694,8 @@ public:
 
             midiCaptureTimelineSamples = 0;
             currentMidiCaptureStartOffset = triggeringNoteOffset;
+            recordingBeatPosition = 0.0;
+            lastAudioRecordedSamples = 0;
             beginActiveControllerCapturing();
             transportState = RecordingTransportState::Recording;
         }
@@ -780,6 +784,8 @@ public:
         {
             recordingTimelineSamples = 0;
             countInTargetSamples = 0;
+            recordingBeatPosition = 0.0;
+            lastAudioRecordedSamples = 0;
 
             if (transportState
                 == RecordingTransportState::CountingIn)
@@ -844,26 +850,79 @@ public:
         if (transportState != RecordingTransportState::Idle)
             recordingTimelineSamples += numSamples;
 
-        if (transportState == RecordingTransportState::Recording
-            && activeRecordingIsMidi.load(
-                std::memory_order_acquire))
+        if (transportState == RecordingTransportState::Recording)
         {
-            const int capturedSamples =
-                juce::jmax(0,
-                           numSamples
-                               - juce::jlimit(0,
-                                              numSamples,
-                                              currentMidiCaptureStartOffset));
+            const bool recordingMidi =
+                activeRecordingIsMidi.load(
+                    std::memory_order_acquire);
 
-            if (auto* midiController =
-                    midiRecordingController.load(
-                        std::memory_order_acquire))
+            juce::int64 capturedSamples = 0;
+
+            if (recordingMidi)
             {
-                midiController->advanceCapturedSamples(capturedSamples);
+                const int capturedMidiSamples =
+                    juce::jmax(0,
+                               numSamples
+                                   - juce::jlimit(
+                                       0,
+                                       numSamples,
+                                       currentMidiCaptureStartOffset));
+
+                if (auto* midiController =
+                        midiRecordingController.load(
+                            std::memory_order_acquire))
+                {
+                    midiController->advanceCapturedSamples(
+                        capturedMidiSamples);
+                }
+
+                capturedSamples = capturedMidiSamples;
+                midiCaptureTimelineSamples += capturedMidiSamples;
+                currentMidiCaptureStartOffset = 0;
+            }
+            else if (auto* audioController =
+                         audioRecordingController.load(
+                             std::memory_order_acquire))
+            {
+                const auto currentRecordedSamples =
+                    audioController->getRecordedSampleCount();
+
+                capturedSamples =
+                    juce::jmax<juce::int64>(
+                        0,
+                        currentRecordedSamples
+                            - lastAudioRecordedSamples);
+
+                lastAudioRecordedSamples =
+                    currentRecordedSamples;
             }
 
-            midiCaptureTimelineSamples += capturedSamples;
-            currentMidiCaptureStartOffset = 0;
+            if (capturedSamples > 0
+                && currentSampleRate > 0.0)
+            {
+                recordingBeatPosition +=
+                    static_cast<double>(capturedSamples)
+                    * juce::jmax(1.0, playHead.getTempoBpm())
+                    / (60.0 * currentSampleRate);
+            }
+
+            if (recordingMidi)
+            {
+                if (auto* midiController =
+                        midiRecordingController.load(
+                            std::memory_order_acquire))
+                {
+                    midiController->setRecordedBeatPosition(
+                        recordingBeatPosition);
+                }
+            }
+            else if (auto* audioController =
+                         audioRecordingController.load(
+                             std::memory_order_acquire))
+            {
+                audioController->setRecordedBeatPosition(
+                    recordingBeatPosition);
+            }
         }
 
         if (transportState == RecordingTransportState::CountingIn
@@ -890,6 +949,8 @@ public:
         clickPhase = 0.0;
         midiCaptureTimelineSamples = 0;
         currentMidiCaptureStartOffset = 0;
+        recordingBeatPosition = 0.0;
+        lastAudioRecordedSamples = 0;
         recordingTransportState.store(
             RecordingTransportState::Idle,
             std::memory_order_release);
@@ -1133,6 +1194,8 @@ private:
     juce::int64 midiCaptureTimelineSamples = 0;
     juce::int64 countInTargetSamples = 0;
     int currentMidiCaptureStartOffset = 0;
+    double recordingBeatPosition = 0.0;
+    juce::int64 lastAudioRecordedSamples = 0;
     double countInTempoBpm = 120.0;
     int samplesRemainingInClick = 0;
     double clickPhase = 0.0;
@@ -1911,6 +1974,148 @@ private:
     };
 };
 
+class StandaloneSettingsLookAndFeel final : public juce::LookAndFeel_V4
+{
+public:
+    StandaloneSettingsLookAndFeel()
+    {
+        const auto windowBackground = juce::Colour(0xFF4A4A4A);
+        const auto panelBackground = juce::Colour(0xFF575757);
+        const auto editorBackground = juce::Colour(0xFF33404A);
+        const auto editorOutline =
+            juce::Colours::lightgrey.withAlpha(0.35f);
+
+        setColour(
+            juce::ResizableWindow::backgroundColourId,
+            windowBackground);
+
+        setColour(
+            juce::Label::textColourId,
+            juce::Colours::white);
+
+        setColour(
+            juce::ToggleButton::textColourId,
+            juce::Colours::white);
+
+        setColour(
+            juce::GroupComponent::textColourId,
+            juce::Colours::white);
+
+        setColour(
+            juce::GroupComponent::outlineColourId,
+            juce::Colours::white.withAlpha(0.18f));
+
+        setColour(
+            juce::TextEditor::backgroundColourId,
+            editorBackground);
+
+        setColour(
+            juce::TextEditor::textColourId,
+            juce::Colours::white);
+
+        setColour(
+            juce::TextEditor::outlineColourId,
+            editorOutline);
+
+        setColour(
+            juce::ComboBox::backgroundColourId,
+            editorBackground);
+
+        setColour(
+            juce::ComboBox::textColourId,
+            juce::Colours::white);
+
+        setColour(
+            juce::ComboBox::outlineColourId,
+            editorOutline);
+
+        setColour(
+            juce::ComboBox::buttonColourId,
+            editorBackground);
+
+        setColour(
+            juce::ComboBox::arrowColourId,
+            juce::Colours::white);
+
+        setColour(
+            juce::ListBox::backgroundColourId,
+            editorBackground);
+
+        setColour(
+            juce::ListBox::outlineColourId,
+            editorOutline);
+
+        setColour(
+            juce::ListBox::textColourId,
+            juce::Colours::white);
+
+        setColour(
+            juce::ScrollBar::backgroundColourId,
+            editorBackground);
+
+        setColour(
+            juce::ScrollBar::trackColourId,
+            editorBackground);
+
+        setColour(
+            juce::ScrollBar::thumbColourId,
+            panelBackground);
+
+        setColour(
+            juce::PopupMenu::backgroundColourId,
+            panelBackground);
+
+        setColour(
+            juce::PopupMenu::textColourId,
+            juce::Colours::white);
+
+        setColour(
+            juce::PopupMenu::highlightedBackgroundColourId,
+            editorBackground);
+
+        setColour(
+            juce::PopupMenu::highlightedTextColourId,
+            juce::Colours::white);
+    }
+
+    void drawGroupComponentOutline(
+        juce::Graphics& g,
+        int width,
+        int height,
+        const juce::String& text,
+        const juce::Justification& position,
+        juce::GroupComponent& group) override
+    {
+        constexpr float sideInset = 4.0f;
+        constexpr float topInset = 10.0f;
+        constexpr float bottomInset = 4.0f;
+
+        g.setColour(juce::Colour(0xFF575757));
+        g.fillRoundedRectangle(
+            juce::Rectangle<float>(
+                sideInset,
+                topInset,
+                juce::jmax(
+                    0.0f,
+                    static_cast<float>(width)
+                        - (sideInset * 2.0f)),
+                juce::jmax(
+                    0.0f,
+                    static_cast<float>(height)
+                        - topInset
+                        - bottomInset)),
+            4.0f);
+
+        juce::LookAndFeel_V4::drawGroupComponentOutline(
+            g,
+            width,
+            height,
+            text,
+            position,
+            group);
+    }
+};
+
 class StandaloneAudioSettingsComponent final : public juce::Component
 {
 public:
@@ -1932,6 +2137,7 @@ public:
           shouldMuteButton("Mute audio input")
     {
         setOpaque(true);
+        setLookAndFeel(&settingsLookAndFeel);
 
         shouldMuteButton.setClickingTogglesState(true);
         shouldMuteButton.getToggleStateValue().referTo(
@@ -1947,6 +2153,11 @@ public:
                 &shouldMuteButton,
                 true);
         }
+    }
+
+    ~StandaloneAudioSettingsComponent() override
+    {
+        setLookAndFeel(nullptr);
     }
 
     void paint(juce::Graphics& g) override
@@ -2017,6 +2228,7 @@ public:
     }
 
 private:
+    StandaloneSettingsLookAndFeel settingsLookAndFeel;
     juce::StandalonePluginHolder& holder;
     juce::AudioDeviceSelectorComponent deviceSelector;
     juce::Label shouldMuteLabel;
@@ -2036,6 +2248,7 @@ public:
           deviceListContent(*this)
     {
         setOpaque(true);
+        setLookAndFeel(&settingsLookAndFeel);
         setSize(500, 500);
 
         outputDeviceGroup.setText(
@@ -2177,6 +2390,8 @@ public:
         viewport.setViewedComponent(
             nullptr,
             false);
+
+        setLookAndFeel(nullptr);
     }
 
     void paint(juce::Graphics& g) override
@@ -2525,6 +2740,7 @@ private:
         holder.saveAudioDeviceState();
     }
 
+    StandaloneSettingsLookAndFeel settingsLookAndFeel;
     juce::StandalonePluginHolder& holder;
     StandaloneMidiOutputController& midiOutputController;
     juce::GroupComponent outputDeviceGroup;
@@ -2561,7 +2777,7 @@ public:
 
     juce::StringArray getAdditionalMenuNames() const override
     {
-        return { "Audio" };
+        return {};
     }
 
     juce::Component* getMenuBarRightComponent() override
@@ -2604,12 +2820,8 @@ public:
     juce::PopupMenu getAdditionalMenuForName(
         const juce::String& menuName) override
     {
+        juce::ignoreUnused(menuName);
         juce::PopupMenu menu;
-
-        if (menuName == "Audio")
-            menu.addItem(commandAudioSettings,
-                         "Audio Settings");
-
         return menu;
     }
 
@@ -2617,6 +2829,13 @@ public:
         const juce::String& menuName,
         juce::PopupMenu& menu) override
     {
+        if (menuName == "Options")
+        {
+            menu.addItem(commandAudioSettings,
+                         "Audio Settings");
+            return;
+        }
+
         if (menuName == "File")
         {
             menu.addSeparator();
@@ -3058,6 +3277,8 @@ public:
     void initialise(
         const juce::String& commandLine) override
     {
+        showStartupSplash();
+
         const auto pluginPaths =
             getPluginPathsFromCommandLine(commandLine);
 
@@ -3083,12 +3304,19 @@ public:
                                 + juce::String(mainWindow->isShowing() ? "true" : "false"));
                 openPluginPaths(commandLine, true);
                 DebugLog::write("[ExternalOpen] queued startup plugin load complete");
+                centreMainWindowAtCurrentSizeAsync();
             });
+        }
+        else
+        {
+            centreMainWindowAtCurrentSizeAsync();
         }
     }
 
     void shutdown() override
     {
+        startupSplash.reset();
+
         if (mainWindow != nullptr)
         {
             DebugLog::write("[Shutdown] window hide begin");
@@ -3137,6 +3365,130 @@ public:
     }
 
 private:
+    juce::Image createStartupSplashImage()
+    {
+        constexpr int splashWidth = 500;
+        constexpr int splashHeight = 210;
+
+        juce::Image image(
+            juce::Image::ARGB,
+            splashWidth,
+            splashHeight,
+            true);
+
+        juce::Graphics graphics(image);
+
+        const auto panelBounds =
+            image.getBounds().reduced(8).toFloat();
+
+        graphics.setColour(juce::Colour(0xFF1D2230));
+        graphics.fillRoundedRectangle(panelBounds, 12.0f);
+
+        graphics.setColour(juce::Colour(0xFF566072));
+        graphics.drawRoundedRectangle(panelBounds, 12.0f, 1.0f);
+
+        juce::Path logoPath;
+        logoPath.startNewSubPath(66.0f, 38.0f);
+        logoPath.lineTo(94.0f, 66.0f);
+        logoPath.lineTo(66.0f, 94.0f);
+        logoPath.lineTo(38.0f, 66.0f);
+        logoPath.closeSubPath();
+
+        graphics.setColour(juce::Colour(0xFFB12CDB));
+        graphics.fillPath(logoPath);
+
+        graphics.setColour(juce::Colours::white);
+        graphics.setFont(
+            juce::Font(juce::FontOptions(
+                27.0f,
+                juce::Font::bold)));
+        graphics.drawFittedText(
+            getApplicationName(),
+            112,
+            37,
+            344,
+            38,
+            juce::Justification::centredLeft,
+            1);
+
+        graphics.setColour(juce::Colours::lightgrey);
+        graphics.setFont(
+            juce::Font(juce::FontOptions(15.0f)));
+        graphics.drawFittedText(
+            "Version " + getApplicationVersion(),
+            113,
+            75,
+            343,
+            24,
+            juce::Justification::centredLeft,
+            1);
+
+        graphics.setColour(juce::Colour(0xFF30384A));
+        graphics.fillRect(38, 118, 424, 1);
+
+        graphics.setColour(juce::Colours::white);
+        graphics.setFont(
+            juce::Font(juce::FontOptions(16.0f)));
+        graphics.drawFittedText(
+            "Loading last session...",
+            38,
+            137,
+            424,
+            28,
+            juce::Justification::centred,
+            1);
+
+        graphics.setColour(juce::Colour(0xFF3F8AD8));
+        graphics.fillRoundedRectangle(
+            juce::Rectangle<float>(38.0f, 176.0f, 424.0f, 3.0f),
+            1.5f);
+
+        return image;
+    }
+
+    void showStartupSplash()
+    {
+        DebugLog::write("[Startup] splash display begin");
+
+        startupSplash = std::make_unique<juce::SplashScreen>(
+            getApplicationName(),
+            createStartupSplashImage(),
+            true);
+
+        startupSplash->setAlwaysOnTop(true);
+        startupSplash->toFront(false);
+
+        // Allow the new top-level window to paint before hosted plug-ins are
+        // restored synchronously on the message thread.
+        juce::MessageManager::getInstance()
+            ->runDispatchLoopUntil(20);
+
+        DebugLog::write("[Startup] splash display complete");
+    }
+
+    void centreMainWindowAtCurrentSizeAsync()
+    {
+        DebugLog::write("[Window] final startup centre queued");
+
+        juce::MessageManager::callAsync([this]
+        {
+            if (mainWindow == nullptr)
+                return;
+
+            DebugLog::write("[Window] final startup centre begin | size="
+                            + juce::String(mainWindow->getWidth())
+                            + "x"
+                            + juce::String(mainWindow->getHeight()));
+
+            mainWindow->centreWithSize(mainWindow->getWidth(),
+                                       mainWindow->getHeight());
+
+            startupSplash.reset();
+
+            DebugLog::write("[Window] final startup centre complete");
+        });
+    }
+
     static juce::StringArray getPluginPathsFromCommandLine(
         const juce::String& commandLine)
     {
@@ -3211,6 +3563,7 @@ private:
     }
 
     juce::PropertySet standaloneProperties;
+    std::unique_ptr<juce::SplashScreen> startupSplash;
     std::unique_ptr<PolyHostStandaloneWindow> mainWindow;
 };
 }

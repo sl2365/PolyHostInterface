@@ -130,6 +130,7 @@ juce::Result MidiRecordingController::armRecording()
     }
 
     recordedSamples.store(0, std::memory_order_release);
+    recordedBeats.store(0.0, std::memory_order_release);
     recordedEvents.store(0, std::memory_order_release);
     droppedEvents.store(0, std::memory_order_release);
     captureEnabled.store(false, std::memory_order_release);
@@ -316,6 +317,13 @@ bool MidiRecordingController::isCapturing() const noexcept
            && isRecording();
 }
 
+void MidiRecordingController::setRecordedBeatPosition(
+    double beats) noexcept
+{
+    recordedBeats.store(juce::jmax(0.0, beats),
+                        std::memory_order_release);
+}
+
 MidiRecordingController::Status MidiRecordingController::getStatus() const
 {
     Status status;
@@ -323,6 +331,7 @@ MidiRecordingController::Status MidiRecordingController::getStatus() const
     status.recording = isCapturing();
     status.sampleRate = currentSampleRate.load(std::memory_order_acquire);
     status.recordedSamples = recordedSamples.load(std::memory_order_acquire);
+    status.recordedBeats = recordedBeats.load(std::memory_order_acquire);
     status.recordedEvents = recordedEvents.load(std::memory_order_acquire);
     status.droppedEvents = droppedEvents.load(std::memory_order_acquire);
     status.options.externalNotes =

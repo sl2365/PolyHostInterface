@@ -60,6 +60,7 @@ private:
     void openRecordingsFolder();
     static juce::String formatElapsedTime(juce::int64 recordedSamples,
                                           double sampleRate);
+    static juce::String formatBarsAndBeats(double recordedBeats);
 
     AudioRecordingController& audioController;
     MidiRecordingController& midiController;
@@ -76,6 +77,7 @@ private:
     juce::ToggleButton hostedMidiButton { "Hosted MIDI Output" };
     juce::Label statusLabel;
     juce::Label elapsedLabel;
+    juce::Label musicalPositionLabel;
     juce::Label formatLabel;
     juce::Label fileLabel;
     juce::Label warningLabel;

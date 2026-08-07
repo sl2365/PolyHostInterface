@@ -277,6 +277,7 @@ RoutingView::RoutingView()
 
     viewport.setViewedComponent(&contentComponent, false);
     viewport.setScrollBarsShown(true, false);
+    viewport.setSingleStepSizes(16, 4);
     addAndMakeVisible(viewport);
 }
 

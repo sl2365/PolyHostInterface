@@ -339,8 +339,7 @@ namespace
             setSize(480, 250);
 
             const auto textColour =
-                getLookAndFeel().findColour(
-                    juce::Label::textColourId);
+                juce::Colours::white;
 
             outputGroup.setText(
                 "MIDI Output to Host");
@@ -351,9 +350,7 @@ namespace
 
             outputGroup.setColour(
                 juce::GroupComponent::outlineColourId,
-                getLookAndFeel().findColour(
-                    juce::GroupComponent::
-                        outlineColourId));
+                juce::Colours::white.withAlpha(0.18f));
 
             addAndMakeVisible(outputGroup);
 
@@ -419,7 +416,7 @@ namespace
 
             informationLabel.setColour(
                 juce::Label::textColourId,
-                textColour.withAlpha(0.80f));
+                juce::Colours::lightgrey);
 
             addAndMakeVisible(informationLabel);
 
@@ -440,10 +437,20 @@ namespace
 
         void paint(juce::Graphics& g) override
         {
-            g.fillAll(
-                getLookAndFeel().findColour(
-                    juce::ResizableWindow::
-                        backgroundColourId));
+            g.fillAll(juce::Colour(0xFF4A4A4A));
+
+            auto panelArea =
+                outputGroup.getBounds().toFloat();
+
+            panelArea.removeFromTop(10.0f);
+            panelArea.removeFromLeft(4.0f);
+            panelArea.removeFromRight(4.0f);
+            panelArea.removeFromBottom(4.0f);
+
+            g.setColour(juce::Colour(0xFF575757));
+            g.fillRoundedRectangle(
+                panelArea,
+                4.0f);
         }
 
         void resized() override
@@ -1834,7 +1841,8 @@ MainView::MainView(PolyHostPluginProcessor& processorIn,
     if (appSettings.getClearDebugLogOnStartup())
         DebugLog::clear();
 
-    DebugLog::write("[PluginLoadDiagnostic] 00 diagnostic build startup | baseline=2.5.8");
+    DebugLog::write("[PluginLoadDiagnostic] 00 diagnostic build startup | baseline="
+                    + juce::String(POLYHOST_VERSION_STRING));
 
     menuBar = std::make_unique<juce::MenuBarComponent>(this);
     menuBar->setColour(juce::PopupMenu::backgroundColourId, juce::Colour(0xFF1E2430));
@@ -2357,6 +2365,9 @@ juce::PopupMenu MainView::getMenuForIndex(int topLevelMenuIndex,
 
     if (menuName == "Options")
     {
+        if (menuExtension != nullptr)
+            menuExtension->addAdditionalItemsToMenu(menuName, menu);
+
         menu.addItem(commandPointerControlSettings, "Pointer Control Settings");
 
         if (menuExtension != nullptr)
@@ -5521,9 +5532,9 @@ void MainView::refreshHostedEditor()
         return;
     }
 
-    DebugLog::write("[PluginLoadDiagnostic] 90 createEditorIfNeeded call begin");
-    auto* createdEditor = instance->createEditorIfNeeded();
-    DebugLog::write("[PluginLoadDiagnostic] 91 createEditorIfNeeded call returned | success="
+    DebugLog::write("[PluginLoadDiagnostic] 90 createEditorAndMakeActive call begin");
+    auto* createdEditor = instance->createEditorAndMakeActive();
+    DebugLog::write("[PluginLoadDiagnostic] 91 createEditorAndMakeActive call returned | success="
                     + juce::String(createdEditor != nullptr ? "true" : "false"));
     hostedEditor.reset(createdEditor);
     DebugLog::write("[PluginLoadDiagnostic] 92 editor ownership transfer returned");
@@ -7058,10 +7069,7 @@ void MainView::showMidiOutputSettingsDialog()
         "MIDI Settings";
 
     options.dialogBackgroundColour =
-        options.content->getLookAndFeel()
-            .findColour(
-                juce::ResizableWindow::
-                    backgroundColourId);
+        juce::Colour(0xFF4A4A4A);
 
     options.escapeKeyTriggersCloseButton =
         true;

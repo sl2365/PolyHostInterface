@@ -200,6 +200,7 @@ private:
         juce::MidiBuffer midiScratchBuffer;
         juce::MidiBuffer midiInputScratchBuffer;
         bool hasProducedGeneratedMidi = false;
+        std::atomic<bool> processingQuarantined { false };
 
         std::atomic<juce::uint32> diagnosticProcessCallsStarted { 0 };
         std::atomic<juce::uint32> diagnosticProcessCallsCompleted { 0 };

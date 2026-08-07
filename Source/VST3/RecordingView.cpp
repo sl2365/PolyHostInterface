@@ -1,6 +1,7 @@
 #include "RecordingView.h"
 #include "ButtonStyling.h"
 #include <algorithm>
+#include <cmath>
 
 namespace
 {
@@ -274,6 +275,14 @@ RecordingView::RecordingView(AudioRecordingController& audioControllerIn,
     elapsedLabel.setFont(juce::Font(juce::FontOptions(26.0f, juce::Font::bold)));
     addAndMakeVisible(elapsedLabel);
 
+    configureLabel(musicalPositionLabel,
+                   15.0f,
+                   juce::Justification::centred);
+    musicalPositionLabel.setFont(
+        juce::Font(
+            juce::FontOptions(15.0f, juce::Font::bold)));
+    addAndMakeVisible(musicalPositionLabel);
+
     configureLabel(formatLabel, 14.0f, juce::Justification::centred);
     addAndMakeVisible(formatLabel);
 
@@ -317,7 +326,7 @@ RecordingView::RecordingView(AudioRecordingController& audioControllerIn,
 
     updateModePresentation();
     refreshNow();
-    startTimerHz(5);
+    startTimerHz(30);
 }
 
 RecordingView::~RecordingView()
@@ -347,6 +356,9 @@ void RecordingView::refreshRecordingStatus()
     const juce::int64 recordedSampleCount =
         midiMode ? midiStatus.recordedSamples
                  : audioStatus.recordedSamples;
+    const double recordedBeatCount =
+        midiMode ? midiStatus.recordedBeats
+                 : audioStatus.recordedBeats;
     const juce::uint32 droppedItemCount =
         midiMode ? midiStatus.droppedEvents
                  : audioStatus.droppedBlocks;
@@ -366,6 +378,10 @@ void RecordingView::refreshRecordingStatus()
     elapsedLabel.setText(formatElapsedTime(recordedSampleCount,
                                            sampleRate),
                          juce::dontSendNotification);
+
+    musicalPositionLabel.setText(
+        formatBarsAndBeats(recordedBeatCount),
+        juce::dontSendNotification);
 
     if (midiMode)
     {
@@ -467,7 +483,7 @@ void RecordingView::resized()
     area.removeFromTop(6);
 
     const int availableGroupHeight = juce::jmax(0, area.getHeight());
-    auto groupArea = area.removeFromTop(juce::jmin(270, availableGroupHeight));
+    auto groupArea = area.removeFromTop(juce::jmin(282, availableGroupHeight));
     groupArea = groupArea.withSizeKeepingCentre(juce::jmin(760, groupArea.getWidth()),
                                                 groupArea.getHeight());
     recordingGroup.setBounds(groupArea);
@@ -489,7 +505,7 @@ void RecordingView::resized()
 
     if (midiController.isMidiModeSelected())
     {
-        helpLabel.setBounds(informationArea.removeFromTop(48));
+        helpLabel.setBounds(informationArea.removeFromTop(46));
 
         auto optionsArea = informationArea.removeFromTop(50);
         auto firstOptionsRow = optionsArea.removeFromTop(24);
@@ -501,6 +517,8 @@ void RecordingView::resized()
 
         statusLabel.setBounds(informationArea.removeFromTop(28));
         elapsedLabel.setBounds(informationArea.removeFromTop(32));
+        musicalPositionLabel.setBounds(
+            informationArea.removeFromTop(18));
         formatLabel.setBounds(informationArea.removeFromTop(22));
         fileLabel.setBounds(informationArea.removeFromTop(24));
         warningLabel.setBounds(informationArea.removeFromTop(24));
@@ -512,6 +530,8 @@ void RecordingView::resized()
         informationArea.removeFromTop(6);
         statusLabel.setBounds(informationArea.removeFromTop(30));
         elapsedLabel.setBounds(informationArea.removeFromTop(34));
+        musicalPositionLabel.setBounds(
+            informationArea.removeFromTop(18));
         formatLabel.setBounds(informationArea.removeFromTop(22));
         fileLabel.setBounds(informationArea.removeFromTop(32));
         warningLabel.setBounds(informationArea.removeFromTop(24));
@@ -534,7 +554,7 @@ void RecordingView::timerCallback()
 
     ++recordingListRefreshTicks;
 
-    if (recordingListRefreshTicks >= 10)
+    if (recordingListRefreshTicks >= 60)
     {
         recordingListRefreshTicks = 0;
         refreshRecordingFiles();
@@ -869,4 +889,26 @@ juce::String RecordingView::formatElapsedTime(juce::int64 samples,
          + juce::String(minutes).paddedLeft('0', 2)
          + ":"
          + juce::String(seconds).paddedLeft('0', 2);
+}
+
+juce::String RecordingView::formatBarsAndBeats(
+    double recordedBeats)
+{
+    constexpr juce::int64 beatsPerBar = 4;
+
+    const auto completedBeats =
+        static_cast<juce::int64>(
+            std::floor(juce::jmax(0.0, recordedBeats)
+                       + 0.0000001));
+
+    const auto barNumber =
+        completedBeats / beatsPerBar + 1;
+
+    const auto beatNumber =
+        completedBeats % beatsPerBar + 1;
+
+    return "Beats / Bars: "
+         + juce::String(barNumber).paddedLeft('0', 3)
+         + "."
+         + juce::String(beatNumber);
 }
