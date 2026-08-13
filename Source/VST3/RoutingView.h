@@ -3,7 +3,8 @@
 #include "SessionManager.h"
 #include "ButtonStyling.h"
 
-class RoutingView final : public juce::Component
+class RoutingView final : public juce::Component,
+                          private juce::Timer
 {
 public:
     struct ModuleEntry
@@ -14,8 +15,6 @@ public:
         bool isBypassed = false;
         bool isSoloed = false;
         bool isMutedBySolo = false;
-        bool canMoveUp = false;
-        bool canMoveDown = false;
         int midiAssignmentCount = 0;
         juce::String midiAssignmentsTooltip;
         juce::String routingTooltip;
@@ -29,8 +28,7 @@ public:
 
     void setModules(const juce::Array<ModuleEntry>& newModules);
 
-    std::function<void(int tabIndex)> onMoveUp;
-    std::function<void(int tabIndex)> onMoveDown;
+    std::function<void(int fromTabIndex, int toTabIndex)> onMove;
     std::function<void(int tabIndex)> onToggleBypass;
     std::function<void(int tabIndex)> onToggleSolo;
     std::function<void(int tabIndex)> onSelectTab;
@@ -41,6 +39,7 @@ public:
     std::function<void(int tabIndex, int methodOverride)> onSetPointerAdjustMethodOverride;
 
     void paint(juce::Graphics& g) override;
+    void paintOverChildren(juce::Graphics& g) override;
     void resized() override;
 
 private:
@@ -52,8 +51,9 @@ private:
 
         void setModule(const ModuleEntry& newEntry);
 
-        std::function<void(int tabIndex)> onMoveUp;
-        std::function<void(int tabIndex)> onMoveDown;
+        std::function<void(int tabIndex, juce::Point<int> screenPosition)> onDragStarted;
+        std::function<void(int tabIndex, juce::Point<int> screenPosition)> onDragMoved;
+        std::function<void(int tabIndex, juce::Point<int> screenPosition)> onDragEnded;
         std::function<void(int tabIndex)> onToggleBypass;
         std::function<void(int tabIndex)> onToggleSolo;
         std::function<void(int tabIndex)> onSelectTab;
@@ -66,6 +66,27 @@ private:
         void resized() override;
 
     private:
+        class DragHandle final : public juce::Component,
+                                 public juce::SettableTooltipClient
+        {
+        public:
+            DragHandle();
+
+            std::function<void(juce::Point<int> screenPosition)> onDragStarted;
+            std::function<void(juce::Point<int> screenPosition)> onDragMoved;
+            std::function<void(juce::Point<int> screenPosition)> onDragEnded;
+
+            void paint(juce::Graphics& g) override;
+            void mouseDown(const juce::MouseEvent& event) override;
+            void mouseDrag(const juce::MouseEvent& event) override;
+            void mouseUp(const juce::MouseEvent& event) override;
+            void mouseEnter(const juce::MouseEvent&) override { repaint(); }
+            void mouseExit(const juce::MouseEvent&) override { repaint(); }
+
+        private:
+            bool dragStarted = false;
+        };
+
         class AdjustMethodEditor final : public juce::TextEditor
         {
         public:
@@ -124,6 +145,7 @@ private:
 
         ModuleEntry entry;
         ButtonStyling::RoundedTextButtonLookAndFeel roundedButtonLookAndFeel { ButtonStyling::defaultCornerRadius() };
+        DragHandle dragHandle;
         juce::Label nameLabel;
         ButtonStyling::TypeBadgeButton typeButton;
         juce::Label adjustLabel;
@@ -144,12 +166,17 @@ private:
             juce::Colour(0xFFB8860B),
             ButtonStyling::defaultBackground()
         };
-        ButtonStyling::SmallIconButton upButton { ButtonStyling::Glyphs::arrowUp() };
-        ButtonStyling::SmallIconButton downButton { ButtonStyling::Glyphs::arrowDown() };
         ButtonStyling::SmallIconButton infoButton { ButtonStyling::Glyphs::info() };
     };
 
     void rebuildModuleRows();
+    void beginModuleDrag(int tabIndex, juce::Point<int> screenPosition);
+    void updateModuleDrag(int tabIndex, juce::Point<int> screenPosition);
+    void endModuleDrag(int tabIndex, juce::Point<int> screenPosition);
+    void autoScrollForDrag(juce::Point<int> screenPosition);
+    int getDropInsertionIndex(juce::Point<int> screenPosition) const;
+    int getDropIndicatorContentY() const;
+    void timerCallback() override;
 
     juce::Label titleLabel;
     juce::Label midiHelpLabel;
@@ -159,6 +186,11 @@ private:
     juce::Component contentComponent;
     juce::OwnedArray<ModuleRow> moduleRows;
     juce::Array<ModuleEntry> modules;
+    juce::Array<ModuleEntry> deferredModules;
+    int draggedTabIndex = -1;
+    int dropInsertionIndex = -1;
+    juce::Point<int> lastDragScreenPosition;
+    bool hasDeferredModules = false;
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(RoutingView)
 };

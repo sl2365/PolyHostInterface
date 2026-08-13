@@ -1,4 +1,5 @@
 #include <JuceHeader.h>
+#include <PolyHostAssets.h>
 #include <juce_audio_plugin_client/Standalone/juce_StandaloneFilterWindow.h>
 #include <atomic>
 #include <cmath>
@@ -3387,15 +3388,24 @@ private:
         graphics.setColour(juce::Colour(0xFF566072));
         graphics.drawRoundedRectangle(panelBounds, 12.0f, 1.0f);
 
-        juce::Path logoPath;
-        logoPath.startNewSubPath(66.0f, 38.0f);
-        logoPath.lineTo(94.0f, 66.0f);
-        logoPath.lineTo(66.0f, 94.0f);
-        logoPath.lineTo(38.0f, 66.0f);
-        logoPath.closeSubPath();
+        const auto applicationIcon =
+            juce::ImageCache::getFromMemory(
+                PolyHostAssets::app_png,
+                PolyHostAssets::app_pngSize);
 
-        graphics.setColour(juce::Colour(0xFFB12CDB));
-        graphics.fillPath(logoPath);
+        if (applicationIcon.isValid())
+        {
+            graphics.setImageResamplingQuality(
+                juce::Graphics::highResamplingQuality);
+            graphics.drawImageWithin(
+                applicationIcon,
+                32,
+                32,
+                68,
+                68,
+                juce::RectanglePlacement::centred,
+                false);
+        }
 
         graphics.setColour(juce::Colours::white);
         graphics.setFont(
@@ -3404,9 +3414,9 @@ private:
                 juce::Font::bold)));
         graphics.drawFittedText(
             getApplicationName(),
-            112,
+            120,
             37,
-            344,
+            336,
             38,
             juce::Justification::centredLeft,
             1);
@@ -3416,15 +3426,31 @@ private:
             juce::Font(juce::FontOptions(15.0f)));
         graphics.drawFittedText(
             "Version " + getApplicationVersion(),
-            113,
+            121,
             75,
-            343,
+            335,
             24,
             juce::Justification::centredLeft,
             1);
 
-        graphics.setColour(juce::Colour(0xFF30384A));
-        graphics.fillRect(38, 118, 424, 1);
+        const auto splashBarBounds =
+            juce::Rectangle<float>(38.0f, 117.0f, 424.0f, 3.0f);
+
+        graphics.setColour(juce::Colour(0xFFE67E22));
+        graphics.fillRoundedRectangle(splashBarBounds, 1.5f);
+
+        {
+            juce::Graphics::ScopedSaveState savedState(graphics);
+            juce::Path splashBarClipPath;
+            splashBarClipPath.addRoundedRectangle(
+                splashBarBounds,
+                1.5f);
+            graphics.reduceClipRegion(splashBarClipPath);
+            graphics.setColour(juce::Colour(0xFF3F8AD8));
+            graphics.fillRect(
+                splashBarBounds.withWidth(
+                    splashBarBounds.getWidth() * 0.25f));
+        }
 
         graphics.setColour(juce::Colours::white);
         graphics.setFont(
@@ -3437,11 +3463,6 @@ private:
             28,
             juce::Justification::centred,
             1);
-
-        graphics.setColour(juce::Colour(0xFF3F8AD8));
-        graphics.fillRoundedRectangle(
-            juce::Rectangle<float>(38.0f, 176.0f, 424.0f, 3.0f),
-            1.5f);
 
         return image;
     }

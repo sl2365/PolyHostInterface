@@ -6,6 +6,17 @@
 
 namespace
 {
+    bool writeXmlAtomically(const juce::XmlElement& xml,
+                            const juce::File& targetFile)
+    {
+        juce::TemporaryFile temporaryFile(targetFile);
+
+        if (! xml.writeTo(temporaryFile.getFile(), {}))
+            return false;
+
+        return temporaryFile.overwriteTargetFileWithTemporary();
+    }
+
     PluginSlotType slotTypeFromDescription(const juce::PluginDescription& description)
     {
         return description.isInstrument ? PluginSlotType::Synth
@@ -779,7 +790,7 @@ void PluginCore::beginPluginLoadCrashMarker(const SessionPluginData& pluginData,
     marker.setAttribute("key", makePluginQuarantineKey(pluginData));
     marker.setAttribute("startedAt", juce::Time::getCurrentTime().toString(true, true));
     writePluginDataToXml(marker, pluginData);
-    marker.writeTo(getPluginLoadCrashMarkerFile(), {});
+    writeXmlAtomically(marker, getPluginLoadCrashMarkerFile());
 }
 
 void PluginCore::clearPluginLoadCrashMarker()
@@ -841,12 +852,7 @@ PluginCore::~PluginCore()
             continue;
 
         detachFromHostedPlugin(tab->pluginInstance.get());
-
-        if (tab->pluginInstance != nullptr)
-        {
-            tab->pluginInstance->releaseResources();
-            tab->pluginInstance.reset();
-        }
+        disposeHostedPluginInstance(*tab, "PluginCore destructor");
     }
 
     hostedTabs.clear();
@@ -975,7 +981,12 @@ void PluginCore::prepareToPlay(double sampleRate, int samplesPerBlock)
 
         tab->hasProducedGeneratedMidi = false;
 
-        if (tab->pluginInstance != nullptr)
+        const bool pluginCanBeCalled =
+            tab->pluginInstance != nullptr
+            && ! tab->processingQuarantined.load(
+                std::memory_order_acquire);
+
+        if (pluginCanBeCalled)
         {
             tab->pluginInstance->prepareToPlay(
                 sampleRate,
@@ -985,7 +996,7 @@ void PluginCore::prepareToPlay(double sampleRate, int samplesPerBlock)
         int requiredChannels =
             hostBufferChannelCapacity;
 
-        if (tab->pluginInstance != nullptr)
+        if (pluginCanBeCalled)
         {
             requiredChannels =
                 juce::jmax(
@@ -1017,6 +1028,18 @@ void PluginCore::prepareToPlay(double sampleRate, int samplesPerBlock)
             false);
 
         tab->audioScratchBuffer.clear();
+
+        if (tab->pluginType == PluginSlotType::FX)
+        {
+            tab->audioBypassScratchBuffer.setSize(
+                tab->audioScratchChannelCapacity,
+                tab->audioScratchSampleCapacity,
+                false,
+                true,
+                false);
+
+            tab->audioBypassScratchBuffer.clear();
+        }
     }
 
     playbackPrepared.store(true);
@@ -1031,8 +1054,12 @@ void PluginCore::releaseResources()
         if (tab == nullptr)
             continue;
 
-        if (tab->pluginInstance != nullptr)
+        if (tab->pluginInstance != nullptr
+            && ! tab->processingQuarantined.load(
+                std::memory_order_acquire))
+        {
             tab->pluginInstance->releaseResources();
+        }
     }
 }
 
@@ -1447,8 +1474,13 @@ void PluginCore::processBlock(juce::AudioBuffer<float>& buffer,
     {
         auto* tab = hostedTabs[i];
 
-        if (tab == nullptr || tab->bypassed)
+        if (tab == nullptr
+            || tab->bypassed
+            || tab->processingQuarantined.load(
+                std::memory_order_acquire))
+        {
             continue;
+        }
 
         if (getHostedTabType(i) != PluginSlotType::FX
             || tab->pluginInstance == nullptr)
@@ -1492,6 +1524,15 @@ void PluginCore::processBlock(juce::AudioBuffer<float>& buffer,
             true);
 
         tab->audioScratchBuffer.clear();
+
+        tab->audioBypassScratchBuffer.setSize(
+            processChannels,
+            numSamples,
+            false,
+            false,
+            true);
+
+        tab->audioBypassScratchBuffer.clear();
         fxIndices.add(i);
     }
 
@@ -1669,6 +1710,8 @@ void PluginCore::processBlock(juce::AudioBuffer<float>& buffer,
             tab->diagnosticProcessingFaultCount.fetch_add(
                 1,
                 std::memory_order_relaxed);
+
+            instance->setPlayHead(nullptr);
 
             tab->processingQuarantined.store(
                 true,
@@ -1889,6 +1932,22 @@ void PluginCore::processBlock(juce::AudioBuffer<float>& buffer,
                 numSamples);
         }
 
+        auto& fxBypassBuffer =
+            tab->audioBypassScratchBuffer;
+
+        for (int ch = 0;
+             ch < processChannels;
+             ++ch)
+        {
+            fxBypassBuffer.copyFrom(
+                ch,
+                0,
+                fxBuffer,
+                ch,
+                0,
+                numSamples);
+        }
+
         const auto parameterCallbacksBefore =
             tab->diagnosticParameterCallbacks.load(
                 std::memory_order_relaxed);
@@ -1906,86 +1965,125 @@ void PluginCore::processBlock(juce::AudioBuffer<float>& buffer,
         const auto processStartTicks =
             juce::Time::getHighResolutionTicks();
 
-        instance->processBlock(
-            fxBuffer,
-            fxMidi);
+        const bool processCompleted =
+            processHostedPluginCrashGuard(
+                *instance,
+                fxBuffer,
+                fxMidi);
 
         const auto processEndTicks =
             juce::Time::getHighResolutionTicks();
 
-        const int processMicros =
-            juce::roundToInt(
-                juce::jlimit(
-                    0.0,
-                    2147483647.0,
-                    juce::Time::highResolutionTicksToSeconds(
-                        processEndTicks
-                        - processStartTicks)
-                        * 1000000.0));
-
-        tab->diagnosticLastProcessMicros.store(
-            processMicros,
-            std::memory_order_relaxed);
-
-        int recordedMaxProcessMicros =
-            tab->diagnosticMaxProcessMicros.load(
+        if (! processCompleted)
+        {
+            tab->diagnosticProcessingFaultCount.fetch_add(
+                1,
                 std::memory_order_relaxed);
 
-        while (processMicros > recordedMaxProcessMicros
-               && ! tab->diagnosticMaxProcessMicros
-                        .compare_exchange_weak(
-                            recordedMaxProcessMicros,
-                            processMicros,
-                            std::memory_order_relaxed,
-                            std::memory_order_relaxed))
-        {
+            instance->setPlayHead(nullptr);
+
+            tab->processingQuarantined.store(
+                true,
+                std::memory_order_release);
+
+            tab->hasProducedGeneratedMidi =
+                false;
+
+            for (int ch = 0;
+                 ch < processChannels;
+                 ++ch)
+            {
+                fxBuffer.copyFrom(
+                    ch,
+                    0,
+                    fxBypassBuffer,
+                    ch,
+                    0,
+                    numSamples);
+            }
+
+            fxMidi.clear();
+
+            midiOutputResetReady.store(
+                true,
+                std::memory_order_release);
         }
-
-        tab->diagnosticProcessCallsCompleted.fetch_add(
-            1,
-            std::memory_order_relaxed);
-
-        const auto parameterCallbacksAfter =
-            tab->diagnosticParameterCallbacks.load(
-                std::memory_order_relaxed);
-
-        const auto processorChangedCallbacksAfter =
-            tab->diagnosticProcessorChangedCallbacks.load(
-                std::memory_order_relaxed);
-
-        tab->diagnosticLastBlockParameterCallbacks.store(
-            parameterCallbacksAfter
-                - parameterCallbacksBefore,
-            std::memory_order_relaxed);
-
-        tab->diagnosticLastBlockProcessorChangedCallbacks.store(
-            processorChangedCallbacksAfter
-                - processorChangedCallbacksBefore,
-            std::memory_order_relaxed);
-
-        if (midiPanicRequested)
-            instance->reset();
-
-        const bool invalidAudioDetected =
-            clearAndRecordInvalidAudio(
-                fxBuffer,
-                tabIndex);
-
-        tab->diagnosticLastInvalidAudio.store(
-            invalidAudioDetected,
-            std::memory_order_relaxed);
-
-        if (! midiPanicRequested
-            && ! midiReleaseResetRequested)
+        else
         {
-            const bool hostedPanicBurst =
-                appendGeneratedMidiEvents(
-                    fxMidi,
-                    fxInputMidi,
-                    *tab);
+            const int processMicros =
+                juce::roundToInt(
+                    juce::jlimit(
+                        0.0,
+                        2147483647.0,
+                        juce::Time::highResolutionTicksToSeconds(
+                            processEndTicks
+                            - processStartTicks)
+                            * 1000000.0));
 
-            if (hostedPanicBurst)
+            tab->diagnosticLastProcessMicros.store(
+                processMicros,
+                std::memory_order_relaxed);
+
+            int recordedMaxProcessMicros =
+                tab->diagnosticMaxProcessMicros.load(
+                    std::memory_order_relaxed);
+
+            while (processMicros > recordedMaxProcessMicros
+                   && ! tab->diagnosticMaxProcessMicros
+                            .compare_exchange_weak(
+                                recordedMaxProcessMicros,
+                                processMicros,
+                                std::memory_order_relaxed,
+                                std::memory_order_relaxed))
+            {
+            }
+
+            tab->diagnosticProcessCallsCompleted.fetch_add(
+                1,
+                std::memory_order_relaxed);
+
+            const auto parameterCallbacksAfter =
+                tab->diagnosticParameterCallbacks.load(
+                    std::memory_order_relaxed);
+
+            const auto processorChangedCallbacksAfter =
+                tab->diagnosticProcessorChangedCallbacks.load(
+                    std::memory_order_relaxed);
+
+            tab->diagnosticLastBlockParameterCallbacks.store(
+                parameterCallbacksAfter
+                    - parameterCallbacksBefore,
+                std::memory_order_relaxed);
+
+            tab->diagnosticLastBlockProcessorChangedCallbacks.store(
+                processorChangedCallbacksAfter
+                    - processorChangedCallbacksBefore,
+                std::memory_order_relaxed);
+
+            if (midiPanicRequested)
                 instance->reset();
+
+            const bool invalidAudioDetected =
+                clearAndRecordInvalidAudio(
+                    fxBuffer,
+                    tabIndex);
+
+            tab->diagnosticLastInvalidAudio.store(
+                invalidAudioDetected,
+                std::memory_order_relaxed);
+
+            if (! midiPanicRequested
+                && ! midiReleaseResetRequested)
+            {
+                const bool hostedPanicBurst =
+                    appendGeneratedMidiEvents(
+                        fxMidi,
+                        fxInputMidi,
+                        *tab);
+
+                if (hostedPanicBurst)
+                    instance->reset();
+            }
         }
 
         const int nextFxTab =
@@ -2419,6 +2517,7 @@ bool PluginCore::closeSelectedTab()
 
     auto* tab = hostedTabs[selectedTabIndex];
     detachFromHostedPlugin(tab->pluginInstance.get());
+    disposeHostedPluginInstance(*tab, "Close tab", false);
     hostedTabs.remove(selectedTabIndex);
 
     ensureValidSelectedTab();
@@ -2445,12 +2544,7 @@ bool PluginCore::clearTab(int tabIndex)
     }
 
     detachFromHostedPlugin(selectedTab->pluginInstance.get());
-
-    if (selectedTab->pluginInstance != nullptr)
-    {
-        selectedTab->pluginInstance->releaseResources();
-        selectedTab->pluginInstance.reset();
-    }
+    disposeHostedPluginInstance(*selectedTab, "Clear tab");
 
     selectedTab->slot->clearPlugin();
     selectedTab->tabName = "Empty";
@@ -2617,6 +2711,32 @@ void PluginCore::moveHostedTab(int fromIndex, int toIndex)
     {
         ++selectedTabIndex;
     }
+}
+
+bool PluginCore::moveTab(int fromIndex, int toIndex)
+{
+    if (! juce::isPositiveAndBelow(
+            fromIndex,
+            hostedTabs.size()))
+    {
+        return false;
+    }
+
+    if (! juce::isPositiveAndBelow(
+            toIndex,
+            hostedTabs.size()))
+    {
+        return false;
+    }
+
+    if (fromIndex == toIndex)
+        return false;
+
+    moveHostedTab(fromIndex, toIndex);
+    rebuildTabModelFromHostedTabs();
+    markDirty();
+    statusText = "Tab reordered";
+    return true;
 }
 
 bool PluginCore::moveTabUp(int tabIndex)
@@ -2969,7 +3089,7 @@ bool PluginCore::saveCurrentPointerMapToGlobalFile(int tabIndex,
         }
     }
 
-    const bool saved = xml.writeTo(file, {});
+    const bool saved = writeXmlAtomically(xml, file);
 
     if (saved)
     {
@@ -3052,7 +3172,7 @@ bool PluginCore::saveCurrentPointerMapAsNewGlobalFile(int tabIndex,
         }
     }
 
-    const bool saved = xml.writeTo(file, {});
+    const bool saved = writeXmlAtomically(xml, file);
 
     if (saved)
     {
@@ -3814,6 +3934,57 @@ void PluginCore::detachFromHostedPlugin(juce::AudioPluginInstance* instance)
         instance->removeListener(this);
 }
 
+void PluginCore::disposeHostedPluginInstance(
+    HostedTabState& tab,
+    const juce::String& diagnosticContext,
+    bool releaseHealthyPluginResources)
+{
+    if (tab.pluginInstance == nullptr)
+    {
+        tab.processingQuarantined.store(
+            false,
+            std::memory_order_release);
+        return;
+    }
+
+    if (tab.processingQuarantined.load(
+            std::memory_order_acquire))
+    {
+        const auto pluginName =
+            tab.slot != nullptr
+                ? tab.slot->getLoadedPluginName()
+                : juce::String();
+
+        auto* abandonedInstance =
+            tab.pluginInstance.release();
+
+        tab.processingQuarantined.store(
+            false,
+            std::memory_order_release);
+
+        DebugLog::write(
+            juce::String(
+                "[PluginQuarantine] faulted instance abandoned without cleanup"
+                " | context=")
+            + diagnosticContext
+            + " | plugin="
+            + (pluginName.isNotEmpty()
+                   ? pluginName
+                   : juce::String("Unknown")));
+
+        juce::ignoreUnused(abandonedInstance);
+        return;
+    }
+
+    if (releaseHealthyPluginResources)
+        tab.pluginInstance->releaseResources();
+
+    tab.pluginInstance.reset();
+    tab.processingQuarantined.store(
+        false,
+        std::memory_order_release);
+}
+
 PluginCore::HostedTabState* PluginCore::getSelectedHostedTab()
 {
     if (! juce::isPositiveAndBelow(selectedTabIndex, hostedTabs.size()))
@@ -4234,6 +4405,18 @@ bool PluginCore::loadMainSlotPluginFromDescription(const juce::PluginDescription
 
     selectedTab->audioScratchBuffer.clear();
 
+    if (selectedTab->pluginType == PluginSlotType::FX)
+    {
+        selectedTab->audioBypassScratchBuffer.setSize(
+            selectedTab->audioScratchChannelCapacity,
+            selectedTab->audioScratchSampleCapacity,
+            false,
+            true,
+            false);
+
+        selectedTab->audioBypassScratchBuffer.clear();
+    }
+
     DebugLog::write("[PluginLoadDiagnostic] 43 scratch buffer allocation returned");
 
     DebugLog::write("[PluginLoadDiagnostic] 50 instance ownership transfer begin");
@@ -4344,17 +4527,8 @@ void PluginCore::unloadMainSlotPlugin()
     if (selectedTab == nullptr)
         return;
 
-    selectedTab->processingQuarantined.store(
-        false,
-        std::memory_order_release);
-
     detachFromHostedPlugin(selectedTab->pluginInstance.get());
-
-    if (selectedTab->pluginInstance != nullptr)
-    {
-        selectedTab->pluginInstance->releaseResources();
-        selectedTab->pluginInstance.reset();
-    }
+    disposeHostedPluginInstance(*selectedTab, "Unload main slot");
 
     selectedTab->slot->clearPlugin();
     dirtyMarkingResumeTimeMs = 0;
@@ -4380,20 +4554,13 @@ void PluginCore::resetForNewPreset()
         DebugLog::write("[PresetTeardown] 13 listener detach returned | tab="
                         + juce::String(tabIndex));
 
-        if (tab->pluginInstance != nullptr)
-        {
-            DebugLog::write("[PresetTeardown] 14 releaseResources call begin | tab="
-                            + juce::String(tabIndex));
-            tab->pluginInstance->releaseResources();
-            DebugLog::write("[PresetTeardown] 15 releaseResources call returned | tab="
-                            + juce::String(tabIndex));
-
-            DebugLog::write("[PresetTeardown] 16 plugin instance delete begin | tab="
-                            + juce::String(tabIndex));
-            tab->pluginInstance.reset();
-            DebugLog::write("[PresetTeardown] 17 plugin instance delete returned | tab="
-                            + juce::String(tabIndex));
-        }
+        DebugLog::write("[PresetTeardown] 14 plugin disposal begin | tab="
+                        + juce::String(tabIndex));
+        disposeHostedPluginInstance(
+            *tab,
+            "New preset tab " + juce::String(tabIndex));
+        DebugLog::write("[PresetTeardown] 17 plugin disposal returned | tab="
+                        + juce::String(tabIndex));
     }
 
     DebugLog::write("[PresetTeardown] 18 hosted tabs clear begin");
@@ -4862,20 +5029,13 @@ bool PluginCore::restoreSessionData(const SessionData& sessionData,
         DebugLog::write("[PresetTeardown] 13 listener detach returned | tab="
                         + juce::String(tabIndex));
 
-        if (tab->pluginInstance != nullptr)
-        {
-            DebugLog::write("[PresetTeardown] 14 releaseResources call begin | tab="
-                            + juce::String(tabIndex));
-            tab->pluginInstance->releaseResources();
-            DebugLog::write("[PresetTeardown] 15 releaseResources call returned | tab="
-                            + juce::String(tabIndex));
-
-            DebugLog::write("[PresetTeardown] 16 plugin instance delete begin | tab="
-                            + juce::String(tabIndex));
-            tab->pluginInstance.reset();
-            DebugLog::write("[PresetTeardown] 17 plugin instance delete returned | tab="
-                            + juce::String(tabIndex));
-        }
+        DebugLog::write("[PresetTeardown] 14 plugin disposal begin | tab="
+                        + juce::String(tabIndex));
+        disposeHostedPluginInstance(
+            *tab,
+            "Preset restore tab " + juce::String(tabIndex));
+        DebugLog::write("[PresetTeardown] 17 plugin disposal returned | tab="
+                        + juce::String(tabIndex));
     }
 
     DebugLog::write("[PresetTeardown] 18 hosted tabs clear begin");

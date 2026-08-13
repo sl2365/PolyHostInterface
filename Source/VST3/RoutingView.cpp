@@ -1,8 +1,102 @@
 #include "RoutingView.h"
 #include "ButtonStyling.h"
 
+RoutingView::ModuleRow::DragHandle::DragHandle()
+{
+    setMouseCursor(juce::MouseCursor::DraggingHandCursor);
+    setTooltip("Drag to reorder this tab");
+}
+
+void RoutingView::ModuleRow::DragHandle::paint(juce::Graphics& g)
+{
+    const auto centre = getLocalBounds().toFloat().getCentre();
+    const auto colour = dragStarted || isMouseOverOrDragging()
+                            ? juce::Colour(0xFF79B8FF)
+                            : juce::Colours::lightgrey.withAlpha(0.70f);
+
+    g.setColour(colour);
+
+    constexpr float dotSize = 3.0f;
+    constexpr float xOffset = 3.25f;
+    constexpr float ySpacing = 6.0f;
+
+    for (int column = -1; column <= 1; column += 2)
+    {
+        for (int row = -1; row <= 1; ++row)
+        {
+            g.fillEllipse(
+                centre.x + (float) column * xOffset - dotSize * 0.5f,
+                centre.y + (float) row * ySpacing - dotSize * 0.5f,
+                dotSize,
+                dotSize);
+        }
+    }
+}
+
+void RoutingView::ModuleRow::DragHandle::mouseDown(
+    const juce::MouseEvent& event)
+{
+    juce::ignoreUnused(event);
+    dragStarted = false;
+    repaint();
+}
+
+void RoutingView::ModuleRow::DragHandle::mouseDrag(
+    const juce::MouseEvent& event)
+{
+    if (! event.mods.isLeftButtonDown())
+        return;
+
+    const auto screenPosition =
+        event.getScreenPosition();
+
+    if (! dragStarted
+        && event.getDistanceFromDragStart() >= 4)
+    {
+        dragStarted = true;
+
+        if (onDragStarted)
+            onDragStarted(screenPosition);
+    }
+
+    if (dragStarted && onDragMoved)
+        onDragMoved(screenPosition);
+
+    repaint();
+}
+
+void RoutingView::ModuleRow::DragHandle::mouseUp(
+    const juce::MouseEvent& event)
+{
+    if (dragStarted && onDragEnded)
+        onDragEnded(event.getScreenPosition());
+
+    dragStarted = false;
+    repaint();
+}
+
 RoutingView::ModuleRow::ModuleRow()
 {
+    dragHandle.onDragStarted = [this](juce::Point<int> screenPosition)
+    {
+        if (onDragStarted)
+            onDragStarted(entry.tabIndex, screenPosition);
+    };
+
+    dragHandle.onDragMoved = [this](juce::Point<int> screenPosition)
+    {
+        if (onDragMoved)
+            onDragMoved(entry.tabIndex, screenPosition);
+    };
+
+    dragHandle.onDragEnded = [this](juce::Point<int> screenPosition)
+    {
+        if (onDragEnded)
+            onDragEnded(entry.tabIndex, screenPosition);
+    };
+
+    addAndMakeVisible(dragHandle);
+
     nameLabel.setJustificationType(juce::Justification::centredLeft);
     nameLabel.setColour(juce::Label::textColourId, juce::Colours::white);
     addAndMakeVisible(nameLabel);
@@ -34,8 +128,6 @@ RoutingView::ModuleRow::ModuleRow()
     addAndMakeVisible(midiButton);
     addAndMakeVisible(bypassButton);
     addAndMakeVisible(soloButton);
-    addAndMakeVisible(upButton);
-    addAndMakeVisible(downButton);
     addAndMakeVisible(infoButton);
     addAndMakeVisible(closeButton);
 
@@ -48,8 +140,6 @@ RoutingView::ModuleRow::ModuleRow()
     midiButton.setTooltip(ButtonStyling::Tooltips::midiAssignments());
     bypassButton.setTooltip(ButtonStyling::Tooltips::toggleBypass());
     soloButton.setTooltip(ButtonStyling::Tooltips::toggleSolo());
-    upButton.setTooltip(ButtonStyling::Tooltips::moveUp());
-    downButton.setTooltip(ButtonStyling::Tooltips::moveDown());
     infoButton.setTooltip(ButtonStyling::Tooltips::routingInfo());
 
     midiButton.onClick = [this]
@@ -68,18 +158,6 @@ RoutingView::ModuleRow::ModuleRow()
     {
         if (onToggleSolo)
             onToggleSolo(entry.tabIndex);
-    };
-
-    upButton.onClick = [this]
-    {
-        if (onMoveUp)
-            onMoveUp(entry.tabIndex);
-    };
-
-    downButton.onClick = [this]
-    {
-        if (onMoveDown)
-            onMoveDown(entry.tabIndex);
     };
 
     infoButton.onClick = [this]
@@ -158,8 +236,6 @@ void RoutingView::ModuleRow::setModule(const ModuleEntry& newEntry)
 
     bypassButton.setVisualState(! entry.isBypassed);
     soloButton.setVisualState(entry.isSoloed);
-    upButton.setEnabled(entry.canMoveUp);
-    downButton.setEnabled(entry.canMoveDown);
 
     repaint();
 }
@@ -196,6 +272,13 @@ void RoutingView::ModuleRow::resized()
     auto area = getLocalBounds().reduced(10);
     const int buttonHeight = ButtonStyling::defaultButtonHeight();
 
+    auto dragArea = area.removeFromLeft(20);
+    dragHandle.setBounds(
+        dragArea.withSizeKeepingCentre(
+            dragArea.getWidth(),
+            buttonHeight));
+    area.removeFromLeft(8);
+
     typeButton.setBounds(area.removeFromLeft(80).reduced(0, 8));
     area.removeFromLeft(10);
 
@@ -207,16 +290,6 @@ void RoutingView::ModuleRow::resized()
     auto infoArea = area.removeFromRight(ButtonStyling::defaultButtonWidth());
     infoArea = infoArea.withSizeKeepingCentre(infoArea.getWidth(), buttonHeight);
     infoButton.setBounds(infoArea);
-    area.removeFromRight(8);
-
-    auto downBounds = area.removeFromRight(ButtonStyling::defaultButtonWidth());
-    downBounds = downBounds.withSizeKeepingCentre(downBounds.getWidth(), buttonHeight);
-    downButton.setBounds(downBounds);
-    area.removeFromRight(8);
-
-    auto upBounds = area.removeFromRight(ButtonStyling::defaultButtonWidth());
-    upBounds = upBounds.withSizeKeepingCentre(upBounds.getWidth(), buttonHeight);
-    upButton.setBounds(upBounds);
     area.removeFromRight(8);
 
     auto soloBounds = area.removeFromRight(ButtonStyling::defaultButtonWidth());
@@ -283,6 +356,13 @@ RoutingView::RoutingView()
 
 void RoutingView::setModules(const juce::Array<ModuleEntry>& newModules)
 {
+    if (draggedTabIndex >= 0)
+    {
+        deferredModules = newModules;
+        hasDeferredModules = true;
+        return;
+    }
+
     modules = newModules;
     rebuildModuleRows();
 
@@ -339,16 +419,19 @@ void RoutingView::rebuildModuleRows()
                 onSelectTab(tabIndex);
         };
 
-        row->onMoveUp = [this](int tabIndex)
+        row->onDragStarted = [this](int tabIndex, juce::Point<int> screenPosition)
         {
-            if (onMoveUp)
-                onMoveUp(tabIndex);
+            beginModuleDrag(tabIndex, screenPosition);
         };
 
-        row->onMoveDown = [this](int tabIndex)
+        row->onDragMoved = [this](int tabIndex, juce::Point<int> screenPosition)
         {
-            if (onMoveDown)
-                onMoveDown(tabIndex);
+            updateModuleDrag(tabIndex, screenPosition);
+        };
+
+        row->onDragEnded = [this](int tabIndex, juce::Point<int> screenPosition)
+        {
+            endModuleDrag(tabIndex, screenPosition);
         };
 
         row->onCloseTab = [this](int tabIndex)
@@ -364,6 +447,282 @@ void RoutingView::rebuildModuleRows()
 void RoutingView::paint(juce::Graphics& g)
 {
     g.fillAll(juce::Colour(0xFF1B263B));
+}
+
+void RoutingView::paintOverChildren(juce::Graphics& g)
+{
+    if (draggedTabIndex < 0
+        || dropInsertionIndex < 0
+        || moduleRows.isEmpty()
+        || ! viewport.isVisible())
+    {
+        return;
+    }
+
+    const int contentY =
+        getDropIndicatorContentY();
+
+    const int localY =
+        getLocalPoint(
+            &contentComponent,
+            juce::Point<int>(0, contentY)).y;
+
+    auto clip = viewport.getBounds().reduced(2);
+
+    if (localY < clip.getY() - 2
+        || localY > clip.getBottom() + 2)
+    {
+        return;
+    }
+
+    juce::Graphics::ScopedSaveState saveState(g);
+    g.reduceClipRegion(clip);
+
+    auto line = juce::Rectangle<float>(
+        (float) clip.getX() + 8.0f,
+        (float) localY - 1.5f,
+        (float) juce::jmax(0, clip.getWidth() - 28),
+        3.0f);
+
+    const auto indicatorColour =
+        juce::Colour(0xFF4DA3FF);
+
+    g.setColour(indicatorColour);
+    g.fillRoundedRectangle(line, 1.5f);
+    g.fillEllipse(line.getX() - 2.0f,
+                  line.getCentreY() - 3.5f,
+                  7.0f,
+                  7.0f);
+    g.fillEllipse(line.getRight() - 5.0f,
+                  line.getCentreY() - 3.5f,
+                  7.0f,
+                  7.0f);
+}
+
+void RoutingView::beginModuleDrag(
+    int tabIndex,
+    juce::Point<int> screenPosition)
+{
+    if (! juce::isPositiveAndBelow(
+            tabIndex,
+            modules.size()))
+    {
+        return;
+    }
+
+    draggedTabIndex = tabIndex;
+    lastDragScreenPosition = screenPosition;
+    dropInsertionIndex =
+        getDropInsertionIndex(screenPosition);
+    startTimerHz(30);
+    repaint();
+}
+
+void RoutingView::updateModuleDrag(
+    int tabIndex,
+    juce::Point<int> screenPosition)
+{
+    if (tabIndex != draggedTabIndex)
+        return;
+
+    lastDragScreenPosition = screenPosition;
+    autoScrollForDrag(screenPosition);
+
+    const int newInsertionIndex =
+        getDropInsertionIndex(screenPosition);
+
+    if (newInsertionIndex != dropInsertionIndex)
+    {
+        dropInsertionIndex = newInsertionIndex;
+        repaint();
+    }
+}
+
+void RoutingView::endModuleDrag(
+    int tabIndex,
+    juce::Point<int> screenPosition)
+{
+    if (tabIndex != draggedTabIndex)
+        return;
+
+    stopTimer();
+    lastDragScreenPosition = screenPosition;
+
+    const auto viewportPosition =
+        viewport.getLocalPoint(
+            nullptr,
+            screenPosition);
+
+    const bool droppedInsideViewport =
+        viewport.getLocalBounds().contains(
+            viewportPosition);
+
+    if (droppedInsideViewport)
+    {
+        dropInsertionIndex =
+            getDropInsertionIndex(screenPosition);
+    }
+
+    int destinationIndex =
+        droppedInsideViewport
+            ? dropInsertionIndex
+            : tabIndex;
+
+    if (tabIndex < destinationIndex)
+        --destinationIndex;
+
+    destinationIndex = juce::jlimit(
+        0,
+        juce::jmax(0, modules.size() - 1),
+        destinationIndex);
+
+    draggedTabIndex = -1;
+    dropInsertionIndex = -1;
+    repaint();
+
+    auto deferredModulesToApply =
+        deferredModules;
+    const bool shouldApplyDeferredModules =
+        hasDeferredModules;
+
+    deferredModules.clear();
+    hasDeferredModules = false;
+
+    if (destinationIndex == tabIndex
+        || ! onMove)
+    {
+        if (shouldApplyDeferredModules)
+        {
+            juce::Component::SafePointer<RoutingView> safeThis(this);
+
+            juce::MessageManager::callAsync(
+                [safeThis, deferredModulesToApply]
+                {
+                    if (safeThis != nullptr)
+                        safeThis->setModules(deferredModulesToApply);
+                });
+        }
+
+        return;
+    }
+
+    juce::Component::SafePointer<RoutingView> safeThis(this);
+
+    juce::MessageManager::callAsync(
+        [safeThis, tabIndex, destinationIndex]
+        {
+            if (safeThis != nullptr && safeThis->onMove)
+                safeThis->onMove(tabIndex, destinationIndex);
+        });
+}
+
+void RoutingView::autoScrollForDrag(
+    juce::Point<int> screenPosition)
+{
+    if (! viewport.isVisible())
+        return;
+
+    const auto localPosition =
+        viewport.getLocalPoint(
+            nullptr,
+            screenPosition);
+
+    constexpr int edgeSize = 28;
+    constexpr int scrollStep = 18;
+
+    auto viewPosition =
+        viewport.getViewPosition();
+
+    int newY = viewPosition.y;
+
+    if (localPosition.y < edgeSize)
+        newY -= scrollStep;
+    else if (localPosition.y > viewport.getHeight() - edgeSize)
+        newY += scrollStep;
+
+    const int maximumY =
+        juce::jmax(
+            0,
+            contentComponent.getHeight()
+                - viewport.getViewHeight());
+
+    newY = juce::jlimit(0, maximumY, newY);
+
+    if (newY != viewPosition.y)
+    {
+        viewport.setViewPosition(
+            viewPosition.x,
+            newY);
+        repaint();
+    }
+}
+
+int RoutingView::getDropInsertionIndex(
+    juce::Point<int> screenPosition) const
+{
+    if (moduleRows.isEmpty())
+        return -1;
+
+    const auto contentPosition =
+        contentComponent.getLocalPoint(
+            nullptr,
+            screenPosition);
+
+    for (int rowIndex = 0;
+         rowIndex < moduleRows.size();
+         ++rowIndex)
+    {
+        const auto* row = moduleRows[rowIndex];
+
+        if (row != nullptr
+            && contentPosition.y
+                < row->getBounds().getCentreY())
+        {
+            return rowIndex;
+        }
+    }
+
+    return moduleRows.size();
+}
+
+int RoutingView::getDropIndicatorContentY() const
+{
+    if (moduleRows.isEmpty()
+        || dropInsertionIndex < 0)
+    {
+        return 0;
+    }
+
+    if (dropInsertionIndex <= 0)
+        return moduleRows[0]->getY();
+
+    if (dropInsertionIndex >= moduleRows.size())
+        return moduleRows[moduleRows.size() - 1]->getBottom() + 4;
+
+    const auto* previousRow =
+        moduleRows[dropInsertionIndex - 1];
+    const auto* nextRow =
+        moduleRows[dropInsertionIndex];
+
+    if (previousRow == nullptr || nextRow == nullptr)
+        return 0;
+
+    return (previousRow->getBottom()
+            + nextRow->getY())
+           / 2;
+}
+
+void RoutingView::timerCallback()
+{
+    if (draggedTabIndex < 0)
+    {
+        stopTimer();
+        return;
+    }
+
+    updateModuleDrag(
+        draggedTabIndex,
+        lastDragScreenPosition);
 }
 
 void RoutingView::resized()
@@ -384,7 +743,9 @@ void RoutingView::resized()
     viewport.setBounds(area);
 
     auto contentArea = viewport.getLocalBounds();
-    int y = 0;
+    constexpr int topPadding = 6;
+    constexpr int bottomPadding = 2;
+    int y = topPadding;
     constexpr int rowHeight = 56;
     constexpr int rowGap = 8;
 
@@ -395,5 +756,5 @@ void RoutingView::resized()
     }
 
     contentComponent.setSize(juce::jmax(0, contentArea.getWidth() - 12),
-                             juce::jmax(y, viewport.getHeight()));
+                             juce::jmax(y + bottomPadding, viewport.getHeight()));
 }

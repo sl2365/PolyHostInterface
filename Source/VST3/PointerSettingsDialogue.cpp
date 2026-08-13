@@ -58,12 +58,8 @@ namespace
             configureTipLabel(tipAdjustCc, "Used to adjust software parameters.");
             configureTipLabel(tipTabCc, "Switches between open tabs.");
             configureTipLabel(tipTabCooldown, "Cooldown between relative tab switches. 0 disables. Absolute mode is unaffected.");
-            configureTipLabel(tipLeftMouseCc, "Emulates the left mouse button. CC value 10+ = down, below 10 = up.");
-            configureTipLabel(tipMiddleMouseCc, "Emulates the middle mouse button. CC value 10+ = down, below 10 = up.");
-            configureTipLabel(tipRightMouseCc, "Emulates the right mouse button. CC value 10+ = down, below 10 = up.");
-            configureTipLabel(tipCursorUpKeyCc, "Emulates the cursor up arrow key. CC value 10+ = down, below 10 = up.");
-            configureTipLabel(tipCursorDownKeyCc, "Emulates the cursor down arrow key. CC value 10+ = down, below 10 = up.");
-            configureTipLabel(tipEnterKeyCc, "Emulates the Enter key. CC value 10+ = down, below 10 = up.");
+            configureTipLabel(tipMouseButtons, "Emulates mouse button. CC values of 10+ = down, values below 10 = up.");
+            configureTipLabel(tipKeys, "Emulates key press. CC values of 10+ = down, values below 10 = up.");
             configureTipLabel(tipAdjustMode, "");
             configureTipLabel(tipAdjustSensitivity, "Repeats adjust steps per encoder movement. Higher values help stubborn plugin controls.");
             configureTipLabel(tipSensitivityCc, "MIDI CC used to control Adjust Sensitivity live.");
@@ -83,6 +79,7 @@ namespace
 
             addAndMakeVisible(separatorAfterTabCooldown);
             addAndMakeVisible(separatorAfterRightMouse);
+            addAndMakeVisible(separatorAfterEnterKey);
             addAndMakeVisible(separatorAfterAdjustMethod);
             addAndMakeVisible(separatorAfterAdjustSensitivity);
             addAndMakeVisible(separatorAfterWeights);
@@ -169,7 +166,7 @@ namespace
             };
 
             setWantsKeyboardFocus(true);
-            setSize(920, 496);
+            setSize(920, 536);
         }
 
         void apply()
@@ -348,13 +345,14 @@ namespace
             layoutStandardRow(leftArea, tabCcLabel, tabCcEditor, &tipTabCc);
             layoutStandardRow(leftArea, tabCooldownLabel, tabCooldownEditor, &tipTabCooldown);
             layoutSeparator(leftArea, separatorAfterTabCooldown);
-            layoutStandardRow(leftArea, leftMouseCcLabel, leftMouseCcEditor, &tipLeftMouseCc);
-            layoutStandardRow(leftArea, middleMouseCcLabel, middleMouseCcEditor, &tipMiddleMouseCc);
-            layoutStandardRow(leftArea, rightMouseCcLabel, rightMouseCcEditor, &tipRightMouseCc);
+            layoutStandardRow(leftArea, leftMouseCcLabel, leftMouseCcEditor);
+            layoutStandardRow(leftArea, middleMouseCcLabel, middleMouseCcEditor, &tipMouseButtons);
+            layoutStandardRow(leftArea, rightMouseCcLabel, rightMouseCcEditor);
             layoutSeparator(leftArea, separatorAfterRightMouse);
-            layoutStandardRow(leftArea, cursorUpKeyCcLabel, cursorUpKeyCcEditor, &tipCursorUpKeyCc);
-            layoutStandardRow(leftArea, cursorDownKeyCcLabel, cursorDownKeyCcEditor, &tipCursorDownKeyCc);
-            layoutStandardRow(leftArea, enterKeyCcLabel, enterKeyCcEditor, &tipEnterKeyCc);
+            layoutStandardRow(leftArea, cursorUpKeyCcLabel, cursorUpKeyCcEditor);
+            layoutStandardRow(leftArea, cursorDownKeyCcLabel, cursorDownKeyCcEditor, &tipKeys);
+            layoutStandardRow(leftArea, enterKeyCcLabel, enterKeyCcEditor);
+            layoutSeparator(leftArea, separatorAfterEnterKey);
             layoutStandardRow(leftArea, adjustModeLabel, adjustModeEditor, &tipAdjustMode);
             layoutStandardRow(leftArea, adjustMethodLabel, adjustMethodEditor, &tipAdjustMethod);
 
@@ -521,6 +519,7 @@ namespace
 
             for (auto* separator : { &separatorAfterTabCooldown,
                                      &separatorAfterRightMouse,
+                                     &separatorAfterEnterKey,
                                      &separatorAfterWeights })
             {
                 auto separatorBounds = separator->getBounds();
@@ -751,7 +750,7 @@ namespace
 
         juce::Label currentToleranceInfoLabel, currentToleranceLineLabel;
 
-        juce::Label tipXcc, tipYcc, tipAdjustCc, tipTabCc, tipTabCooldown, tipLeftMouseCc, tipMiddleMouseCc, tipRightMouseCc, tipCursorUpKeyCc, tipCursorDownKeyCc, tipEnterKeyCc, tipAdjustMode, tipAdjustSensitivity, tipSensitivityCc, tipAdjustMethod, tipDragReturnDelay;
+        juce::Label tipXcc, tipYcc, tipAdjustCc, tipTabCc, tipTabCooldown, tipMouseButtons, tipKeys, tipAdjustMode, tipAdjustSensitivity, tipSensitivityCc, tipAdjustMethod, tipDragReturnDelay;
         juce::Label tipWeights, tipOverlay, tipPointSize, tipShowCrosshair, tipRgb, tipCrosshairRgba, tipFreeZoneRgba;
 
         ScrollableTextEditor xCcEditor, yCcEditor, adjustCcEditor, tabCcEditor, tabCooldownEditor, leftMouseCcEditor, middleMouseCcEditor, rightMouseCcEditor, cursorUpKeyCcEditor, cursorDownKeyCcEditor, enterKeyCcEditor, toleranceCcEditor, sensitivityCcEditor;
@@ -828,6 +827,7 @@ namespace
 
         juce::Component separatorAfterTabCooldown;
         juce::Component separatorAfterRightMouse;
+        juce::Component separatorAfterEnterKey;
         juce::Component separatorAfterAdjustMethod;
         juce::Component separatorAfterAdjustSensitivity;
         juce::Component separatorAfterWeights;

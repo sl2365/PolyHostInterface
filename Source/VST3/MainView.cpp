@@ -1985,62 +1985,51 @@ MainView::MainView(PolyHostPluginProcessor& processorIn,
         closeTab(tabIndex);
     };
 
-    routingView.onMoveUp = [this](int tabIndex)
+    routingView.onMove = [this](int fromIndex, int toIndex)
     {
         auto& core = processor.getCore();
 
         while (manualBypassStates.size() < core.getNumTabs())
             manualBypassStates.add(false);
 
-        if (core.moveTabUp(tabIndex))
+        if (core.moveTab(fromIndex, toIndex))
         {
-            if (juce::isPositiveAndBelow(tabIndex, manualBypassStates.size()))
+            if (juce::isPositiveAndBelow(
+                    fromIndex,
+                    manualBypassStates.size())
+                && juce::isPositiveAndBelow(
+                    toIndex,
+                    manualBypassStates.size()))
             {
-                const bool movedBypassState = manualBypassStates[tabIndex];
-                manualBypassStates.remove(tabIndex);
-                manualBypassStates.insert(tabIndex - 1, movedBypassState);
+                const bool movedBypassState =
+                    manualBypassStates[fromIndex];
+
+                manualBypassStates.remove(fromIndex);
+                manualBypassStates.insert(
+                    toIndex,
+                    movedBypassState);
             }
 
             for (int i = 0; i < soloedTabIndices.size(); ++i)
             {
                 const int soloIndex = soloedTabIndices[i];
 
-                if (soloIndex == tabIndex)
-                    soloedTabIndices.set(i, tabIndex - 1);
-                else if (soloIndex == tabIndex - 1)
-                    soloedTabIndices.set(i, tabIndex);
-            }
-
-            applyEffectiveBypassStates();
-            refreshFromCore();
-            repaint();
-        }
-    };
-
-    routingView.onMoveDown = [this](int tabIndex)
-    {
-        auto& core = processor.getCore();
-
-        while (manualBypassStates.size() < core.getNumTabs())
-            manualBypassStates.add(false);
-
-        if (core.moveTabDown(tabIndex))
-        {
-            if (juce::isPositiveAndBelow(tabIndex, manualBypassStates.size()))
-            {
-                const bool movedBypassState = manualBypassStates[tabIndex];
-                manualBypassStates.remove(tabIndex);
-                manualBypassStates.insert(tabIndex + 1, movedBypassState);
-            }
-
-            for (int i = 0; i < soloedTabIndices.size(); ++i)
-            {
-                const int soloIndex = soloedTabIndices[i];
-
-                if (soloIndex == tabIndex)
-                    soloedTabIndices.set(i, tabIndex + 1);
-                else if (soloIndex == tabIndex + 1)
-                    soloedTabIndices.set(i, tabIndex);
+                if (soloIndex == fromIndex)
+                {
+                    soloedTabIndices.set(i, toIndex);
+                }
+                else if (fromIndex < toIndex
+                         && soloIndex > fromIndex
+                         && soloIndex <= toIndex)
+                {
+                    soloedTabIndices.set(i, soloIndex - 1);
+                }
+                else if (fromIndex > toIndex
+                         && soloIndex >= toIndex
+                         && soloIndex < fromIndex)
+                {
+                    soloedTabIndices.set(i, soloIndex + 1);
+                }
             }
 
             applyEffectiveBypassStates();
@@ -4246,8 +4235,6 @@ void MainView::rebuildRoutingView()
             && ! isSoloed
             && ! manualBypassed;
 
-        entry.canMoveUp = core.canMoveTabUp(i);
-        entry.canMoveDown = core.canMoveTabDown(i);
         entry.midiAssignmentCount =
             core.getTabMidiAssignmentCount(i);
 

@@ -67,6 +67,13 @@ juce_add_plugin(PolyHost
 
 juce_generate_juce_header(PolyHost)
 
+juce_add_binary_data(PolyHostAssets
+    HEADER_NAME PolyHostAssets.h
+    NAMESPACE PolyHostAssets
+    SOURCES
+        "${CMAKE_CURRENT_LIST_DIR}/../app.png"
+)
+
 if(WIN32)
     set(POLYHOST_ICON_RC "${CMAKE_CURRENT_BINARY_DIR}/PolyHostIcon.rc")
 
@@ -155,6 +162,7 @@ endif()
 
 target_link_libraries(PolyHost
     PRIVATE
+        PolyHostAssets
         juce::juce_audio_basics
         juce::juce_audio_devices
         juce::juce_audio_formats

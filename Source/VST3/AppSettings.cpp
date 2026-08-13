@@ -1,6 +1,48 @@
 #include "AppSettings.h"
 #include <cmath>
 
+namespace
+{
+    bool writeXmlAtomically(const juce::XmlElement& xml,
+                            const juce::File& targetFile)
+    {
+        juce::TemporaryFile temporaryFile(targetFile);
+
+        if (! xml.writeTo(temporaryFile.getFile(), {}))
+            return false;
+
+        return temporaryFile.overwriteTargetFileWithTemporary();
+    }
+
+    bool copyFileAtomically(const juce::File& sourceFile,
+                            const juce::File& targetFile)
+    {
+        juce::TemporaryFile temporaryFile(targetFile);
+
+        if (! sourceFile.copyFileTo(temporaryFile.getFile()))
+            return false;
+
+        return temporaryFile.overwriteTargetFileWithTemporary();
+    }
+
+    juce::File getSettingsBackupFile(const juce::File& settingsFile)
+    {
+        return settingsFile.getSiblingFile("settings-backup.xml");
+    }
+
+    std::unique_ptr<juce::XmlElement> loadValidSettingsXml(
+        const juce::File& file,
+        const juce::String& expectedRootTag)
+    {
+        auto loaded = juce::XmlDocument::parse(file);
+
+        if (loaded != nullptr && loaded->hasTagName(expectedRootTag))
+            return loaded;
+
+        return {};
+    }
+}
+
 static constexpr const char* kRootTag           = "PolyHostSettings";
 static constexpr const char* kMidiDevice        = "midiDevice";
 static constexpr const char* kAudioDevice       = "audioDevice";
@@ -190,14 +232,35 @@ AppSettings::AppSettings() { xml = std::make_unique<juce::XmlElement>(kRootTag);
 
 void AppSettings::load()
 {
-    auto file = getSettingsFile();
-    if (file.existsAsFile())
-        if (auto loaded = juce::XmlDocument::parse(file))
-            if (loaded->hasTagName(kRootTag))
-                xml = std::move(loaded);
+    const auto settingsFile = getSettingsFile();
+
+    if (! settingsFile.existsAsFile())
+        return;
+
+    if (auto loaded = loadValidSettingsXml(settingsFile, kRootTag))
+    {
+        xml = std::move(loaded);
+        return;
+    }
+
+    const auto backupFile = getSettingsBackupFile(settingsFile);
+
+    if (auto recovered = loadValidSettingsXml(backupFile, kRootTag))
+    {
+        xml = std::move(recovered);
+        save();
+    }
 }
 
-void AppSettings::save() { xml->writeTo(getSettingsFile(), {}); }
+void AppSettings::save()
+{
+    const auto settingsFile = getSettingsFile();
+
+    if (! writeXmlAtomically(*xml, settingsFile))
+        return;
+
+    copyFileAtomically(settingsFile, getSettingsBackupFile(settingsFile));
+}
 juce::String AppSettings::getMidiDeviceName() const { return xml->getStringAttribute(kMidiDevice, ""); }
 void AppSettings::setMidiDeviceName(const juce::String& name) { xml->setAttribute(kMidiDevice, name); save(); }
 juce::String AppSettings::getAudioDeviceName() const { return xml->getStringAttribute(kAudioDevice, ""); }

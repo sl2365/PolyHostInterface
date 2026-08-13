@@ -46,6 +46,7 @@ public:
     void setTabBypassed(int tabIndex, bool shouldBeBypassed);
     bool canMoveTabUp(int tabIndex) const;
     bool canMoveTabDown(int tabIndex) const;
+    bool moveTab(int fromIndex, int toIndex);
     bool moveTabUp(int tabIndex);
     bool moveTabDown(int tabIndex);
     int getTabPointerAdjustMethodOverride(int tabIndex) const;
@@ -227,6 +228,7 @@ private:
         std::atomic<juce::uint32> diagnosticProcessingFaultCount { 0 };
 
         juce::AudioBuffer<float> audioScratchBuffer;
+        juce::AudioBuffer<float> audioBypassScratchBuffer;
         int audioScratchChannelCapacity = 2;
         int audioScratchSampleCapacity = 512;
         juce::String tabName;
@@ -257,6 +259,9 @@ private:
 
     void attachToHostedPlugin(juce::AudioPluginInstance* instance);
     void detachFromHostedPlugin(juce::AudioPluginInstance* instance);
+    void disposeHostedPluginInstance(HostedTabState& tab,
+                                     const juce::String& diagnosticContext,
+                                     bool releaseHealthyPluginResources = true);
 
     HostedTabState* getSelectedHostedTab();
     const HostedTabState* getSelectedHostedTab() const;

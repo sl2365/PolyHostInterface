@@ -2,6 +2,17 @@
 
 namespace
 {
+    bool writeXmlAtomically(const juce::XmlElement& xml,
+                            const juce::File& targetFile)
+    {
+        juce::TemporaryFile temporaryFile(targetFile);
+
+        if (! xml.writeTo(temporaryFile.getFile(), {}))
+            return false;
+
+        return temporaryFile.overwriteTargetFileWithTemporary();
+    }
+
     juce::String slotTypeToString(PluginSlotType type)
     {
         switch (type)
@@ -206,7 +217,7 @@ bool SessionManager::saveSessionToFile(const SessionData& session, const juce::F
     if (presetXml == nullptr)
         return false;
 
-    return presetXml->writeTo(file, {});
+    return writeXmlAtomically(*presetXml, file);
 }
 
 bool SessionManager::loadSessionFromFile(const juce::File& file,
