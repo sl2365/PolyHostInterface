@@ -24,7 +24,7 @@ setlocal
 set "ROOT=%~dp0"
 for %%I in ("%ROOT%..") do set "PROJECTS_ROOT=%%~fI"
 set "TOOLS=%PROJECTS_ROOT%\_Tools"
-set "CMAKE=%TOOLS%\cmake\_4.3.1\bin\cmake.exe"
+set "CMAKE=%TOOLS%\cmake\_4.4.2\bin\cmake.exe"
 set "BUILD_DIR=%ROOT%build-APP"
 set "DIST_DIR=%ROOT%dist"
 set "EXENAME=PolyHostInterface.exe"

@@ -295,7 +295,7 @@ _Projects\_Tools\
 Setup Steps:
 One-time installs (unavoidable for C++)
 
-### 1. [Visual Studio 2026 Community](https://visualstudio.microsoft.com/vs/community/) (free)
+### 1. [Visual Studio 18 2026 Community](https://visualstudio.microsoft.com/vs/community/) (free)
 	Download and install.
 	During install tick: Desktop development with C++
 	You never need to open Visual Studio. It only provides the C++ compiler that CMake calls.
@@ -307,7 +307,7 @@ One-time installs (unavoidable for C++)
 	Projects\_Tools\cmake\_x.x.x\bin\cmake.exe
 
 ### 3. [Install JUCE Portable](https://github.com/juce-framework/JUCE/releases) (8.0.15)
-	Download the latest version: 'juce-x.x.x-windows.zip'
+	Download the required version: 'juce-x.x.x-windows.zip'
 	Extract to: _Projects\_Tools\JUCE\_x.x.x
 
 ### 4. VST2.4 sdk
@@ -341,6 +341,75 @@ MIDI Device(s)    Audio In from DAW/Host
               [Audio Out]  ->  Output meter
 ```
 MIDI is always wired in parallel. Synth and FX audio routing is partially flexible, where plugins are in series and routing can be modified by entering the Routing page. Click the Routing toolbar button and a list of all tabs appears, use Up and Down buttons to manage the processing order.
+
+## Changing the CMake version used by PHI
+
+Do not overwrite or delete the previous CMake version. Extract the new version into its own folder, for example:
+
+```text
+_Tools\cmake\_4.4.2\bin\cmake.exe
+```
+
+Then make the following change in both `build-APP.bat` and `build-VST3.bat`.
+
+Old example:
+
+```bat
+set "CMAKE=%TOOLS%\cmake\_4.3.1\bin\cmake.exe"
+```
+
+New example:
+
+```bat
+set "CMAKE=%TOOLS%\cmake\_4.4.2\bin\cmake.exe"
+```
+
+Update any explanatory CMake paths in those batch files as well. `build-BOTH.bat` does not need changing because it only calls the other two batch files.
+
+Do not change either `CMakeLists.txt` file merely because `cmake.exe` moved. The batch files select the CMake executable.
+
+## Changing the JUCE version used by PHI
+
+Do not overwrite or delete the previous JUCE version. Extract the new complete JUCE source into its own folder, for example:
+
+```text
+_Tools\JUCE\_9.0.0\CMakeLists.txt
+```
+
+Then make the following change in both files:
+
+- `Source\APP\CMakeLists.txt`
+- `Source\VST3\CMakeLists.txt`
+
+Old example:
+
+```cmake
+set(JUCE_SHARED_PATH "${SHARED_TOOLS_DIR}/JUCE/_8.0.15")
+```
+
+New example:
+
+```cmake
+set(JUCE_SHARED_PATH "${SHARED_TOOLS_DIR}/JUCE/_9.0.0")
+```
+
+The build batch files do not need changing merely because JUCE moved. The two `CMakeLists.txt` files select the JUCE source folder.
+
+## Safely testing an update
+
+1. Leave the currently working tool version in place.
+2. Add the new CMake or JUCE version in a separate versioned folder.
+3. Change only PHI's paths to select the new version.
+4. In the PHI Project Root, double-click `build-BOTH.bat`.
+5. Confirm both the standalone application and VST3 build successfully.
+6. Test the standalone application and PHI VST3 before updating other projects.
+7. If the build fails, change the path back to the previous version. No tool files need to be moved or restored.
+
+The PHI batch files remove their previous build folders before configuring, so a normal `build-BOTH.bat` run is sufficient after changing a tool path.
+
+## Important rule for other projects
+
+Each project must point explicitly to the CMake and JUCE versions it requires. Adding a newer version does not affect another project unless that project's batch files or `CMakeLists.txt` files are changed to select it.
 
 ## Credits
 Thanks to Stefan Matting and his [PointerCC](https://github.com/smatting/pointer-cc) app for the idea.

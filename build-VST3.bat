@@ -28,7 +28,7 @@ setlocal
 
 set "ROOT=%~dp0"
 set "TOOLS=%ROOT%..\_Tools"
-set "CMAKE=%TOOLS%\cmake\_4.3.1\bin\cmake.exe"
+set "CMAKE=%TOOLS%\cmake\_4.4.2\bin\cmake.exe"
 set "BUILD_DIR=%ROOT%build-VST3"
 set "DIST_DIR=%ROOT%dist"
 set "PLUGIN_NAME=PolyHostInterface.vst3"
