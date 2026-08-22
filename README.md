@@ -280,7 +280,8 @@ _Projects\_Tools\
     │       	└── cmake.exe
     │
  	├── JUCE\					 ← drop JUCE here
- 	│  	└── CMakeLists.txt
+    │   └── _x.x.x\
+ 	│  		└── CMakeLists.txt
     │
     └── vstsdk2.4\      		 ← drop your VST2.4 SDK here
         └── pluginterfaces\
