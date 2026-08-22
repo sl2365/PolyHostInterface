@@ -60,12 +60,12 @@ The Routing View provides a structured overview of all tabs in the current prese
 Tabs can be reordered, soloed, bypassed, and selected directly from this view.
 
 ### Routing View Explained
+- The 8 dots to the left are used as a drag handle, allowing much easier reordering than previous versions, which used up/down buttons.
 - Click the Synth/FX labels to close routing view and open the tab for that row. Next to which is the plugin name.
 - Adjust Method is used for setting the PointerControl mode. Global uses the setting specified in the PointerControlSettings panel. Drag sets only this tab/plugin to use drag method of adjustment. Scroll sets it to use mouse scroll as adjustment type. Setting this to Drag or Scroll allows a global setting to be used for every other tab/plugin, while allowing you to set specific setting per tab for independant plugin control. Then, in practise, usage is pretty seemless and invisible.
 - The MIDI buttons are used to designate the MIDI channel used for that plugin tab. ie, you may want to designate a keyboard to the synths, but have a MIDI controller to adjust FX so you may need to specify channel per device for each plugin.
 - The Green buttons are used to enable/disable the audio/MIDI for that tab/plugin so effectively making it a bypass/mute function.
 - Then comes the 'S' button, used to Solo each plugin tab. You can Solo any number of tabs. Bypass/Mute states are restored when the last Solo button is deactivated.
-- The next two buttons are the Up/Down arrows and are used to adjust the position in the chain so you can set up different chains for the same plugins, thereby saving different presets with different chains for different situations.
 - The next button is an info button, used more as a tooltip, but click it to see detailed plugin info. On hovering this button, it will show info about what FX a synth is outputting its audio to or which Synths an FX is receiving input from.
 - The last button is a Close Tab button to allow closing tabs from the routing view.
 
@@ -274,9 +274,10 @@ _Projects\PolyHost\              ← your project root
 
 
 _Projects\_Tools\
-    ├── cmake\                   ← extract cmake-4.3.1-windows-x86_64.zip HERE
-    │   └── bin\
-    │       └── cmake.exe
+    ├── cmake\                   ← extract cmake-x.x.x-windows-x86_64.zip HERE
+    │   └── _x.x.x\
+    │   	└── bin\
+    │       	└── cmake.exe
     │
  	├── JUCE\					 ← drop JUCE here
  	│  	└── CMakeLists.txt
@@ -302,7 +303,7 @@ One-time installs (unavoidable for C++)
 ### 2. Portable CMake (4.3.1)
 	Download the 'Windows x64 ZIP cmake-x.x.x-windows-x86_64.zip' from: https://cmake.org/download/
 	Extract it so the structure is:
-	Projects\_Tools\cmake\bin\cmake.exe
+	Projects\_Tools\cmake\_x.x.x\bin\cmake.exe
 
 ### 3. Install JUCE Portable (8.0.15)
 	Download from: https://github.com/juce-framework/JUCE/releases
