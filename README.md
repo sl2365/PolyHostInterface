@@ -294,21 +294,20 @@ _Projects\_Tools\
 Setup Steps:
 One-time installs (unavoidable for C++)
 
-### 1. Visual Studio 2026 Community (free)
-	Download: [Visual Studio 2026 Community](https://visualstudio.microsoft.com/vs/community/).
+### 1. [Visual Studio 2026 Community](https://visualstudio.microsoft.com/vs/community/) (free)
+	Download and install.
 	During install tick: Desktop development with C++
 	You never need to open Visual Studio. It only provides the C++ compiler that CMake calls.
 	But this way allows you to use whatever editor you want.
 
-### 2. Portable CMake (4.3.1)
-	Download the 'Windows x64 ZIP cmake-x.x.x-windows-x86_64.zip' from: [CMake](https://cmake.org/download/)
+### 2. [Portable CMake](https://cmake.org/download/) (4.3.1)
+	Download the 'Windows x64 ZIP cmake-x.x.x-windows-x86_64.zip'.
 	Extract it so the structure is:
 	Projects\_Tools\cmake\_x.x.x\bin\cmake.exe
 
-### 3. Install JUCE Portable (8.0.15)
-	Download: [JUCE Portable](https://github.com/juce-framework/JUCE/releases)
-	Get the latest version: 'juce-x.x.x-windows.zip'
-	Extract to: _Projects\_Tools\JUCE
+### 3. [Install JUCE Portable](https://github.com/juce-framework/JUCE/releases) (8.0.15)
+	Download the latest version: 'juce-x.x.x-windows.zip'
+	Extract to: _Projects\_Tools\JUCE\_x.x.x
 
 ### 4. VST2.4 sdk
 	Place this here: _Projects\_Tools\vstsdk2.4
