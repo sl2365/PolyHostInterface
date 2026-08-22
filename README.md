@@ -1,258 +1,357 @@
-# Startup Monitor 64
+# Poly Host Interface
 
-[![Release](https://img.shields.io/github/v/release/sl2365/Startup-Monitor-64?style=for-the-badge-square&color=orange)](https://github.com/sl2365/Startup-Monitor-64/releases/latest/download/Startup-Monitor-64.rar)
-[![Release Date](https://img.shields.io/github/release-date/sl2365/Startup-Monitor-64?style=for-the-badge-square&color=yellow)](https://github.com/sl2365/Startup-Monitor-64/releases)
+[![Release](https://img.shields.io/github/v/release/sl2365/PolyHostInterface?style=for-the-badge-square&color=purple)](https://github.com/sl2365/PolyHostInterface/releases/latest/download/PolyHostInterface.rar)
+[![Release Date](https://img.shields.io/github/release-date/sl2365/PolyHostInterface?style=for-the-badge-square&color=yellow)](https://github.com/sl2365/PolyHostInterface/releases)
 
-[![Latest Asset Downloads](https://img.shields.io/github/downloads/sl2365/Startup-Monitor-64/latest/Startup-Monitor-64.rar?style=for-the-badge-square&label=downloads-latest&displayAssetName=false&color=blue)](https://github.com/sl2365/Startup-Monitor-64/releases/latest)
-[![Total Downloads](https://img.shields.io/github/downloads/sl2365/Startup-Monitor-64/total?style=for-the-badge-square&label=downloads-total&color=blue)](https://github.com/sl2365/Startup-Monitor-64/releases)
+[![Latest Asset Downloads](https://img.shields.io/github/downloads/sl2365/PolyHostInterface/latest/PolyHostInterface.rar?style=for-the-badge-square&label=downloads-latest&displayAssetName=false&color=blue)](https://github.com/sl2365/PolyHostInterface/releases/latest)
+[![Total Downloads](https://img.shields.io/github/downloads/sl2365/PolyHostInterface/total?style=for-the-badge-square&label=downloads-total&color=blue)](https://github.com/sl2365/PolyHostInterface/releases)
 
-## Overview
+[![Commits Since Release](https://img.shields.io/github/commits-since/sl2365/PolyHostInterface/latest?style=for-the-badge-square&color=green)](https://github.com/sl2365/PolyHostInterface/activity)
+[![Last Commit](https://img.shields.io/github/last-commit/sl2365/PolyHostInterface?style=for-the-badge-square&color=green)](https://github.com/sl2365/PolyHostInterface/activity)
 
-This Windows tray application monitors system startup locations, scheduled tasks, and registry entries for changes or new items. It alerts the user to new startup entries, lets the user approve or deny them, and provides options for logging and deletion. All configuration and log files are stored in a dedicated `App` folder within the application's directory, making it fully portable.
+A lightweight, standalone tabbed VST2, VST3, (CLAP - Later when JUCE 9 released) plugin host for Windows.
+Play synths and route FX chains, driven by any MIDI device.
+Fully portable: stores all settings next to the exe/vst3, touches nothing else on the system.
 
-The app can be used to monitor any custom location added by the user, so this could serve as an app monitor, checking for realtime changes in folders or registry locations.
+I always liked tools like TobyBear's MiniHost, SaviHost and Tone2's NanoHost. But wanted something that combines all of them. A quick jamming tool that can open multiple plugin formats. I aim to add support for more formats. This is a tool that doesn't yet exist elsewhere in a small package like this, at least not as one that you can use file-associations with.
 
-For a quicker response, please post bug reports and FR's on the [PortableFreeware](https://www.portablefreeware.com/forums/viewtopic.php?t=26600) forum.
+The standalone version is an expanded version of the VST3 plugin code, adding features not required by a plugin. This makes it easier to maintain and keep functionality/preset compatibility consistent.
 
----
+See the demos at the bottom of the page for a few gifs of the Pointer Control in action...
+
+## Feature Status
+
+| Feature | Status - Some features only apply to APP or VST3 |
+|---|---|
+| VST2 **32-bit** in 64-bit host | ⚠️ Needs plugin bridge — planned |
+| VST2 x64 | ✅ Working - Requires Steinberg VST2 SDK to build — see below |
+| VST3 x64 | ✅ Working - Full support for Shell VST's|
+| CLAP x64 | ⚠️ Once JUCE natively supports CLAP, then it will be added to PHI |
+| MIDI 1.0 | ✅ Working |
+| MIDI 2.0 (Windows MIDI Services) | ⚠️ Requires JUCE 8+ and Windows 11 - planned |
+| Tabbed interface (Synth: parallel + FX: serial) | ✅ Working |
+| Tab-ordering = FX routing order | ✅ Working |
+| Portable settings (no AppData/registry) | ✅ Working |
+| Audio / MIDI recording | ✅ Working |
+| Pointer Control functionality | ✅ Working - Absolute knob mode (1) and 3x Relative knob modes (2),(3) and (4) |
+| Mouse button emulation | ✅ Working - (Left, Middle, Right buttons) |
+| Keyboard emulation | ✅ Working - (Limited to: Up, Down, Enter, mainly for menu navigation) |
+| MIDI Monitor | ✅ Working |
+| MIDI Macros | ✅ Working |
+| Plugin Repair - locates missing plugins | ✅ Working |
+| Standalone App | ✅ Working |
+| VST3 Plugin for use in other hosts | ✅ Working |
 
 ## Features
 
-- **Monitors**:
-  - User-specified startup folders (e.g. Startup menus).
-  - Scheduled tasks (Windows Task Scheduler).
-  - Registry locations (stubbed, expandable).
-  - Locations can be enabled/disabled on a per-item basis.
-- **Allows/Denies**:
-  - New entries alert the user with a review GUI.
-  - User can allow (approve) or deny (block/delete) new items.
-  - Denied items are deleted after confirmation.
-  - Manual rule additions. [See warning and instructions.](Allowed_Denied_Rules.md)
-- **Persistence**:
-  - Baseline snapshot on first run (never updated except on settings reset).
-  - Tracks Allowed and Denied items separately for user decisions.
-- **Logging**:
-  - All actions are logged to `Log.ini`.
-- **Tray Menu**:
-  - Settings
-  - Open App Folder
-  - Pause Monitoring
-  - Exit
+### Tabbed Plugin Hosting
+PolyHostInterface hosts multiple plugins in a tabbed workflow, allowing quick switching between synth and FX tabs inside one container plugin.
 
----
+### Routing View
+The Routing View provides a structured overview of all tabs in the current preset, including:
+- tab order
+- synth / FX type
+- bypass state
+- solo state
+- MIDI assignment count
+- per-tab pointer adjust mode override
+- detailed plugin info report
 
-## Folder and File Structure
+Tabs can be reordered, soloed, bypassed, and selected directly from this view.
 
-All files are created in:  
-`[AppFolder]\App`
+### Routing View Explained
+- The 8 dots to the left are used as a drag handle, allowing much easier reordering than previous versions, which used up/down buttons.
+- Click the Synth/FX labels to close routing view and open the tab for that row. Next to which is the plugin name.
+- Adjust Method is used for setting the PointerControl mode. Global uses the setting specified in the PointerControlSettings panel. Drag sets only this tab/plugin to use drag method of adjustment. Scroll sets it to use mouse scroll as adjustment type. Setting this to Drag or Scroll allows a global setting to be used for every other tab/plugin, while allowing you to set specific setting per tab for independant plugin control. Then, in practise, usage is pretty seemless and invisible.
+- The MIDI buttons are used to designate the MIDI channel used for that plugin tab. ie, you may want to designate a keyboard to the synths, but have a MIDI controller to adjust FX so you may need to specify channel per device for each plugin.
+- The Green buttons are used to enable/disable the audio/MIDI for that tab/plugin so effectively making it a bypass/mute function.
+- Then comes the 'S' button, used to Solo each plugin tab. You can Solo any number of tabs. Bypass/Mute states are restored when the last Solo button is deactivated.
+- The next button is an info button, used more as a tooltip, but click it to see detailed plugin info. On hovering this button, it will show info about what FX a synth is outputting its audio to or which Synths an FX is receiving input from.
+- The last button is a Close Tab button to allow closing tabs from the routing view.
 
-| File Name           | Purpose                                                                   |
-|---------------------|---------------------------------------------------------------------------|
-| Allowed.ini         | User-allowed startup/scheduled task items                                 |
-| Denied.ini          | User-denied startup/scheduled task items                                  |
-| Log.ini             | Log of all actions (Last 30 days)                                         |
-| Settings.ini        | App settings/configuration                                                |
-| BaseStartup.ini     | Baseline snapshot of startup items at first run                           |
-| BaseTasks.ini       | Baseline snapshot of scheduled tasks at first run                         |
-| Locations.ini       | List of monitored locations (folders and registry keys)                   |
+### Soloing
+Soloing temporarily isolates one or more tabs by muting all non-soloed tabs.
 
----
+Behaviour:
+- soloed tabs remain audible
+- non-soloed tabs are bypassed while solo is active
+- multiple tabs can be soloed at once
+- clearing solo restores the normal manual bypass states
 
-## Usage
+This is useful for quickly auditioning individual synths or FX chains in a larger preset.
 
-1. **First Run**  
-   - Creates the `App` folder and all required files with default values.
-   - Takes baseline snapshots of startup folders and scheduled tasks.
+### Macro Mapping
+PolyHostInterface includes 128 host-visible macro controls.
 
-2. **Monitoring**  
-   - The app polls monitored locations at the interval set in Settings GUI: MonitorTime, default: 3000ms. The longer the time, the less resources required.
-   - Finds new items, compares them to baseline and Allowed/Denied lists, reports to user.
+These macros can be mapped to plugin parameters so they can be automated from the DAW without needing to expose the hosted plugin's own automation directly.
 
-3. **Review GUI**  
-   - New or changed items open a review dialog with checkboxes:
-     - **CHECKED**: Item will be added to Allowed.ini (approved)
-     - **UNCHECKED**: Item will be added to Denied.ini (blocked/deleted)
-   - Denied items are deleted on clicking Apply.
-   - Export List: This exports a full list of items shown in the Review GUI.
-   - NOTE: This window is only displayed depending on the setting: Review denied items again. see below.
+Macro features include:
+- map the last touched plugin parameter to the next free macro
+- replace an existing macro target with the last touched parameter
+- reorder mappings
+- delete individual mappings
+- clear all mappings
+- undo the last macro mapping edit
+- filter/search mappings in the Macro Mappings view
 
-4. **Tray Menu Functions**
-   - Left-click opens settings window
-   - Right-click shows context menu:
-     - Settings
-     - Open App Folder
-     - Pause Monitoring
-     - Exit
+Each mapping stores:
+- macro slot number
+- source tab
+- plugin name
+- parameter name
+- parameter index
 
----
+Please note: Only use the Macros 001-128, ignore the MIDI CC 0-129 etc as these are for Host side control but I couldnt find a way to hide them.
 
-## Customising Monitored Locations
+### Macro Mappings View
+This provides a complete list of all current macro assignments in the preset.
 
----
+It allows:
+- browsing all active mappings
+- filtering by macro, tab, plugin, or parameter
+- reordering mappings
+- replacing targets
+- deleting mappings
+- clearing all mappings
+- Undo allows undoing the last action only
 
-# Settings GUI – Options & Functionality
+### Pointer Control
+The Pointer Control system is designed for a much speedier programming of any plugin using just a small handful of knobs and buttons on your MIDI controller, instead of assigning one knob/button per parameter. This means you spend less time assigning knobs to parameters. For synth programmers, this is likely far quicker than traditional methods.
 
-The Settings GUI features several tabs that allow for detailed configuration and management of monitored startup items. Use the Settings window which covers all functionality. Just left-click the tray icon to open Settings. Here, you can configure monitoring behaviour, baseline creation, logging preferences, review window size, and manage advanced lists such as Locations, Allowed, and Denied.
+It allows MIDI-driven control of the mouse cursor over the currently selected hosted plugin editor. This function allows using only three hardware knobs to control all parameters that work via a scroll or drag operation via emulation of mouse actions. Much easier and quicker than traditional MIDI mapping as it allows using the mouse, or assigning knobs for cursor X/Y psoition, to move the cursor while using a single knob to adjust whatever is under the cursor. Much better than using the scroll wheel or dragging parameters with the mouse!
 
----
+This includes:
+- X/Y pointer movement by MIDI CC
+- X/Y lane tolerance control
+- Use Mouse Back/Forward buttons to toggle Snap X and Y
+- wheel or drag-style parameter adjustment
+- Mouse button and keyboard emulation for menu navigation
+- 'adjust' sensitivity control
+- optional point snapping
+- create multiple editable jump-point maps per plugin tab
 
-### **1. Options Tab**
+### Pointer Edit Overlay
+Pointer Edit Mode displays an overlay over the hosted plugin editor so jump points can be created, previewed, removed, and visually aligned.
 
-| Option | Description | Values / Range |
-|---|---|---|
-| **Monitor Interval**           | Set scan interval of Startup locations. | 1000–60000 ms (1–60 sec) |
-| **Tasks Scan Interval**        | Set scan interval of Scheduled Tasks. | 10000–3600000 ms (10sec–1hr) |
-| **Review Window Width**        | Sets the width of the review window. | 400–1600 pixels |
-| **Review Window Height**       | Sets the height of the review window. | 200–900 pixels |
-| **Clear Log on Start**         | Create a new log file on each startup. | (On/Off) |
-| **Create Persistent Baseline** | Creates a baseline of existing startup items on first run to reduce false alerts. | (On/Off) |
-| **Monitor Scheduled Tasks**    | When enabled, scheduled tasks are included in the monitoring process. | (On/Off) |
-| **Monitor Registry Locations** | Monitors registry keys for startup programs. Disable for folder monitoring only. | (On/Off) |
-| **Review items selected by default** | Detected items checkboxes are auto checked, or not. | (On/Off) |
-| **Review denied items again**  | CHECKED: Displays whenever new items detected. UNCHECKED: Only displays if an item isn't in Allowed or Denied list.	| (On/Off) |
-| **Theme**                      | Sets the skin theme. | Light, Dark, System |
-| **Reset to Defaults**          | Restores all settings to their default values. | Button |
-| **Settings Folder**            | Opens application settings folder for manual review or backup. | Button |
-| **Pause Monitoring**           | Works in tandem with Tray Menu to pause the motioring of all locations/tasks. | (On/Off) |
+The overlay supports:
+- live point placement
+- optional X snap (Snaps to other points along X axis)
+- optional Y snap (Snaps to other points along Y axis)
+- preview point display before release
+- optional crosshair display
+- per-tab lane tolerance feedback
+- map source indication
+- right click and drag to set a rectangular area where snapping is disabled:
+  - Up to 8 pointer free zones per tab.
+  - Right-drag adds a new rectangle.
+  - Existing rectangles stay in place.
+  - Overlapping rectangles are allowed.
+  - Right-click inside a rectangle removes one rectangle.
+  - If rectangles overlap, deletion removes the smallest rectangle under the cursor.
+  - If overlapping rectangles are the same size, deletion removes the newest one.
+  - Bottom bar shows: Free Zones: N
 
-**NOTE:** Please be aware that all settings are saved immediately. The only things that aren't are changes to the fields on the Options tab and Reset to Defaults. These require clicking Apply, this will then save and exit. Click Cancel to ignore these changes.
 
----
+> [!NOTE]
+> **Implementation Note: Pointer Edit Overlay**
+>
+> The pointer edit overlay is implemented as a plain `juce::Component` added to the desktop with `addToDesktop(...)`, rather than using `DocumentWindow`, `CallOutBox`, or `PopupMenu`.
+>
+> This allows the overlay to:
+> - appear correctly over hosted plugin editors
+> - match the hosted editor bounds exactly
+> - avoid title bar chrome and popup layout constraints
+> - refresh dynamically when switching tabs
+>
+> - NOTE: It can reside over other windows too, which is an unfortunate consequence
 
-### **2. Locations Tab**
-**Use Locations Tab** to tailor what areas of the system are monitored. Add, remove, or edit to suit your needs. You can use this to monitor any folder or registry key for changes, other than startup.
+### Pointer Maps
+Pointer jump-point maps are stored in the PointerMaps directory and are accessed via the combobox in the top right of the window. If a map for the currently selected plugin tab is detected, it will be shown here. If there are multiplt maps for a plugin, all will be shown here and are selectable via the combobox or via your mouse's Back/Forward buttons. This last function is dependant on the Pointer Editor Overlay NOT being active. If the Overlay is active, these buttons toggle snapping of X/Y.
+
+A pointer map is saved per plugin and can be reused across presets. It saves having to recreate the same map for every instance of a plugin.
+
+Use this when:
+- the same plugin layout is used repeatedly
+- you want one reusable default map for a plugin
+
+NOTE: As maps are saved to a separate dedicated file as XML, they are also shareable online! So if this becomes popular enough, you may find maps available online. But I will eventually upload all of my own maps here when done, making it easier to get started.
+
+#### Additional Pointer Maps
+A different pointer map may be required for differetn skins of the same plugin, so you are free to select whichever is most suitable. Useful for plugins that have different ways of setting it up (Diva) or different skins that rearrange a plugins layout.
+
+Use this when:
+- a plugin needs its own custom point layout for each skin/theme/layout
+- a plugin has several tabs/pages, eg: Osc, Filter, LFO, etc...
+
+You are free to store maps in subfolders within the PointerMaps directory allowing for better organisation. As long as Maps are stored in that folder, they will be detected and shown in the combobox with all subfolders being searched recursively for any map files.
+
+### MIDI Assignment Per Tab
+Each tab can maintain its own MIDI channel assignment set, allowing different hosted plugins to respond to different incoming MIDI sources/channels.
+
+### Preset Handling
+PolyHostInterface supports:
+- creating presets
+- saving presets
+- saving presets as new files
+- loading presets
+- recent preset history
+- preset dirty-state tracking
+- preset deletion
+- plugin path recovery for missing plugins
+
+### Recording
+Only in standalone mode. It is possible to record both Audio and MIDI output to WAV and MID files respectively. You can record only Audio or MIDI, but not both at the same time.
+
+Open the Record settings via: Options > Recording, or by right-clicking the Record button at the the top right of the interface.
+
+Select the recording mode via the toggle: Audio or MIDI.
+Select the Count-in method: 0 Bars=instant, Wait Note=Recording starts on receiving a MIDI note input.
+Recordings are listed in the right side of the window, double click to open wav files in your default Windows app.
+
+### Missing Plugin Repair
+If a plugin cannot be found when loading a preset, PolyHostInterface can prompt you to locate the replacement file and restore the tab. Tabs will turn red to display there is an error with loading the plugin. Routing View will also turn a row red as a visual clue as well.
+
+### MIDI Monitor
+A built-in MIDI monitor can be used to inspect incoming MIDI events, including:
+- notes
+- CC
+- pitch bend
+- aftertouch
+- system messages
+- clock / active sensing filtering
+- filter specific events
+
+Pause / Freeze works like this:
+- Pause:
+  - stops capture.
+  - incoming monitor events are discarded while paused.
+  
+- Freeze:
+  - keeps capturing internally.
+  - visible table stops updating/scrolling.
+  - unfreezing refreshes the table with the captured rows.
+
+Copy/export behaviour:
+- Copy Row:
+  - copies selected visible row as tab-separated text.
+
+- Copy All:
+  - copies all currently visible rows as tab-separated text.
+
+- Export:
+  - exports currently visible rows to .csv or .txt.
+
+- Raw Hex:
+  - shows raw MIDI bytes, for example:
+  - B0 07 64
+  - E0 00 40
+  - F0 7E 7F 09 01 F7
+
+## Project Folder Structure
+
+```
+
+_Projects\PolyHost\              ← your project root
+│
+├── build-APP/BOTH/VST3.bat      ← The build script (run this)
+├── README.md
+│
+│
+├── Source\
+│   ├── APP\
+│	│	├── CMakeLists.txt
+│   │	└── Standalone Source files here...
+│   └── VST3\
+│		├── CMakeLists.txt
+│   	└── VST3 Plugin Source files here...
+│
+│
+├── dist\                        ← build output — PolyHost.exe/PolyHost VST3 lands here
+└── [PolyHost.exe/.vst3]\
+    └── Settings\                ← created at runtime, settings stored here
+        └── polyhost.xml
+
+
+
+_Projects\_Tools\
+    ├── cmake\                   ← extract cmake-x.x.x-windows-x86_64.zip HERE
+    │   └── _x.x.x\
+    │   	└── bin\
+    │       	└── cmake.exe
+    │
+ 	├── JUCE\					 ← drop JUCE here
+ 	│  	└── CMakeLists.txt
+    │
+    └── vstsdk2.4\      		 ← drop your VST2.4 SDK here
+        └── pluginterfaces\
+            └── vst2.x\
+                └── aeffect.h    ← CMake checks for this file
  
-Manage the startup locations that are monitored for changes. These locations typically include registry keys, file paths, and scheduled tasks.
-
-**How to Use:**
-
-- **List View:** See all locations currently being monitored. Use checkboxes to enable/disable that item. Changes saved immediately.
-
-- **Context Menu:** Right click the list view to access options.
-  - **Edit:** Modify an existing location's settings. Right Click a list view item, select Edit, then the edit field appears below. Make your changes and click the Edit button to save.
-  - **Remove:** Remove a location if you no longer wish to monitor it. A confirmation message appears at the bottom of the window with OK/Cancel buttons.
-  - **Refresh:** Likely not necessary, added to facilitate refreshing the view in case auto-refresh fails.
-  - **Add Folder:** Browse to a folder and add it to your monitoring list.
-  - **Add Registry Path:** Add a new registry startup location to monitor. Use the "Open RegEdit" from the context menu, then use RegEdit to browse to your location. Copy the desired path into the edit field, then click "Add Path" button to add to the list.
-  - **Open RegEdit:** Use this to locate registry locations you want to add as a monitored location.
----
-
-- **Default Locations:**
+ 
 ```
-[Folders]
-C:\ProgramData\Microsoft\Windows\Start Menu\Programs\Startup\
-C:\Users\<Username>\AppData\Roaming\Microsoft\Windows\Start Menu\Programs\Startup
 
-[Registry]
-HKEY_CURRENT_USER\Software\Microsoft\Windows\CurrentVersion\Run
-HKEY_CURRENT_USER\Software\Microsoft\Windows\CurrentVersion\RunOnce
-HKEY_LOCAL_MACHINE\Software\Microsoft\Windows\CurrentVersion\Run
-HKEY_LOCAL_MACHINE\Software\Microsoft\Windows\CurrentVersion\RunOnce
-HKEY_CURRENT_USER\Software\Microsoft\Windows\CurrentVersion\Explorer\User Shell Folders
-HKEY_CURRENT_USER\Software\Microsoft\Windows\CurrentVersion\Explorer\Shell Folders
-HKEY_LOCAL_MACHINE\SOFTWARE\Microsoft\Windows\CurrentVersion\Explorer\Shell Folders
-HKEY_LOCAL_MACHINE\SOFTWARE\Microsoft\Windows\CurrentVersion\Explorer\User Shell Folders
-HKEY_LOCAL_MACHINE\Software\Microsoft\Windows\CurrentVersion\RunServicesOnce
-HKEY_CURRENT_USER\Software\Microsoft\Windows\CurrentVersion\RunServicesOnce
-HKEY_LOCAL_MACHINE\Software\Microsoft\Windows\CurrentVersion\RunServices
-HKEY_CURRENT_USER\Software\Microsoft\Windows\CurrentVersion\RunServices
-HKEY_LOCAL_MACHINE\Software\Microsoft\Windows\CurrentVersion\Policies\Explorer\Run
-HKEY_CURRENT_USER\Software\Microsoft\Windows\CurrentVersion\Policies\Explorer\Run
-HKEY_LOCAL_MACHINE\Software\Microsoft\Windows NT\CurrentVersion\Winlogon\Userinit
-HKEY_LOCAL_MACHINE\Software\Microsoft\Windows NT\CurrentVersion\Winlogon\Shell
-HKEY_CURRENT_USER\Software\Microsoft\Windows NT\CurrentVersion\Windows
-HKEY_LOCAL_MACHINE\System\CurrentControlSet\Control\Session Manager
+## Build Setup
+Setup Steps:
+One-time installs (unavoidable for C++)
+
+### 1. Visual Studio 2026 Community (free)
+	Download: [Visual Studio 2026 Community](https://visualstudio.microsoft.com/vs/community/).
+	During install tick: Desktop development with C++
+	You never need to open Visual Studio. It only provides the C++ compiler that CMake calls.
+	But this way allows you to use whatever editor you want.
+
+### 2. Portable CMake (4.3.1)
+	Download the 'Windows x64 ZIP cmake-x.x.x-windows-x86_64.zip' from: [CMake](https://cmake.org/download/)
+	Extract it so the structure is:
+	Projects\_Tools\cmake\_x.x.x\bin\cmake.exe
+
+### 3. Install JUCE Portable (8.0.15)
+	Download: [JUCE Portable](https://github.com/juce-framework/JUCE/releases)
+	Get the latest version: 'juce-x.x.x-windows.zip'
+	Extract to: _Projects\_Tools\JUCE
+
+### 4. VST2.4 sdk
+	Place this here: _Projects\_Tools\vstsdk2.4
+
+### 5. Build
+	Double-click build-BOTH.bat from the project root.
+	The finished exe/vst3 files appears in: dist\PolyHostInterface.exe
+
+## Opening a Plugin in PHI Standalone
+1. Right-click any vst2, vst3 or clap file in File Explorer
+2. Open with > Choose another app
+3. Browse to PolyHostInterface.exe
+4. Tick "Always use this app" if you want it permanent. This means that anytime you then double-click a plugin in Explorer, it will auto-open into the first tab of PolyHostInterface, or add a new tab with that plugin if already open. So only one instance can be run at present.
+
+## Audio/MIDI Routing
 ```
----
+MIDI Device(s)    Audio In from DAW/Host
+|					|
+├── [Synth Tab 1] --+
+├── [Synth Tab 2] --+  (summed)
+|                   |
+|              [FX Tab 1] (If Bypassed/Muted FX is ignored)
+|                   |
+├──----------- [FX Tab 2]
+|                   |
+└── [Synth Tab 3] --+  (only passes through FX below, bypasses any above)
+                    |
+              [FX Tab 3]
+                    |
+              [Audio Out]  ->  Output meter
+```
+MIDI is always wired in parallel. Synth and FX audio routing is partially flexible, where plugins are in series and routing can be modified by entering the Routing page. Click the Routing toolbar button and a list of all tabs appears, use Up and Down buttons to manage the processing order.
 
-### **3. Allowed Tab**
+## Credits
+Thanks to Stefan Matting and his [PointerCC](https://github.com/smatting/pointer-cc) app for the idea.
 
-**Purpose:**
 
-Manage the list of startup items that are explicitly allowed. Items in this list will not trigger alerts or warnings.
+# Demos
+These were made in [MuLab](https://www.mutools.com/index.html) DAW.
+All cursor movements and parameter adjustments are made using Hardware MIDI controllers, not a real mouse.
 
-**How to Use:**
-- **Context Menu**
-  - **Remove:** Remove items that are no longer trusted. Select item in the list view, click "Remove". Review the confirmation at the bottom of the window and select OK/Cancel as desired.
-  - **Refresh:** Refreshes list. Unlikely to be required as changes are applied immediately, but, just in case!
-  - **CopyPath:** Copies the full path of selected item.
-- **Use Case:**  
-  For trusted programs you know and want to keep running at startup.
-- **Manual rule additions:**
-  You can now add your own rules to both the allowed/Denied tabs, but please read this first: [Warning and instructions.](Allowed_Denied_Rules.md)
+![Gif Synth1](screenshots/Synth1_Gif.gif)
 
----
+![Gif Diva](screenshots/Diva_Gif.gif)
 
-### **4. Denied Tab**
-
-**Purpose:**
-
-Manage the list of startup items that are explicitly denied. Any item matching entries in this list will trigger alerts and may be blocked.
-
-**How to Use:**  
-- **Context Menu**
-  - **Remove:** Remove entries if a program is no longer considered a threat. Select item in the list view, click "Remove". Review the confirmation at the bottom of the window and select OK/Cancel as desired.
-  - **Refresh:** Refreshes list. Unlikely to be required as changes are applied immediately, again, just in case!
-  - **CopyPath:** Copies the full path of selected item.
-- **Use Case:**  
-  For known threats, unwanted software, or items you want to prevent from running at startup.
-- **Manual rule additions:**
-  You can now add your own rules to both the allowed/Denied tabs, but please read this first: [Warning and instructions.](Allowed_Denied_Rules.md)
-
----
-
-### **5. Other Tabs**
-
-Additional tabs for advanced settings, such as:
-- **Baseline:**  View and manage the persistent baseline of startup items.  
-  - **Use:** See which items were present during initial setup and adjust baseline as needed. Click to view full path and at the same time copy the full path to the clipboard.
-- **Log:**  View logging details, such as log file path and retention. Delete existing log to start afresh. You can select and right click to copy or use keyboard shortcuts.
-
----
-
-## **Managing Tabs Effectively**
-
-- **Use Allowed and Denied Tabs** to fine-tune which startup items are permitted or blocked. For example if a review was accidentally accepted or denied, you can amend here.
-- **Review Baseline** periodically to ensure only legitimate items are included.
-- **Consult Log Tab** for troubleshooting or audit purposes.
-
----
-
-## **Typical Usage Flow**
-
-1. **Configure monitoring frequency and targets** in Main Settings.
-2. **Review Locations Tab** — enable/disable or add/remove monitored areas.
-3. **Populate Allowed Tab** with trusted items to reduce unnecessary alerts.
-4. **Populate Denied Tab** with unwanted or suspicious items for proactive blocking.
-5. **Check Baseline and Log Tabs** for additional control and troubleshooting.
-6. **Save and exit** — settings take effect immediately.
-
----
-
-## **Notes**
-
-- Invalid values prompt warnings and revert to previous/default settings.
-- All changes are saved automatically unless otherwise specified.
-- Tip: To reduce repeat notification of items already denied but that continue to reoccur, uncheck the box for `Review denied items again`.
-
----
-
-For further support or questions, contact me, preferably on the StartupMonitor forum at [PortableFreeware.com](https://www.portablefreeware.com/forums/viewtopic.php?t=26600&start=15).
-
----
-
-## Building & Running
-
-1. Requires [python-3.10.9-embed-amd64](https://www.python.org/downloads/windows/).
-2. Extract Source files and open `build_SM64.bat`.
-3. Change this line to show the relative or absolute path to the folder containg python.exe:
-   `set "PYTHON_DIR=%TOOLS_DIR%\python\_3.10.9"`
-4. Run `build_SM64.bat` to create the exe.
-
----
-
-## License
-
-MIT
-
----
+![Gif Warlock](screenshots/Warlock_Gif.gif)
