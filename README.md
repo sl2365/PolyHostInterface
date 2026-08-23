@@ -1,13 +1,13 @@
 # Poly Host Interface
 
-[![Release](https://img.shields.io/github/v/release/sl2365/PolyHostInterface?style=for-the-badge-square&color=purple)](https://github.com/sl2365/PolyHostInterface/releases/latest/download/PolyHostInterface.rar)
-[![Release Date](https://img.shields.io/github/release-date/sl2365/PolyHostInterface?style=for-the-badge-square&color=yellow)](https://github.com/sl2365/PolyHostInterface/releases)
+[![Release](https://img.shields.io/github/v/release/sl2365/PolyHostInterface?style=for-the-badge-square&logo=github&logoColor=white&color=purple)](https://github.com/sl2365/PolyHostInterface/releases/latest/download/PolyHostInterface.rar)
+[![Release Date](https://img.shields.io/github/release-date/sl2365/PolyHostInterface?style=for-the-badge-square&logo=github&logoColor=white&color=yellow)](https://github.com/sl2365/PolyHostInterface/releases)
 
-[![Latest Asset Downloads](https://img.shields.io/github/downloads/sl2365/PolyHostInterface/latest/PolyHostInterface.rar?style=for-the-badge-square&label=downloads-latest&displayAssetName=false&color=blue)](https://github.com/sl2365/PolyHostInterface/releases/latest)
-[![Total Downloads](https://img.shields.io/github/downloads/sl2365/PolyHostInterface/total?style=for-the-badge-square&label=downloads-total&color=blue)](https://github.com/sl2365/PolyHostInterface/releases)
+[![Latest Asset Downloads](https://img.shields.io/github/downloads/sl2365/PolyHostInterface/latest/PolyHostInterface.rar?style=for-the-badge-square&logo=github&logoColor=white&label=downloads-latest&displayAssetName=false&color=blue)](https://github.com/sl2365/PolyHostInterface/releases/latest)
+[![Total Downloads](https://img.shields.io/github/downloads/sl2365/PolyHostInterface/total?style=for-the-badge-square&logo=github&logoColor=white&label=downloads-total&color=blue)](https://github.com/sl2365/PolyHostInterface/releases)
 
-[![Commits Since Release](https://img.shields.io/github/commits-since/sl2365/PolyHostInterface/latest?style=for-the-badge-square&color=green)](https://github.com/sl2365/PolyHostInterface/activity)
-[![Last Commit](https://img.shields.io/github/last-commit/sl2365/PolyHostInterface?style=for-the-badge-square&color=green)](https://github.com/sl2365/PolyHostInterface/activity)
+[![Commits Since Release](https://img.shields.io/github/commits-since/sl2365/PolyHostInterface/latest?style=for-the-badge-square&logo=github&logoColor=white&color=green)](https://github.com/sl2365/PolyHostInterface/activity)
+[![Last Commit](https://img.shields.io/github/last-commit/sl2365/PolyHostInterface?style=for-the-badge-square&logo=github&logoColor=white&color=green)](https://github.com/sl2365/PolyHostInterface/activity)
 
 A lightweight, standalone tabbed VST2, VST3, (CLAP - Later when JUCE 9 released) plugin host for Windows.
 Play synths and route FX chains, driven by any MIDI device.
