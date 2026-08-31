@@ -2096,29 +2096,16 @@ MainView::MainView(PolyHostPluginProcessor& processorIn,
         }
     };
 
-    macroMappingsView.onMoveMappingUp = [this](int macroIndex)
+    macroMappingsView.onMoveMapping = [this](int fromMacroIndex,
+                                             int toMacroIndex)
     {
         auto& core = processor.getCore();
 
-        if (core.moveMacroMappingUp(macroIndex))
+        if (core.moveMacroMapping(fromMacroIndex, toMacroIndex))
         {
-            showTemporaryStatusMessage("Moved Macro "
-                                       + juce::String(macroIndex + 1).paddedLeft('0', 3)
-                                       + " up");
-            refreshFromCore();
-            repaint();
-        }
-    };
-
-    macroMappingsView.onMoveMappingDown = [this](int macroIndex)
-    {
-        auto& core = processor.getCore();
-
-        if (core.moveMacroMappingDown(macroIndex))
-        {
-            showTemporaryStatusMessage("Moved Macro "
-                                       + juce::String(macroIndex + 1).paddedLeft('0', 3)
-                                       + " down");
+            showTemporaryStatusMessage(
+                "Moved mapping to Macro "
+                + juce::String(toMacroIndex + 1).paddedLeft('0', 3));
             refreshFromCore();
             repaint();
         }
@@ -5704,8 +5691,6 @@ void MainView::refreshFromCore()
         entry.parameterIndex = mapping.parameterIndex;
         entry.parameterName = mapping.parameterName;
         entry.enabled = mapping.enabled;
-        entry.canMoveUp = core.isMacroMapped(mapping.macroIndex - 1);
-        entry.canMoveDown = core.isMacroMapped(mapping.macroIndex + 1);
         mappingEntries.add(entry);
     }
 

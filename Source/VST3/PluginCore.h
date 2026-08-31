@@ -168,6 +168,7 @@ public:
     void clearAllMacroMappings();
     bool moveMacroMappingUp(int macroIndex);
     bool moveMacroMappingDown(int macroIndex);
+    bool moveMacroMapping(int fromMacroIndex, int toMacroIndex);
     bool undoLastMacroMappingsEdit();
     bool hasMacroMappingsUndoState() const;
 

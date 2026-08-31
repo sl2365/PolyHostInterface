@@ -5403,6 +5403,70 @@ bool PluginCore::moveMacroMappingDown(int macroIndex)
     return true;
 }
 
+bool PluginCore::moveMacroMapping(
+    int fromMacroIndex,
+    int toMacroIndex)
+{
+    if (fromMacroIndex == toMacroIndex)
+        return false;
+
+    auto orderedMappings = macroMappings;
+
+    if (orderedMappings.size() > 1)
+    {
+        std::sort(orderedMappings.begin(),
+                  orderedMappings.end(),
+                  [](const SessionData::MacroMapping& first,
+                     const SessionData::MacroMapping& second)
+                  {
+                      return first.macroIndex < second.macroIndex;
+                  });
+    }
+
+    juce::Array<int> macroSlots;
+    int sourceIndex = -1;
+    int destinationIndex = -1;
+
+    for (int index = 0;
+         index < orderedMappings.size();
+         ++index)
+    {
+        const int macroIndex =
+            orderedMappings.getReference(index).macroIndex;
+
+        macroSlots.add(macroIndex);
+
+        if (macroIndex == fromMacroIndex)
+            sourceIndex = index;
+
+        if (macroIndex == toMacroIndex)
+            destinationIndex = index;
+    }
+
+    if (sourceIndex < 0 || destinationIndex < 0)
+        return false;
+
+    storeMacroMappingsUndoState();
+
+    const auto movedMapping =
+        orderedMappings.getReference(sourceIndex);
+
+    orderedMappings.remove(sourceIndex);
+    orderedMappings.insert(destinationIndex, movedMapping);
+
+    for (int index = 0;
+         index < orderedMappings.size();
+         ++index)
+    {
+        orderedMappings.getReference(index).macroIndex =
+            macroSlots.getReference(index);
+    }
+
+    macroMappings = orderedMappings;
+    markDirty();
+    return true;
+}
+
 float PluginCore::getMacroCurrentValue(int macroIndex) const
 {
     if (macroIndex < 0

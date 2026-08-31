@@ -141,14 +141,14 @@ namespace
         topics.push_back({ "Routing View", makeBody("Routing View",
             "Routing View provides a compact overview of loaded tabs in their processing order.\n\n"
             "Use the routing toolbar button to switch between the normal plugin editor view and Routing View.\n\n"
-            "From Routing View you can select or close tabs, move them up or down, change their MIDI-channel assignments and pointer adjustment method, toggle bypass or solo, and open Plugin Diagnostics. Changes apply immediately.\n\n"
+            "From Routing View you can select or close tabs, drag them into a new order, change their MIDI-channel assignments and pointer adjustment method, toggle bypass or solo, and open Plugin Diagnostics. Changes apply immediately.\n\n"
             "Synth outputs join the current audio signal. Effects process the signal reaching their position, so changing the tab order changes which later effects process each synth.\n\n"
             "Routing View is also useful when a plugin GUI is very small or when you need to manage the session structure rather than edit the plugin itself." ) });
 
         topics.push_back({ "Macro Mapping", makeBody("Macro Mapping",
             "Macro Mapping lets PHI assign the last touched hosted-plugin parameter to macro controls.\n\n"
             "Touch or move a plugin parameter, then use the Map Last Touched control to assign it.\n\n"
-            "Use the Macro Mappings view to filter mappings, move them between Macro 001-128 slots, replace a target with the current last touched parameter, delete mappings, undo the last mapping edit, or clear all mappings.\n\n"
+            "Click the highlighted Tab, Plugin, or Parameter title in the Macro Mappings view to sort ascending, descending, then return to Macro order. Use the drag handle at the left of each row while Macro order is active to move mappings between Macro 001-128 slots. You can also filter mappings, replace a target with the current last touched parameter, delete mappings, undo the last mapping edit, or clear all mappings.\n\n"
             "In the PHI VST3 version, automate Macro 001-128 from the DAW to control the mapped hosted-plugin parameters. The additional MIDI CC parameter entries exposed by some hosts are not the macro controls.\n\n"
             "Mappings are saved with the PHI preset. Standalone PHI has no DAW automation source, although the mappings remain part of a preset that can also be loaded in PHI VST3." ) });
 

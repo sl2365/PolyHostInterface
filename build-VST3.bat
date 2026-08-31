@@ -7,7 +7,7 @@
 ::
 :: Layout expected inside the project folder:
 ::
-::   tools\cmake\bin\cmake.exe   <- portable CMake (no installer)
+::   tools\cmake\_4.4.2\bin\cmake.exe   <- portable CMake (no installer)
 ::   tools\vstsdk2.4\            <- (optional) VST2 SDK
 ::     pluginterfaces\vst2.x\aeffect.h
 ::
@@ -15,7 +15,7 @@
 :: automatically -- no editing of CMakeLists.txt required.
 ::
 :: Requires:
-::   ..\_Tools\cmake\bin\cmake.exe
+::   ..\_Tools\cmake\_4.4.2\bin\cmake.exe
 ::   Visual Studio 2026 Build Tools
 ::   Desktop development with C++
 ::

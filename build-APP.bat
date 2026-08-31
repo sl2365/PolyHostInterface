@@ -9,7 +9,7 @@
 ::
 :: Layout expected:
 ::
-::   ..\_Tools\cmake\bin\cmake.exe   <- portable CMake (no installer)
+::   ..\_Tools\cmake\_4.4.2\bin\cmake.exe   <- portable CMake (no installer)
 ::   ..\_Tools\vstsdk2.4\            <- (optional) VST2 SDK
 ::     pluginterfaces\vst2.x\aeffect.h
 ::
@@ -44,7 +44,7 @@ if not exist "%CMAKE%" (
     echo Download the Windows x64 ZIP from:
     echo https://cmake.org/download/
     echo Extract it so this file exists:
-    echo ..\_Tools\cmake\bin\cmake.exe
+    echo ..\_Tools\cmake\_4.4.2\bin\cmake.exe
     echo.
     pause
     exit /b 1

@@ -23,7 +23,7 @@ See the demos at the bottom of the page for a few gifs of the Pointer Control in
 
 | Feature | Status - Some features only apply to APP or VST3 |
 |---|---|
-| VST2 **32-bit** in 64-bit host | ⚠️ Needs plugin bridge — planned |
+| VST2 **32-bit** in 64-bit host | ⚠️ Needs plugin bridge — Decided NOT to implement this, too fragile |
 | VST2 x64 | ✅ Working - Requires Steinberg VST2 SDK to build — see below |
 | VST3 x64 | ✅ Working - Full support for Shell VST's|
 | CLAP x64 | ⚠️ Once JUCE natively supports CLAP, then it will be added to PHI |
