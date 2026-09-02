@@ -5,6 +5,9 @@ if errorlevel 1 exit /b 1
 call build-APP.bat
 if errorlevel 1 exit /b 1
 
+call build-APP-32.bat
+if errorlevel 1 exit /b 1
+
 echo.
 echo ============================================================
 echo Both builds completed successfully.

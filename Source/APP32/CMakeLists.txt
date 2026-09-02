@@ -1,0 +1,187 @@
+cmake_minimum_required(VERSION 3.22)
+
+# The isolated PHI32 app compiles the existing VST3 source directly.
+# No existing PHI64 source or build configuration is modified.
+set(PHI_SHARED_SOURCE_DIR "${CMAKE_CURRENT_LIST_DIR}/../VST3")
+
+
+# Keep the standalone version number matched to Source/VST3/CMakeLists.txt.
+file(STRINGS
+    "${PHI_SHARED_SOURCE_DIR}/CMakeLists.txt"
+    POLYHOST_VERSION_LINE
+    REGEX "^[ \t]*set\\(POLYHOST_VERSION[ \t]+\"[0-9]+\\.[0-9]+\\.[0-9]+\"\\)"
+    LIMIT_COUNT 1
+)
+
+string(REGEX MATCH
+    "[0-9]+\\.[0-9]+\\.[0-9]+"
+    POLYHOST_VERSION
+    "${POLYHOST_VERSION_LINE}"
+)
+
+if(POLYHOST_VERSION STREQUAL "")
+    message(FATAL_ERROR
+        "Could not read POLYHOST_VERSION from ${PHI_SHARED_SOURCE_DIR}/CMakeLists.txt")
+endif()
+
+project(PolyHostInterface32Standalone VERSION ${POLYHOST_VERSION} LANGUAGES C CXX)
+
+if(NOT CMAKE_SIZEOF_VOID_P EQUAL 4)
+    message(FATAL_ERROR
+        "PHI32 requires a 32-bit generator such as -A Win32")
+endif()
+
+set(CMAKE_MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
+set(CMAKE_CXX_STANDARD 17)
+set(CMAKE_CXX_STANDARD_REQUIRED ON)
+
+set(SHARED_TOOLS_DIR "${CMAKE_SOURCE_DIR}/../../../_Tools")
+set(JUCE_SHARED_PATH "${SHARED_TOOLS_DIR}/JUCE/_8.0.15")
+set(VST2_SDK_PATH "${SHARED_TOOLS_DIR}/vstsdk2.4")
+
+if(NOT EXISTS "${JUCE_SHARED_PATH}/CMakeLists.txt")
+    message(FATAL_ERROR "JUCE was not found at ${JUCE_SHARED_PATH}")
+endif()
+
+add_subdirectory("${JUCE_SHARED_PATH}" "${CMAKE_BINARY_DIR}/JUCE")
+
+# PHI32 is specifically a VST2.4 comparison host, so the SDK is required.
+if(EXISTS "${VST2_SDK_PATH}/pluginterfaces/vst2.x/aeffect.h")
+    message(STATUS "VST2 SDK found at ${VST2_SDK_PATH} -- VST2 hosting ENABLED")
+    set(VST2_ENABLED 1)
+else()
+    message(FATAL_ERROR
+        "PHI32 requires the VST2 SDK at ${VST2_SDK_PATH}")
+endif()
+
+# This creates JUCE's standalone wrapper around the existing
+# PolyHostPluginProcessor/createPluginFilter() implementation.
+juce_add_plugin(PolyHost32
+    COMPANY_NAME "PolyHost Project"
+    BUNDLE_ID "com.PolyHostInterface32.app"
+    IS_SYNTH FALSE
+    NEEDS_MIDI_INPUT TRUE
+    NEEDS_MIDI_OUTPUT FALSE
+    IS_MIDI_EFFECT FALSE
+    EDITOR_WANTS_KEYBOARD_FOCUS FALSE
+    COPY_PLUGIN_AFTER_BUILD FALSE
+    PLUGIN_MANUFACTURER_CODE PlHd
+    PLUGIN_CODE Phpi
+    FORMATS Standalone
+    PRODUCT_NAME "PolyHostInterface32"
+)
+
+juce_generate_juce_header(PolyHost32)
+
+juce_add_binary_data(PolyHost32Assets
+    HEADER_NAME PolyHostAssets.h
+    NAMESPACE PolyHostAssets
+    SOURCES
+        "${CMAKE_CURRENT_LIST_DIR}/../app.png"
+)
+
+if(WIN32)
+    set(POLYHOST_ICON_RC "${CMAKE_CURRENT_BINARY_DIR}/PolyHostIcon.rc")
+
+    file(WRITE "${POLYHOST_ICON_RC}"
+        "1 ICON \"${CMAKE_CURRENT_LIST_DIR}/../app.ico\"\n"
+    )
+
+    target_sources(PolyHost32_Standalone PRIVATE
+        "${POLYHOST_ICON_RC}"
+    )
+endif()
+
+target_sources(PolyHost32 PRIVATE
+    "${CMAKE_CURRENT_LIST_DIR}/../APP/StandaloneApplication.cpp"
+    "${PHI_SHARED_SOURCE_DIR}/AppSettings.cpp"
+    "${PHI_SHARED_SOURCE_DIR}/AppSettings.h"
+    "${PHI_SHARED_SOURCE_DIR}/PluginProcessor.cpp"
+    "${PHI_SHARED_SOURCE_DIR}/PluginProcessor.h"
+    "${PHI_SHARED_SOURCE_DIR}/PluginEditor.cpp"
+    "${PHI_SHARED_SOURCE_DIR}/PluginEditor.h"
+    "${PHI_SHARED_SOURCE_DIR}/MainView.cpp"
+    "${PHI_SHARED_SOURCE_DIR}/MainView.h"
+    "${PHI_SHARED_SOURCE_DIR}/Instructions.cpp"
+    "${PHI_SHARED_SOURCE_DIR}/Instructions.h"
+    "${PHI_SHARED_SOURCE_DIR}/PluginCore.cpp"
+    "${PHI_SHARED_SOURCE_DIR}/PluginCore.h"
+    "${PHI_SHARED_SOURCE_DIR}/TabModel.cpp"
+    "${PHI_SHARED_SOURCE_DIR}/TabModel.h"
+    "${PHI_SHARED_SOURCE_DIR}/SlotModel.cpp"
+    "${PHI_SHARED_SOURCE_DIR}/SlotModel.h"
+    "${PHI_SHARED_SOURCE_DIR}/SessionManager.cpp"
+    "${PHI_SHARED_SOURCE_DIR}/SessionManager.h"
+    "${PHI_SHARED_SOURCE_DIR}/ButtonStyling.cpp"
+    "${PHI_SHARED_SOURCE_DIR}/ButtonStyling.h"
+    "${PHI_SHARED_SOURCE_DIR}/PointerControl.cpp"
+    "${PHI_SHARED_SOURCE_DIR}/PointerControl.h"
+    "${PHI_SHARED_SOURCE_DIR}/PointerSettingsDialogue.cpp"
+    "${PHI_SHARED_SOURCE_DIR}/PointerSettingsDialogue.h"
+    "${PHI_SHARED_SOURCE_DIR}/RoutingView.cpp"
+    "${PHI_SHARED_SOURCE_DIR}/RoutingView.h"
+    "${PHI_SHARED_SOURCE_DIR}/MacroMappingsView.cpp"
+    "${PHI_SHARED_SOURCE_DIR}/MacroMappingsView.h"
+    "${PHI_SHARED_SOURCE_DIR}/AudioRecordingController.cpp"
+    "${PHI_SHARED_SOURCE_DIR}/AudioRecordingController.h"
+    "${PHI_SHARED_SOURCE_DIR}/MidiRecordingController.cpp"
+    "${PHI_SHARED_SOURCE_DIR}/MidiRecordingController.h"
+    "${PHI_SHARED_SOURCE_DIR}/RecordingView.cpp"
+    "${PHI_SHARED_SOURCE_DIR}/RecordingView.h"
+    "${PHI_SHARED_SOURCE_DIR}/DebugLog.cpp"
+    "${PHI_SHARED_SOURCE_DIR}/DebugLog.h"
+)
+
+target_include_directories(PolyHost32 PRIVATE
+    "${PHI_SHARED_SOURCE_DIR}"
+)
+
+target_compile_definitions(PolyHost32
+    PUBLIC
+        JUCE_USE_CUSTOM_PLUGIN_STANDALONE_APP=1
+
+    PRIVATE
+        POLYHOST_VERSION_STRING="${POLYHOST_VERSION}"
+        POLYHOST_STANDALONE_BUILD=1
+        POLYHOST_VST3_BUILD=0
+        POLYHOST_32BIT_EDITION=1
+
+        JUCE_WEB_BROWSER=0
+        JUCE_USE_CURL=0
+        JUCE_MODAL_LOOPS_PERMITTED=1
+        JUCE_VST3_CAN_REPLACE_VST2=0
+
+        JUCE_PLUGINHOST_VST3=1
+        JUCE_PLUGINHOST_AU=0
+        JUCE_PLUGINHOST_LV2=0
+
+        $<$<BOOL:${VST2_ENABLED}>:JUCE_PLUGINHOST_VST=1>
+        $<$<BOOL:${VST2_ENABLED}>:VST2_SDK_ROOT="${VST2_SDK_PATH}">
+)
+
+if(VST2_ENABLED)
+    target_include_directories(PolyHost32 PRIVATE "${VST2_SDK_PATH}")
+endif()
+
+if(MSVC)
+    target_link_options(PolyHost32_Standalone PRIVATE "/DYNAMICBASE:NO")
+endif()
+
+target_link_libraries(PolyHost32
+    PRIVATE
+        PolyHost32Assets
+        juce::juce_audio_basics
+        juce::juce_audio_devices
+        juce::juce_audio_formats
+        juce::juce_audio_processors
+        juce::juce_audio_utils
+        juce::juce_core
+        juce::juce_data_structures
+        juce::juce_events
+        juce::juce_graphics
+        juce::juce_gui_basics
+        juce::juce_gui_extra
+    PUBLIC
+        juce::juce_recommended_config_flags
+        juce::juce_recommended_warning_flags
+)

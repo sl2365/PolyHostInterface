@@ -1,7 +1,7 @@
 cmake_minimum_required(VERSION 3.22)
 
 # ── VST3 Plugin Version ────────────────────────────────────────────────────────
-set(POLYHOST_VERSION "2.5.29")
+set(POLYHOST_VERSION "2.5.30")
 
 project(PolyHostInterface VERSION ${POLYHOST_VERSION} LANGUAGES C CXX)
 

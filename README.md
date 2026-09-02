@@ -23,7 +23,7 @@ See the demos at the bottom of the page for a few gifs of the Pointer Control in
 
 | Feature | Status - Some features only apply to APP or VST3 |
 |---|---|
-| VST2 **32-bit** in 64-bit host | ⚠️ Needs plugin bridge — Decided NOT to implement this, too fragile |
+| VST2/3 x32 | ✅ Working - Bridging proved far too problematic. Added a standalone that has 32bit plugin support. Please note that each needs a separate installation location due to Presets loading incompatible plugins. There will NOT be a PHI32 VST3 version, unless I get enough request for it. |
 | VST2 x64 | ✅ Working - Requires Steinberg VST2 SDK to build — see below |
 | VST3 x64 | ✅ Working - Full support for Shell VST's|
 | CLAP x64 | ⚠️ Once JUCE natively supports CLAP, then it will be added to PHI |
@@ -301,7 +301,7 @@ One-time installs (unavoidable for C++)
 	You never need to open Visual Studio. It only provides the C++ compiler that CMake calls.
 	But this way allows you to use whatever editor you want.
 
-### 2. [Portable CMake](https://cmake.org/download/) (4.3.1)
+### 2. [Portable CMake](https://cmake.org/download/) (4.4.2)
 	Download the 'Windows x64 ZIP cmake-x.x.x-windows-x86_64.zip'.
 	Extract it so the structure is:
 	Projects\_Tools\cmake\_x.x.x\bin\cmake.exe
