@@ -50,6 +50,8 @@ private:
                           bool rowIsSelected) override;
     void listBoxItemDoubleClicked(int row,
                                   const juce::MouseEvent& event) override;
+    void listBoxItemClicked(int row,
+                            const juce::MouseEvent& event) override;
     void refreshRecordingStatus();
     void refreshRecordingFiles();
     void updateRecordingFileLabel(bool armed);
@@ -57,6 +59,11 @@ private:
     void updateMidiOptions();
     bool isAnyRecordingArmed() const;
     void openRecordingFile(const juce::File& file);
+    void showRecordingContextMenu(const juce::File& file);
+    void renameRecordingFile(const juce::File& file);
+    void deleteRecordingFile(const juce::File& file);
+    bool isManagedRecordingFile(const juce::File& file) const;
+    void selectRecordingFile(const juce::File& file);
     void openRecordingsFolder();
     static juce::String formatElapsedTime(juce::int64 recordedSamples,
                                           double sampleRate);

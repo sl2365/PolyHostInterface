@@ -15,6 +15,12 @@ namespace
         countInWaitNote
     };
 
+    enum RecordingContextMenuItemIds
+    {
+        recordingContextRename = 1,
+        recordingContextDelete
+    };
+
     int getCountInItemId(
         AppSettings::RecordingCountInMode mode)
     {
@@ -627,6 +633,278 @@ void RecordingView::listBoxItemDoubleClicked(
     openRecordingFile(recordingFiles.getReference(row));
 }
 
+void RecordingView::listBoxItemClicked(
+    int row,
+    const juce::MouseEvent& event)
+{
+    if (! event.mods.isPopupMenu()
+        || ! juce::isPositiveAndBelow(row, recordingFiles.size()))
+    {
+        return;
+    }
+
+    recordingsList.selectRow(row);
+    showRecordingContextMenu(recordingFiles.getReference(row));
+}
+
+void RecordingView::showRecordingContextMenu(
+    const juce::File& file)
+{
+    const bool canModify =
+        ! isAnyRecordingArmed()
+        && file.existsAsFile()
+        && isManagedRecordingFile(file);
+
+    juce::PopupMenu menu;
+    menu.addItem(recordingContextRename,
+                 "Rename...",
+                 canModify);
+    menu.addItem(recordingContextDelete,
+                 "Delete...",
+                 canModify);
+
+    const auto options =
+        juce::PopupMenu::Options().withMousePosition();
+
+    menu.showMenuAsync(
+        options,
+        [safeThis = juce::Component::SafePointer<RecordingView>(this),
+         file](int result)
+        {
+            if (safeThis == nullptr)
+                return;
+
+            if (result == recordingContextRename)
+                safeThis->renameRecordingFile(file);
+            else if (result == recordingContextDelete)
+                safeThis->deleteRecordingFile(file);
+        });
+}
+
+void RecordingView::renameRecordingFile(
+    const juce::File& file)
+{
+    const bool midiFile = file.hasFileExtension("mid");
+    const auto recordingType = midiFile ? "MIDI" : "Audio";
+
+    if (isAnyRecordingArmed())
+    {
+        juce::AlertWindow::showMessageBoxAsync(
+            juce::AlertWindow::InfoIcon,
+            "Recording Active",
+            "Cancel or stop recording before renaming a completed file.",
+            "OK",
+            this);
+        return;
+    }
+
+    if (! file.existsAsFile() || ! isManagedRecordingFile(file))
+    {
+        refreshRecordingFiles();
+        juce::AlertWindow::showMessageBoxAsync(
+            juce::AlertWindow::WarningIcon,
+            "Rename Recording Failed",
+            "The selected recording no longer exists or is outside PHI's "
+            "Recordings folder.",
+            "OK",
+            this);
+        return;
+    }
+
+    const auto extension = file.getFileExtension();
+
+    juce::AlertWindow namePrompt(
+        "Rename " + juce::String(recordingType) + " Recording",
+        "Enter a new filename. The " + extension
+            + " extension will be retained.",
+        juce::AlertWindow::QuestionIcon,
+        this);
+
+    namePrompt.addTextEditor("recordingName",
+                             file.getFileNameWithoutExtension(),
+                             "Filename:");
+
+    if (auto* nameEditor =
+            namePrompt.getTextEditor("recordingName"))
+    {
+        nameEditor->setSelectAllWhenFocused(true);
+
+        auto safeNameEditor =
+            juce::Component::SafePointer<juce::TextEditor>(nameEditor);
+
+        juce::MessageManager::callAsync(
+            [safeNameEditor]() mutable
+            {
+                if (safeNameEditor != nullptr)
+                {
+                    safeNameEditor->grabKeyboardFocus();
+                    safeNameEditor->selectAll();
+                }
+            });
+    }
+
+    namePrompt.addButton("Rename",
+                         1,
+                         juce::KeyPress(juce::KeyPress::returnKey));
+    namePrompt.addButton("Cancel",
+                         0,
+                         juce::KeyPress(juce::KeyPress::escapeKey));
+
+    if (namePrompt.runModalLoop() != 1)
+        return;
+
+    auto newBaseName =
+        namePrompt.getTextEditorContents("recordingName").trim();
+
+    if (newBaseName.endsWithIgnoreCase(extension))
+    {
+        newBaseName =
+            newBaseName.dropLastCharacters(extension.length()).trim();
+    }
+
+    const bool invalidName =
+        newBaseName.isEmpty()
+        || newBaseName == "."
+        || newBaseName == ".."
+        || newBaseName.containsAnyOf("\\/:*?\"<>|")
+        || newBaseName.endsWithChar('.');
+
+    if (invalidName)
+    {
+        juce::AlertWindow::showMessageBoxAsync(
+            juce::AlertWindow::WarningIcon,
+            "Invalid Recording Name",
+            "Enter a filename that does not contain any of these characters:\n\n"
+            "\\  /  :  *  ?  \"  <  >  |",
+            "OK",
+            this);
+        return;
+    }
+
+    const auto renamedFile =
+        file.getParentDirectory().getChildFile(newBaseName + extension);
+    const auto originalPath = file.getFullPathName();
+    const auto renamedPath = renamedFile.getFullPathName();
+
+    if (renamedPath == originalPath)
+        return;
+
+    const bool samePathIgnoringCase =
+        renamedPath.equalsIgnoreCase(originalPath);
+
+    if ((renamedFile.existsAsFile() || renamedFile.isDirectory())
+        && ! samePathIgnoringCase)
+    {
+        juce::AlertWindow::showMessageBoxAsync(
+            juce::AlertWindow::WarningIcon,
+            "Recording Already Exists",
+            "A recording named \"" + renamedFile.getFileName()
+                + "\" already exists.",
+            "OK",
+            this);
+        return;
+    }
+
+    if (! file.moveFileTo(renamedFile))
+    {
+        juce::AlertWindow::showMessageBoxAsync(
+            juce::AlertWindow::WarningIcon,
+            "Rename Recording Failed",
+            "PHI could not rename this recording:\n\n"
+                + file.getFullPathName(),
+            "OK",
+            this);
+        return;
+    }
+
+    refreshRecordingFiles();
+    selectRecordingFile(renamedFile);
+}
+
+void RecordingView::deleteRecordingFile(
+    const juce::File& file)
+{
+    const bool midiFile = file.hasFileExtension("mid");
+    const auto recordingType = midiFile ? "MIDI" : "Audio";
+
+    if (isAnyRecordingArmed())
+    {
+        juce::AlertWindow::showMessageBoxAsync(
+            juce::AlertWindow::InfoIcon,
+            "Recording Active",
+            "Cancel or stop recording before deleting a completed file.",
+            "OK",
+            this);
+        return;
+    }
+
+    if (! file.existsAsFile() || ! isManagedRecordingFile(file))
+    {
+        refreshRecordingFiles();
+        juce::AlertWindow::showMessageBoxAsync(
+            juce::AlertWindow::WarningIcon,
+            "Delete Recording Failed",
+            "The selected recording no longer exists or is outside PHI's "
+            "Recordings folder.",
+            "OK",
+            this);
+        return;
+    }
+
+    const bool confirmed = juce::AlertWindow::showOkCancelBox(
+        juce::AlertWindow::WarningIcon,
+        "Delete " + juce::String(recordingType) + " Recording",
+        "Move this recording to the Windows Recycle Bin?\n\n"
+            + file.getFileName(),
+        "Delete",
+        "Cancel",
+        this);
+
+    if (! confirmed)
+        return;
+
+    if (! file.moveToTrash())
+    {
+        juce::AlertWindow::showMessageBoxAsync(
+            juce::AlertWindow::WarningIcon,
+            "Delete Recording Failed",
+            "PHI could not move this recording to the Windows Recycle Bin:\n\n"
+                + file.getFullPathName(),
+            "OK",
+            this);
+        return;
+    }
+
+    refreshRecordingFiles();
+}
+
+bool RecordingView::isManagedRecordingFile(
+    const juce::File& file) const
+{
+    const auto recordingsDirectory =
+        AudioRecordingController::getRecordingsDirectory();
+
+    return (file.hasFileExtension("wav")
+            || file.hasFileExtension("mid"))
+           && file.getParentDirectory().getFullPathName()
+                  .equalsIgnoreCase(
+                      recordingsDirectory.getFullPathName());
+}
+
+void RecordingView::selectRecordingFile(
+    const juce::File& file)
+{
+    for (int index = 0; index < recordingFiles.size(); ++index)
+    {
+        if (recordingFiles.getReference(index).getFullPathName()
+                .equalsIgnoreCase(file.getFullPathName()))
+        {
+            recordingsList.selectRow(index);
+            return;
+        }
+    }
+}
+
 void RecordingView::refreshRecordingFiles()
 {
     const auto directory =
@@ -749,8 +1027,10 @@ void RecordingView::updateModePresentation()
 
     const auto fileDescription =
         midiMode
-            ? "Double-click a completed MIDI file to open it in the Windows default application."
-            : "Double-click a completed WAV file to open it in the Windows default player.";
+            ? "Double-click a completed MIDI file to open it in the Windows default application.\n"
+              "Right-click it to rename or delete it."
+            : "Double-click a completed WAV file to open it in the Windows default player.\n"
+              "Right-click it to rename or delete it.";
 
     recordingsLabel.setTooltip(fileDescription);
     recordingsList.setTooltip(fileDescription);

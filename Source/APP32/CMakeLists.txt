@@ -4,7 +4,6 @@ cmake_minimum_required(VERSION 3.22)
 # No existing PHI64 source or build configuration is modified.
 set(PHI_SHARED_SOURCE_DIR "${CMAKE_CURRENT_LIST_DIR}/../VST3")
 
-
 # Keep the standalone version number matched to Source/VST3/CMakeLists.txt.
 file(STRINGS
     "${PHI_SHARED_SOURCE_DIR}/CMakeLists.txt"
