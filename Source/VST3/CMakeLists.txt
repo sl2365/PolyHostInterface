@@ -1,7 +1,7 @@
 cmake_minimum_required(VERSION 3.22)
 
 # ── VST3 Plugin Version ────────────────────────────────────────────────────────
-set(POLYHOST_VERSION "2.5.33")
+set(POLYHOST_VERSION "2.5.36")
 
 project(PolyHostInterface VERSION ${POLYHOST_VERSION} LANGUAGES C CXX)
 
@@ -25,15 +25,15 @@ else()
 endif()
 
 juce_add_plugin(PolyHostPlugin
-    COMPANY_NAME "PolyHost Project"
-    BUNDLE_ID "com.PolyHostInterface.plugin"
+    COMPANY_NAME "sl23"
+    BUNDLE_ID "com.sl23.polyhostinterface"
     IS_SYNTH FALSE
     NEEDS_MIDI_INPUT TRUE
     NEEDS_MIDI_OUTPUT TRUE
     IS_MIDI_EFFECT FALSE
     EDITOR_WANTS_KEYBOARD_FOCUS FALSE
     COPY_PLUGIN_AFTER_BUILD FALSE
-    PLUGIN_MANUFACTURER_CODE PlHd
+    PLUGIN_MANUFACTURER_CODE Sl23
     PLUGIN_CODE Phpi
     FORMATS VST3
     VST3_CATEGORIES Fx

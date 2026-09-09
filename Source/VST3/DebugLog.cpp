@@ -11,7 +11,12 @@ juce::File DebugLog::getLogFile()
         .getChildFile("Settings");
 
     settingsDir.createDirectory();
+
+   #if defined(POLYHOST_32BIT_EDITION) && POLYHOST_32BIT_EDITION
+    return settingsDir.getChildFile("debug32.log");
+   #else
     return settingsDir.getChildFile("debug.log");
+   #endif
 }
 
 void DebugLog::setEnabled(bool shouldEnable)

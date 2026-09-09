@@ -52,7 +52,7 @@ namespace
             "                         |\n"
             "                    [Audio Out]  ->  Output meter\n\n"
             "_________________________________________________________________\n\n"
-            "PHI stores its presets as XML files in the Presets folder. External pointer maps are stored separately in the PluginMaps folder." ) });
+            "PHI stores its presets as XML files in its presets folder. External pointer maps are stored separately in the PointerMaps folder." ) });
 
         topics.push_back({ "Loading Plugins", makeBody("Loading Plugins",
             "To load a plugin into an empty tab, click the empty plugin area and select its .vst3 or .dll file. VST2 .dll loading is available only when PHI was built with the VST2 SDK.\n\n"
@@ -72,19 +72,19 @@ namespace
 
         topics.push_back({ "Presets", makeBody("Presets",
             "PHI presets save the current tab layout, loaded plugins, plugin states, MIDI assignments, routing-related tab state, selected external pointer maps, and macro mappings.\n\n"
-            "The Presets menu is rebuilt from the current contents of the Presets folder whenever it is opened. Preset subfolders appear as submenus, so presets can be organised into folders without losing direct menu access.\n\n"
+            "The Presets menu is rebuilt from the current contents of the active presets folder whenever it is opened. Preset subfolders appear as submenus, so presets can be organised into folders without losing direct menu access.\n\n"
             "Use File > Save Preset to save over the current preset.\n\n"
             "Use File > Save Preset As to save a new preset file.\n\n"
             "Use File > Load Preset to restore a saved PHI preset.\n\n"
-            "Use File > Recent Presets or the preset dropdown to reopen recently used presets. The dropdown contains New Preset followed by available recent presets; it is not a complete list of the Presets folder.\n\n"
+            "Use File > Recent Presets or the preset dropdown to reopen recently used presets. The dropdown contains New Preset followed by available recent presets; it is not a complete list of the active presets folder.\n\n"
             "Use File > Delete Current Preset to delete the preset currently associated with the session.\n\n"
             "Use File > Open Presets Folder to open the preset location in Explorer.\n\n"
-            "Use File > Presets Backup to create a ZIP backup of the Presets folder. The backup ZIP is saved directly into the Presets folder." ) });
+            "Use File > Presets Backup to create a ZIP backup of the active presets folder. The backup ZIP is saved directly into that folder." ) });
 
         topics.push_back({ "External Pointer Maps", makeBody("External Pointer Maps",
             "External pointer maps store pointer jump points and pointer free zones for a specific plugin GUI layout. They are useful for plugins with different skins, resizable GUIs, or alternate editor layouts.\n\n"
             "The pointer-map dropdown in the toolbar lists only maps that match the currently loaded plugin identity. The displayed names come from the map filenames without the .xml extension.\n\n"
-            "PHI searches the PluginMaps folder recursively, so users can organise maps into subfolders.\n\n"
+            "PHI searches the PointerMaps folder recursively, so users can organise maps into subfolders.\n\n"
             "If two matching maps have the same filename, PHI displays them as Name, Name (2), Name (3), and so on.\n\n"
             "The selected map name and relative path are saved into the PHI preset. On restore, PHI first tries the saved relative path, then falls back to the same filename if the map was moved." ) });
 

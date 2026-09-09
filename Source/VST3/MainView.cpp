@@ -87,7 +87,7 @@ namespace
             versionLabel.setColour(juce::Label::textColourId, juce::Colours::lightgrey);
             addAndMakeVisible(versionLabel);
 
-            infoLabel.setText("A lightweight tabbed plugin host for:\nVST2 and VST3 x64.\n\nCLAP 64 and VST2 32-bit bridging planned.\n\nBuilt with JUCE.\n\n- sl23 -",
+            infoLabel.setText("A lightweight tabbed plugin host for:\nVST2 and VST3 x64.\n\nCLAP support planned when fully supported by JUCE.\n\nBuilt with JUCE.\n\n- sl23 -",
                               juce::dontSendNotification);
             infoLabel.setJustificationType(juce::Justification::centred);
             infoLabel.setColour(juce::Label::textColourId, juce::Colours::lightgrey);

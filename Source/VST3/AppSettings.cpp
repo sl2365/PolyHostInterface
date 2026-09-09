@@ -53,7 +53,6 @@ static constexpr const char* kMidiRecordingModeSelected = "midiRecordingModeSele
 static constexpr const char* kRecordExternalMidiNotes = "recordExternalMidiNotes";
 static constexpr const char* kRecordExternalMidiControllers = "recordExternalMidiControllers";
 static constexpr const char* kRecordHostedMidiOutput = "recordHostedMidiOutput";
-static constexpr const char* kAudioDeviceState  = "audioDeviceState";
 static constexpr const char* kAutoSaveAfterPluginRepair     = "autoSaveAfterPluginRepair";
 static constexpr const char* kMidiAutoAssignMode            = "midiAutoAssignMode";
 static constexpr const char* kPluginScanFolders             = "PluginScanFolders";
@@ -69,8 +68,17 @@ static constexpr const char* kNameAttribute                 = "name";
 static constexpr const char* kDebugLoggingEnabled           = "debugLoggingEnabled";
 static constexpr const char* kAdvancedDebugLoggingEnabled   = "advancedDebugLoggingEnabled";
 static constexpr const char* kClearDebugLogOnStartup        = "clearDebugLogOnStartup";
-static constexpr auto kLastPresetPath       = "lastPresetPath";
-static constexpr auto kRecentPresets        = "recentPresets";
+#if defined(POLYHOST_32BIT_EDITION) && POLYHOST_32BIT_EDITION
+static constexpr auto kPresetsDirectoryName = "Presets32";
+static constexpr auto kAudioDeviceState      = "audioDeviceState32";
+static constexpr auto kLastPresetPath        = "lastPresetPath32";
+static constexpr auto kRecentPresets         = "recentPresets32";
+#else
+static constexpr auto kPresetsDirectoryName = "Presets";
+static constexpr auto kAudioDeviceState      = "audioDeviceState";
+static constexpr auto kLastPresetPath        = "lastPresetPath";
+static constexpr auto kRecentPresets         = "recentPresets";
+#endif
 static constexpr auto kWindowX              = "windowX";
 static constexpr auto kWindowY              = "windowY";
 static constexpr auto kRoutingWindowWidth   = "routingWindowWidth";
@@ -215,17 +223,9 @@ juce::File AppSettings::getSettingsFile()
 juce::File AppSettings::getPresetsDirectory()
 {
     auto presetsDir = juce::File::getSpecialLocation(juce::File::currentExecutableFile)
-                      .getParentDirectory().getChildFile("Presets");
+                      .getParentDirectory().getChildFile(kPresetsDirectoryName);
     presetsDir.createDirectory();
     return presetsDir;
-}
-
-juce::File AppSettings::getPluginMapsDirectory()
-{
-    auto pluginMapsDir = juce::File::getSpecialLocation(juce::File::currentExecutableFile)
-                         .getParentDirectory().getChildFile("PluginMaps");
-    pluginMapsDir.createDirectory();
-    return pluginMapsDir;
 }
 
 AppSettings::AppSettings() { xml = std::make_unique<juce::XmlElement>(kRootTag); load(); }
