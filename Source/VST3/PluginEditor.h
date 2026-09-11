@@ -27,7 +27,7 @@ private:
     static constexpr int minWidth = 500;
     static constexpr int minHeight = 300;
     static constexpr int maxWidth = 1600;
-    static constexpr int maxHeight = 1000;
+    static constexpr int maxHeight = 1120;
 
     PolyHostPluginProcessor& audioProcessor;
     MainView mainView;

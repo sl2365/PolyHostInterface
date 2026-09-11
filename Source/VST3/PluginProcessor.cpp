@@ -191,6 +191,12 @@ void PolyHostPluginProcessor::prepareToPlay(double sampleRate,
         false,
         std::memory_order_relaxed);
 
+    midiKeyboardState.reset();
+    pendingMidiKeyboardPitchBend.store(-1, std::memory_order_relaxed);
+    lastQueuedMidiKeyboardPitchBend.store(8192, std::memory_order_relaxed);
+    pendingMidiKeyboardPitchBendRange.store(false, std::memory_order_relaxed);
+    pendingMidiKeyboardModulation.store(-1, std::memory_order_relaxed);
+
     core.prepareToPlay(sampleRate, samplesPerBlock);
 
     if (standaloneAudioExtension != nullptr)
@@ -270,6 +276,75 @@ void PolyHostPluginProcessor::processBlock(
     diagnosticLastProcessActivityMs.store(
         juce::Time::getMillisecondCounter(),
         std::memory_order_relaxed);
+
+    if (buffer.getNumSamples() > 0)
+    {
+        midiKeyboardState.processNextMidiBuffer(
+            midiMessages,
+            0,
+            buffer.getNumSamples(),
+            true);
+
+        if (pendingMidiKeyboardPitchBendRange.exchange(
+                false,
+                std::memory_order_acq_rel))
+        {
+            const int semitones =
+                juce::jlimit(
+                    12,
+                    48,
+                    midiKeyboardPitchBendRangeSemitones.load(
+                        std::memory_order_acquire));
+
+            midiMessages.addEvent(
+                juce::MidiMessage::controllerEvent(1, 101, 0),
+                0);
+            midiMessages.addEvent(
+                juce::MidiMessage::controllerEvent(1, 100, 0),
+                0);
+            midiMessages.addEvent(
+                juce::MidiMessage::controllerEvent(1, 6, semitones),
+                0);
+            midiMessages.addEvent(
+                juce::MidiMessage::controllerEvent(1, 38, 0),
+                0);
+            midiMessages.addEvent(
+                juce::MidiMessage::controllerEvent(1, 101, 127),
+                0);
+            midiMessages.addEvent(
+                juce::MidiMessage::controllerEvent(1, 100, 127),
+                0);
+        }
+
+        const int pitchBendValue =
+            pendingMidiKeyboardPitchBend.exchange(
+                -1,
+                std::memory_order_acq_rel);
+
+        if (pitchBendValue >= 0)
+        {
+            midiMessages.addEvent(
+                juce::MidiMessage::pitchWheel(
+                    1,
+                    juce::jlimit(0, 16383, pitchBendValue)),
+                0);
+        }
+
+        const int modulationValue =
+            pendingMidiKeyboardModulation.exchange(
+                -1,
+                std::memory_order_acq_rel);
+
+        if (modulationValue >= 0)
+        {
+            midiMessages.addEvent(
+                juce::MidiMessage::controllerEvent(
+                    1,
+                    1,
+                    juce::jlimit(0, 127, modulationValue)),
+                0);
+        }
+    }
 
     diagnosticLastInputMidiEventCount.store(
         midiMessages.getNumEvents(),
@@ -832,6 +907,53 @@ AudioRecordingController& PolyHostPluginProcessor::getAudioRecordingController()
 MidiRecordingController& PolyHostPluginProcessor::getMidiRecordingController()
 {
     return midiRecordingController;
+}
+
+juce::MidiKeyboardState& PolyHostPluginProcessor::getMidiKeyboardState() noexcept
+{
+    return midiKeyboardState;
+}
+
+void PolyHostPluginProcessor::queueMidiKeyboardPitchBend(int value) noexcept
+{
+    const int clampedValue =
+        juce::jlimit(0, 16383, value);
+
+    const int previousValue =
+        lastQueuedMidiKeyboardPitchBend.exchange(
+            clampedValue,
+            std::memory_order_acq_rel);
+
+    if (clampedValue != 8192
+        && previousValue == 8192)
+    {
+        pendingMidiKeyboardPitchBendRange.store(
+            true,
+            std::memory_order_release);
+    }
+
+    pendingMidiKeyboardPitchBend.store(
+        clampedValue,
+        std::memory_order_release);
+}
+
+void PolyHostPluginProcessor::setMidiKeyboardPitchBendRangeOctaves(
+    int octaves) noexcept
+{
+    midiKeyboardPitchBendRangeSemitones.store(
+        juce::jlimit(1, 4, octaves) * 12,
+        std::memory_order_release);
+
+    pendingMidiKeyboardPitchBendRange.store(
+        true,
+        std::memory_order_release);
+}
+
+void PolyHostPluginProcessor::queueMidiKeyboardModulation(int value) noexcept
+{
+    pendingMidiKeyboardModulation.store(
+        juce::jlimit(0, 127, value),
+        std::memory_order_release);
 }
 
 void PolyHostPluginProcessor::

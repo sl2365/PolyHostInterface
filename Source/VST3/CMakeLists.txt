@@ -1,7 +1,7 @@
 cmake_minimum_required(VERSION 3.22)
 
 # ── VST3 Plugin Version ────────────────────────────────────────────────────────
-set(POLYHOST_VERSION "2.5.36")
+set(POLYHOST_VERSION "2.5.44")
 
 project(PolyHostInterface VERSION ${POLYHOST_VERSION} LANGUAGES C CXX)
 
@@ -42,6 +42,13 @@ juce_add_plugin(PolyHostPlugin
 
 juce_generate_juce_header(PolyHostPlugin)
 
+juce_add_binary_data(PolyHostAssets
+    HEADER_NAME PolyHostAssets.h
+    NAMESPACE PolyHostAssets
+    SOURCES
+        "${CMAKE_CURRENT_LIST_DIR}/../FluentSystemIcons-Regular.ttf"
+)
+
 target_sources(PolyHostPlugin PRIVATE
     AppSettings.cpp
     AppSettings.h
@@ -51,6 +58,8 @@ target_sources(PolyHostPlugin PRIVATE
     PluginEditor.h
     MainView.cpp
     MainView.h
+    MidiKeyboardPanel.cpp
+    MidiKeyboardPanel.h
     Instructions.cpp
     Instructions.h
     PluginCore.cpp
@@ -112,6 +121,7 @@ endif()
 
 target_link_libraries(PolyHostPlugin
     PRIVATE
+        PolyHostAssets
         juce::juce_audio_basics
         juce::juce_audio_devices
         juce::juce_audio_formats

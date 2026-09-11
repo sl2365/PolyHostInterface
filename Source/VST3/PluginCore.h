@@ -44,6 +44,8 @@ public:
 
     bool isTabBypassed(int tabIndex) const;
     void setTabBypassed(int tabIndex, bool shouldBeBypassed);
+    float getTabOutputGainDb(int tabIndex) const;
+    void setTabOutputGainDb(int tabIndex, float gainDb);
     bool canMoveTabUp(int tabIndex) const;
     bool canMoveTabDown(int tabIndex) const;
     bool moveTab(int fromIndex, int toIndex);
@@ -234,6 +236,9 @@ private:
         int audioScratchSampleCapacity = 512;
         juce::String tabName;
         bool bypassed = false;
+        std::atomic<float> outputGainDb { 0.0f };
+        juce::SmoothedValue<float,
+                            juce::ValueSmoothingTypes::Linear> outputGainLinear;
         int pointerAdjustMethodOverride = 0;
         juce::StringArray midiAssignedDeviceIdentifiers;
         juce::String selectedGlobalPointerMapRelativePath;

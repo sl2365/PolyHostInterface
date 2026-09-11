@@ -51,6 +51,7 @@ std::unique_ptr<juce::XmlElement> SessionManager::createXmlFromSessionData(const
         tabXml->setAttribute("type", slotTypeToString(tab.type));
         tabXml->setAttribute("tabName", tab.tabName);
         tabXml->setAttribute("bypassed", tab.bypassed);
+        tabXml->setAttribute("outputGainDb", tab.outputGainDb);
         tabXml->setAttribute("hasSavedWindowBounds", tab.hasSavedWindowBounds);
         tabXml->setAttribute("savedWindowWidth", tab.savedWindowWidth);
         tabXml->setAttribute("savedWindowHeight", tab.savedWindowHeight);
@@ -138,6 +139,9 @@ bool SessionManager::restoreSessionDataFromXml(const juce::XmlElement& xml,
         tab.type = slotTypeFromString(tabXml->getStringAttribute("type", "Empty"));
         tab.tabName = tabXml->getStringAttribute("tabName", "Empty");
         tab.bypassed = tabXml->getBoolAttribute("bypassed", false);
+        tab.outputGainDb = juce::jlimit(-12.0f,
+                                        12.0f,
+                                        (float) tabXml->getDoubleAttribute("outputGainDb", 0.0));
         tab.hasSavedWindowBounds = tabXml->getBoolAttribute("hasSavedWindowBounds", false);
         tab.savedWindowWidth = tabXml->getIntAttribute("savedWindowWidth", 0);
         tab.savedWindowHeight = tabXml->getIntAttribute("savedWindowHeight", 0);

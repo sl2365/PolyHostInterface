@@ -118,6 +118,13 @@ if errorlevel 1 (
     exit /b 1
 )
 
+copy /Y "%ROOT%Source\FluentSystemIcons-LICENSE.txt" "%DIST_DIR%\FluentSystemIcons-LICENSE.txt" >nul
+if errorlevel 1 (
+    echo ERROR: Failed to copy the Fluent System Icons licence to dist.
+    pause
+    exit /b 1
+)
+
 if not exist "%FINAL_PLUGIN%" (
     echo ERROR: Final VST3 binary was not copied successfully:
     echo %FINAL_PLUGIN%

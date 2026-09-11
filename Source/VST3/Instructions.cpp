@@ -73,6 +73,7 @@ namespace
         topics.push_back({ "Presets", makeBody("Presets",
             "PHI presets save the current tab layout, loaded plugins, plugin states, MIDI assignments, routing-related tab state, selected external pointer maps, and macro mappings.\n\n"
             "The Presets menu is rebuilt from the current contents of the active presets folder whenever it is opened. Preset subfolders appear as submenus, so presets can be organised into folders without losing direct menu access.\n\n"
+            "Use Presets > New Preset to clear the current session and begin an untitled preset.\n\n"
             "Use File > Save Preset to save over the current preset.\n\n"
             "Use File > Save Preset As to save a new preset file.\n\n"
             "Use File > Load Preset to restore a saved PHI preset.\n\n"
@@ -142,8 +143,17 @@ namespace
             "Routing View provides a compact overview of loaded tabs in their processing order.\n\n"
             "Use the routing toolbar button to switch between the normal plugin editor view and Routing View.\n\n"
             "From Routing View you can select or close tabs, drag them into a new order, change their MIDI-channel assignments and pointer adjustment method, toggle bypass or solo, and open Plugin Diagnostics. Changes apply immediately.\n\n"
+            "Each tab has a compact Volume knob from -12 dB to +12 dB. Its value is shown beneath the knob without an editable text box. It adjusts that tab's processed output before it reaches later effects or the final PHI output. Double-click the knob to reset it to 0. Tab volume is saved in PHI presets.\n\n"
+            "The Adj Method knob has three fixed positions: Scroll at the left, Global in the centre and Drag at the right. Double-click it to reset to Global. The selected setting is shown beneath the knob.\n\n"
             "Synth outputs join the current audio signal. Effects process the signal reaching their position, so changing the tab order changes which later effects process each synth.\n\n"
             "Routing View is also useful when a plugin GUI is very small or when you need to manage the session structure rather than edit the plugin itself." ) });
+
+        topics.push_back({ "MIDI Keyboard", makeBody("MIDI Keyboard",
+            "Options > Keyboard > Show displays or hides PHI's MIDI keyboard beneath the hosted plugin.\n\n"
+            "Options > Keyboard > Width selects fixed key width or a fixed display of 3 to 8 octaves.\n\n"
+            "Options > Keyboard > Bend Range selects 1 to 4 octaves. PHI sends the standard MIDI pitch-bend-sensitivity RPN on channel 1 at the start of a pitch-wheel gesture. A hosted plugin must support both Pitch Bend and that RPN for the selected range to take effect.\n\n"
+            "The Pitch Bend wheel returns to its centre when released. The Mod wheel sends MIDI CC1 and remains at its selected position. A hosted plugin must respond to CC1 for modulation to be heard.\n\n"
+            "The keyboard, Pitch Bend wheel and Mod wheel use MIDI channel 1 and follow the normal Routing View MIDI-channel assignments." ) });
 
         topics.push_back({ "Macro Mapping", makeBody("Macro Mapping",
             "Macro Mapping lets PHI assign the last touched hosted-plugin parameter to macro controls.\n\n"
@@ -222,7 +232,7 @@ namespace
 
         topics.push_back({ "Settings / Debug", makeBody("Settings / Debug",
             "Options > Pointer Control Settings opens pointer-specific configuration.\n\n"
-            "In standalone PHI, Options > Audio Settings configures the audio driver, input and output devices, sample rate, buffer size and active channels. Options > Recording opens or closes Recording View. These two items are not present in PHI VST3.\n\n"
+            "In standalone PHI, Options > Audio Settings configures the audio driver, including ASIO, input and output devices, sample rate, buffer size and active channels. An installed ASIO driver can be selected from the Audio device type list. Options > Recording opens or closes Recording View. These two items are not present in PHI VST3.\n\n"
             "Options > Plugin Repairs configures plugin scan folders and whether repaired presets are saved automatically. Use File > Locate Missing Plugins to perform the actual missing-plugin repair.\n\n"
             "Options > Debug contains debug logging controls. Debug logging can be useful when diagnosing plugin loading, preset restore, pointer-map matching, MIDI routing, or UI behaviour.\n\n"
             "Enable Advanced Debug Logging adds more detailed messages and is available only while normal debug logging is enabled. Clear Debug Log Now clears the current debug log. Clear Debug Log On Startup resets it automatically when PHI starts." ) });

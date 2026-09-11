@@ -64,6 +64,9 @@ static constexpr const char* kIdentifierAttribute           = "identifier";
 static constexpr const char* kStandaloneMidiOutputDeviceIdentifier = "standaloneMidiOutputDeviceIdentifier";
 static constexpr const char* kStandaloneSendGeneratedMidiToOutput = "standaloneSendGeneratedMidiToOutput";
 static constexpr const char* kStandaloneMidiThruEnabled = "standaloneMidiThruEnabled";
+static constexpr const char* kMidiKeyboardVisible        = "midiKeyboardVisible";
+static constexpr const char* kMidiKeyboardWidthMode      = "midiKeyboardWidthMode";
+static constexpr const char* kMidiKeyboardBendRangeOctaves = "midiKeyboardBendRangeOctaves";
 static constexpr const char* kNameAttribute                 = "name";
 static constexpr const char* kDebugLoggingEnabled           = "debugLoggingEnabled";
 static constexpr const char* kAdvancedDebugLoggingEnabled   = "advancedDebugLoggingEnabled";
@@ -700,6 +703,50 @@ void AppSettings::setStandaloneMidiThruEnabled(bool shouldEnable)
 {
     xml->setAttribute(kStandaloneMidiThruEnabled,
                       shouldEnable);
+    save();
+}
+
+bool AppSettings::getMidiKeyboardVisible() const
+{
+    return xml->getBoolAttribute(kMidiKeyboardVisible, true);
+}
+
+void AppSettings::setMidiKeyboardVisible(bool shouldShow)
+{
+    xml->setAttribute(kMidiKeyboardVisible, shouldShow);
+    save();
+}
+
+int AppSettings::getMidiKeyboardWidthMode() const
+{
+    const int storedMode = xml->getIntAttribute(kMidiKeyboardWidthMode, 5);
+
+    if (storedMode == 0 || (storedMode >= 3 && storedMode <= 8))
+        return storedMode;
+
+    return 5;
+}
+
+void AppSettings::setMidiKeyboardWidthMode(int widthMode)
+{
+    if (widthMode != 0 && (widthMode < 3 || widthMode > 8))
+        widthMode = 5;
+
+    xml->setAttribute(kMidiKeyboardWidthMode, widthMode);
+    save();
+}
+
+int AppSettings::getMidiKeyboardBendRangeOctaves() const
+{
+    return juce::jlimit(1,
+                        4,
+                        xml->getIntAttribute(kMidiKeyboardBendRangeOctaves, 1));
+}
+
+void AppSettings::setMidiKeyboardBendRangeOctaves(int octaves)
+{
+    xml->setAttribute(kMidiKeyboardBendRangeOctaves,
+                      juce::jlimit(1, 4, octaves));
     save();
 }
 

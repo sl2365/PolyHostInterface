@@ -37,6 +37,7 @@ namespace ButtonStyling
         juce::String mapLastTouched();
         juce::String mappings();
         juce::String replace();
+        juce::String record();
     }
 
     namespace Tooltips

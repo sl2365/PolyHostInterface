@@ -110,6 +110,12 @@ if exist "%BUILD_DIR%\PolyHost_artefacts\Release\Standalone\%EXENAME%" (
         pause
         exit /b 1
     )
+    copy /Y "%ROOT%Source\FluentSystemIcons-LICENSE.txt" "%DIST_DIR%\FluentSystemIcons-LICENSE.txt" >nul
+    if errorlevel 1 (
+        echo ERROR: Failed to copy the Fluent System Icons licence to dist.
+        pause
+        exit /b 1
+    )
     echo Copied EXE to:
     echo %FINAL_EXE%
 ) else (

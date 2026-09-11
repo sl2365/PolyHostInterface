@@ -11,6 +11,7 @@
 #include "PointerControl.h"
 #include "PluginCore.h"
 #include "MidiMonitorWindow.h"
+#include "MidiKeyboardPanel.h"
 
 class PolyHostPluginProcessor;
 
@@ -551,7 +552,12 @@ private:
         commandRecording = 2605,
 
         commandPresetLoadReport = 2700,
-        commandInstructions = 2701
+        commandInstructions = 2701,
+
+        commandMidiKeyboardShow = 2800,
+        commandMidiKeyboardFixedKeyWidth = 2801,
+        commandMidiKeyboardOctavesBase = 2810,
+        commandMidiKeyboardBendRangeBase = 2820
     };
 
     juce::StringArray getMenuBarNames() override;
@@ -621,6 +627,8 @@ private:
     void createNewPreset(bool scheduleDeferredUiReset = true);
     void reloadCurrentPreset();
     void sendMidiPanic();
+    void setMidiKeyboardWidthMode(int widthMode);
+    void setMidiKeyboardBendRangeOctaves(int octaves);
 
     bool promptToSaveIfNeeded();
     void loadRecentPreset(int menuItemID);
@@ -691,6 +699,7 @@ private:
     RoutingView routingView;
     MacroMappingsView macroMappingsView;
     RecordingView recordingView;
+    MidiKeyboardPanel midiKeyboardPanel;
     juce::Component::SafePointer<juce::CallOutBox> midiAssignmentsCallout;
     juce::Component::SafePointer<juce::Component> midiAssignmentsAnchor;
     int midiAssignmentsTabIndex = -1;

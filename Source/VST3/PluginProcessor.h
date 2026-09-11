@@ -87,6 +87,10 @@ public:
     PluginCore& getCore();
     AudioRecordingController& getAudioRecordingController();
     MidiRecordingController& getMidiRecordingController();
+    juce::MidiKeyboardState& getMidiKeyboardState() noexcept;
+    void queueMidiKeyboardPitchBend(int value) noexcept;
+    void setMidiKeyboardPitchBendRangeOctaves(int octaves) noexcept;
+    void queueMidiKeyboardModulation(int value) noexcept;
     void sampleSuspensionDiagnostics();
     juce::String buildProcessorDiagnosticsText() const;
 
@@ -142,9 +146,15 @@ private:
     AudioRecordingController audioRecordingController;
     MidiRecordingController midiRecordingController;
     PluginCore core;
+    juce::MidiKeyboardState midiKeyboardState;
     std::vector<MacroParameter*> macroParameters;
     juce::MidiBuffer processorMidiInputScratchBuffer;
     juce::MidiBuffer midiOutputResetScratchBuffer;
+    std::atomic<int> pendingMidiKeyboardPitchBend { -1 };
+    std::atomic<int> midiKeyboardPitchBendRangeSemitones { 12 };
+    std::atomic<int> lastQueuedMidiKeyboardPitchBend { 8192 };
+    std::atomic<bool> pendingMidiKeyboardPitchBendRange { false };
+    std::atomic<int> pendingMidiKeyboardModulation { -1 };
     std::atomic<bool> sendGeneratedMidiToHost { true };
     std::atomic<bool> midiThruEnabled { false };
     std::atomic<bool> pendingMidiOutputReset { false };

@@ -1234,7 +1234,7 @@ namespace
                 g.drawRoundedRectangle(bounds.reduced(0.5f), 6.0f, 1.0f);
 
                 g.setColour(juce::Colours::white);
-                g.setFont(juce::Font(juce::FontOptions("Segoe Fluent Icons", 14.0f, juce::Font::plain)));
+                g.setFont(ButtonStyling::iconFont(14.0f));
 
                 if (label.isEmpty())
                 {
@@ -1831,7 +1831,8 @@ MainView::MainView(PolyHostPluginProcessor& processorIn,
       toolbarFactory(*this),
       recordingView(processorIn.getAudioRecordingController(),
                     processorIn.getMidiRecordingController(),
-                    appSettings)
+                    appSettings),
+      midiKeyboardPanel(processorIn.getMidiKeyboardState())
 {
     // Diagnostic build: basic logging is intentionally always enabled so a
     // plug-in load that terminates PHI leaves a useful final phase marker.
@@ -1947,6 +1948,19 @@ MainView::MainView(PolyHostPluginProcessor& processorIn,
     recordingView.setVisible(false);
     recordingView.onCloseView = [this] { hideRecordingView(); };
     recordingView.onStatusChanged = [this] { repaint(); };
+
+    midiKeyboardPanel.setWidthMode(appSettings.getMidiKeyboardWidthMode());
+    processor.setMidiKeyboardPitchBendRangeOctaves(
+        appSettings.getMidiKeyboardBendRangeOctaves());
+    midiKeyboardPanel.onPitchBendChanged = [this](int value)
+    {
+        processor.queueMidiKeyboardPitchBend(value);
+    };
+    midiKeyboardPanel.onModulationChanged = [this](int value)
+    {
+        processor.queueMidiKeyboardModulation(value);
+    };
+    addAndMakeVisible(midiKeyboardPanel);
 
     addAndMakeVisible(contentPlaceholder);
     contentPlaceholder.setJustificationType(juce::Justification::centred);
@@ -2081,6 +2095,11 @@ MainView::MainView(PolyHostPluginProcessor& processorIn,
         processor.getCore().setTabPointerAdjustMethodOverride(tabIndex, methodOverride);
         refreshFromCore();
         repaint();
+    };
+
+    routingView.onSetOutputGainDb = [this](int tabIndex, float gainDb)
+    {
+        processor.getCore().setTabOutputGainDb(tabIndex, gainDb);
     };
 
     macroMappingsView.onDeleteMapping = [this](int macroIndex)
@@ -2344,6 +2363,47 @@ juce::PopupMenu MainView::getMenuForIndex(int topLevelMenuIndex,
         if (menuExtension != nullptr)
             menuExtension->addAdditionalItemsToMenu(menuName, menu);
 
+        juce::PopupMenu keyboardWidthMenu;
+        const int keyboardWidthMode = appSettings.getMidiKeyboardWidthMode();
+
+        keyboardWidthMenu.addItem(commandMidiKeyboardFixedKeyWidth,
+                                  "Keys",
+                                  true,
+                                  keyboardWidthMode == MidiKeyboardPanel::fixedKeyWidthMode);
+
+        for (int octaves = 3; octaves <= 8; ++octaves)
+        {
+            keyboardWidthMenu.addItem(commandMidiKeyboardOctavesBase + octaves,
+                                      juce::String(octaves),
+                                      true,
+                                      keyboardWidthMode == octaves);
+        }
+
+        juce::PopupMenu keyboardMenu;
+        keyboardMenu.addItem(commandMidiKeyboardShow,
+                             "Show",
+                             true,
+                             appSettings.getMidiKeyboardVisible());
+        keyboardMenu.addSubMenu("Width", keyboardWidthMenu);
+
+        juce::PopupMenu keyboardBendRangeMenu;
+        const int keyboardBendRangeOctaves =
+            appSettings.getMidiKeyboardBendRangeOctaves();
+
+        for (int octaves = 1; octaves <= 4; ++octaves)
+        {
+            keyboardBendRangeMenu.addItem(
+                commandMidiKeyboardBendRangeBase + octaves,
+                juce::String(octaves)
+                    + (octaves == 1 ? " Octave" : " Octaves"),
+                true,
+                keyboardBendRangeOctaves == octaves);
+        }
+
+        keyboardMenu.addSubMenu("Bend Range",
+                                keyboardBendRangeMenu);
+        menu.addSubMenu("Keyboard", keyboardMenu);
+
         menu.addItem(commandPointerControlSettings, "Pointer Control Settings");
 
         if (menuExtension != nullptr)
@@ -2429,6 +2489,27 @@ void MainView::menuItemSelected(int menuItemID,
         return;
     }
 
+    const int requestedKeyboardOctaves =
+        menuItemID - commandMidiKeyboardOctavesBase;
+
+    if (requestedKeyboardOctaves >= 3
+        && requestedKeyboardOctaves <= 8)
+    {
+        setMidiKeyboardWidthMode(requestedKeyboardOctaves);
+        return;
+    }
+
+    const int requestedKeyboardBendRange =
+        menuItemID - commandMidiKeyboardBendRangeBase;
+
+    if (requestedKeyboardBendRange >= 1
+        && requestedKeyboardBendRange <= 4)
+    {
+        setMidiKeyboardBendRangeOctaves(
+            requestedKeyboardBendRange);
+        return;
+    }
+
     switch (menuItemID)
     {
         case commandNewPreset:
@@ -2507,6 +2588,31 @@ void MainView::menuItemSelected(int menuItemID,
 
         case commandRecording:
             toggleRecordingView();
+            break;
+
+        case commandMidiKeyboardShow:
+        {
+            const bool shouldShow = ! appSettings.getMidiKeyboardVisible();
+
+            if (! shouldShow)
+                midiKeyboardPanel.releaseAllOwnedNotes();
+
+            appSettings.setMidiKeyboardVisible(shouldShow);
+
+            if (! showingRoutingView
+                && ! showingMacroMappingsView
+                && ! recordingView.isVisible())
+            {
+                resizeParentEditorToFitHostedPlugin();
+            }
+
+            resized();
+            repaint();
+            break;
+        }
+
+        case commandMidiKeyboardFixedKeyWidth:
+            setMidiKeyboardWidthMode(MidiKeyboardPanel::fixedKeyWidthMode);
             break;
 
         case commandAutoSaveAfterPluginRepair:
@@ -2880,15 +2986,11 @@ void MainView::createNewPreset(bool scheduleDeferredUiReset)
                         return;
                     }
 
-                    if (auto* parentEditor =
-                            safeThis->findParentComponentOfClass<PolyHostPluginEditor>())
-                    {
-                        DebugLog::write(
-                            "[PresetTeardown] 25 delayed default editor resize begin");
-                        parentEditor->setSize(800, 500);
-                        DebugLog::write(
-                            "[PresetTeardown] 25 delayed default editor resize returned");
-                    }
+                    DebugLog::write(
+                        "[PresetTeardown] 25 delayed default editor resize begin");
+                    safeThis->resizeParentEditorToFitHostedPlugin();
+                    DebugLog::write(
+                        "[PresetTeardown] 25 delayed default editor resize returned");
                 });
 
             DebugLog::write("[PresetTeardown] 26 deferred UI reset complete");
@@ -3236,9 +3338,25 @@ void MainView::sendMidiPanic()
     DebugLog::write("[MIDI] sendMidiPanic requested");
 
     dismissMidiAssignmentsPopup();
+    midiKeyboardPanel.releaseAllOwnedNotes();
     processor.getCore().sendMidiPanic();
     refreshDirtyUiOnly();
     repaint();
+}
+
+void MainView::setMidiKeyboardWidthMode(int widthMode)
+{
+    appSettings.setMidiKeyboardWidthMode(widthMode);
+    midiKeyboardPanel.setWidthMode(appSettings.getMidiKeyboardWidthMode());
+    resized();
+    repaint();
+}
+
+void MainView::setMidiKeyboardBendRangeOctaves(int octaves)
+{
+    appSettings.setMidiKeyboardBendRangeOctaves(octaves);
+    processor.setMidiKeyboardPitchBendRangeOctaves(
+        appSettings.getMidiKeyboardBendRangeOctaves());
 }
 
 void MainView::showTemporaryStatusMessage(const juce::String& text)
@@ -4222,6 +4340,9 @@ void MainView::rebuildRoutingView()
             && ! isSoloed
             && ! manualBypassed;
 
+        entry.outputGainDb =
+            core.getTabOutputGainDb(i);
+
         entry.midiAssignmentCount =
             core.getTabMidiAssignmentCount(i);
 
@@ -4882,9 +5003,7 @@ void MainView::deleteCurrentPreset()
         pendingMissingPluginPromptDelayTicks = 0;
         core.setStatusText("Preset deleted");
 
-        auto* parentEditor = findParentComponentOfClass<PolyHostPluginEditor>();
-        if (parentEditor != nullptr)
-            parentEditor->setSize(800, 500);
+        resizeParentEditorToFitHostedPlugin();
 
         refreshFromCore();
         repaint();
@@ -4993,6 +5112,9 @@ juce::PopupMenu MainView::buildDynamicPresetMenu()
     dynamicPresetMenuFiles.clear();
 
     juce::PopupMenu menu;
+    menu.addItem(commandNewPreset, "New Preset");
+    menu.addSeparator();
+
     auto presetsDirectory = AppSettings::getPresetsDirectory();
 
     DebugLog::writeAdvanced("[PresetMenu] rebuild begin | root="
@@ -5356,16 +5478,23 @@ void MainView::resizeParentEditorToFitHostedPlugin()
                              - sharedMenuBarHeight)
             : 0;
 
+    const int keyboardExtraHeight =
+        appSettings.getMidiKeyboardVisible()
+            ? MidiKeyboardPanel::preferredHeight + 8
+            : 0;
+
     if (hostedEditor == nullptr)
     {
         DebugLog::writeAdvanced(
             "[HostedEditor] resizeParentEditorToFitHostedPlugin | "
             "no hosted editor, using default 800x"
-            + juce::String(500 + extraMenuBarHeight));
+            + juce::String(500
+                           + extraMenuBarHeight
+                           + keyboardExtraHeight));
 
         parentEditor->setSize(
             800,
-            500 + extraMenuBarHeight);
+            500 + extraMenuBarHeight + keyboardExtraHeight);
 
         return;
     }
@@ -5383,11 +5512,15 @@ void MainView::resizeParentEditorToFitHostedPlugin()
         "[HostedEditor] resizeParentEditorToFitHostedPlugin | size="
         + juce::String(editorWidth)
         + "x"
-        + juce::String(editorHeight + extraMenuBarHeight));
+        + juce::String(editorHeight
+                       + extraMenuBarHeight
+                       + keyboardExtraHeight));
 
     parentEditor->resizeToFitContent(
         editorWidth,
-        editorHeight + extraMenuBarHeight);
+        editorHeight
+            + extraMenuBarHeight
+            + keyboardExtraHeight);
 }
 
 void MainView::monitorHostedEditorSizeChanges()
@@ -6016,6 +6149,29 @@ void MainView::resized()
 
     tabButtonsContainer.setSize(juce::jmax(viewportBounds.getWidth(), x), h);
     updateTabScrollButtonState();
+
+    const bool shouldDisplayMidiKeyboard =
+        appSettings.getMidiKeyboardVisible()
+        && ! showingRoutingView
+        && ! showingMacroMappingsView
+        && ! recordingView.isVisible();
+
+    if (! shouldDisplayMidiKeyboard && midiKeyboardPanel.isVisible())
+        midiKeyboardPanel.releaseAllOwnedNotes();
+
+    midiKeyboardPanel.setVisible(shouldDisplayMidiKeyboard);
+
+    if (shouldDisplayMidiKeyboard)
+    {
+        auto keyboardBounds =
+            contentOuter.removeFromBottom(MidiKeyboardPanel::preferredHeight);
+        contentOuter.removeFromBottom(8);
+        midiKeyboardPanel.setBounds(keyboardBounds.reduced(8, 0));
+    }
+    else
+    {
+        midiKeyboardPanel.setBounds({});
+    }
 
     auto contentBounds = contentOuter.reduced(8);
     editorHolder.setBounds(contentBounds);

@@ -15,6 +15,7 @@ public:
         bool isBypassed = false;
         bool isSoloed = false;
         bool isMutedBySolo = false;
+        float outputGainDb = 0.0f;
         int midiAssignmentCount = 0;
         juce::String midiAssignmentsTooltip;
         juce::String routingTooltip;
@@ -31,6 +32,7 @@ public:
     std::function<void(int fromTabIndex, int toTabIndex)> onMove;
     std::function<void(int tabIndex)> onToggleBypass;
     std::function<void(int tabIndex)> onToggleSolo;
+    std::function<void(int tabIndex, float gainDb)> onSetOutputGainDb;
     std::function<void(int tabIndex)> onSelectTab;
     std::function<void(int tabIndex)> onCloseTab;
     std::function<void(int tabIndex, juce::Component* anchorComponent)> onShowMidiAssignments;
@@ -56,6 +58,7 @@ private:
         std::function<void(int tabIndex, juce::Point<int> screenPosition)> onDragEnded;
         std::function<void(int tabIndex)> onToggleBypass;
         std::function<void(int tabIndex)> onToggleSolo;
+        std::function<void(int tabIndex, float gainDb)> onSetOutputGainDb;
         std::function<void(int tabIndex)> onSelectTab;
         std::function<void(int tabIndex)> onCloseTab;
         std::function<void(int tabIndex, juce::Component* anchorComponent)> onShowMidiAssignments;
@@ -87,69 +90,37 @@ private:
             bool dragStarted = false;
         };
 
-        class AdjustMethodEditor final : public juce::TextEditor
+        class VolumeKnobLookAndFeel final : public juce::LookAndFeel_V4
         {
         public:
-            std::function<void()> onValueChanged;
-
-            AdjustMethodEditor()
-            {
-                setReadOnly(true);
-                setMultiLine(false);
-                setColour(juce::TextEditor::backgroundColourId, ButtonStyling::defaultBackground());
-                setColour(juce::TextEditor::textColourId, juce::Colours::white);
-                setColour(juce::TextEditor::outlineColourId, juce::Colours::lightgrey.withAlpha(0.35f));
-                setJustification(juce::Justification::centred);
-                applyFontToAllText(juce::Font(juce::FontOptions(12.0f)));
-            }
-
-            void setMethodOverride(int value)
-            {
-                methodOverride = juce::jlimit(0, 2, value);
-                setText(toDisplayString(methodOverride), juce::dontSendNotification);
-            }
-
-            int getMethodOverride() const
-            {
-                return methodOverride;
-            }
-
-            void mouseWheelMove(const juce::MouseEvent& event,
-                                const juce::MouseWheelDetails& wheel) override
-            {
-                juce::ignoreUnused(event);
-
-                if (wheel.deltaY > 0.0f)
-                    setMethodOverride((methodOverride + 1) % 3);
-                else if (wheel.deltaY < 0.0f)
-                    setMethodOverride((methodOverride + 2) % 3);
-
-                if (onValueChanged)
-                    onValueChanged();
-            }
-
-        private:
-            static juce::String toDisplayString(int value)
-            {
-                switch (value)
-                {
-                    case 1: return "Scroll";
-                    case 2: return "Drag";
-                    case 0:
-                    default: return "Global";
-                }
-            }
-
-            int methodOverride = 0;
+            void drawRotarySlider(juce::Graphics& g,
+                                  int x,
+                                  int y,
+                                  int width,
+                                  int height,
+                                  float sliderPosition,
+                                  float rotaryStartAngle,
+                                  float rotaryEndAngle,
+                                  juce::Slider& slider) override;
         };
+
+        void updateVolumeValueLabel();
+        void updateAdjustMethodValueLabel();
+        static double adjustMethodToKnobValue(int methodOverride);
+        static int knobValueToAdjustMethod(double knobValue);
 
         ModuleEntry entry;
         ButtonStyling::RoundedTextButtonLookAndFeel roundedButtonLookAndFeel { ButtonStyling::defaultCornerRadius() };
+        VolumeKnobLookAndFeel volumeKnobLookAndFeel;
         DragHandle dragHandle;
         juce::Label nameLabel;
         ButtonStyling::TypeBadgeButton typeButton;
+        juce::Label volumeLabel;
+        juce::Slider volumeSlider;
+        juce::Label volumeValueLabel;
         juce::Label adjustLabel;
-        AdjustMethodEditor adjustMethodEditor;
+        juce::Slider adjustMethodSlider;
+        juce::Label adjustMethodValueLabel;
         ButtonStyling::SmallIconButton closeButton { ButtonStyling::Glyphs::close() };
         juce::TextButton midiButton { "MIDI Ch" };
         ButtonStyling::StatusIconButton bypassButton

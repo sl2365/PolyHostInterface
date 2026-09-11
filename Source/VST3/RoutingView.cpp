@@ -75,6 +75,114 @@ void RoutingView::ModuleRow::DragHandle::mouseUp(
     repaint();
 }
 
+void RoutingView::ModuleRow::VolumeKnobLookAndFeel::drawRotarySlider(
+    juce::Graphics& g,
+    int x,
+    int y,
+    int width,
+    int height,
+    float sliderPosition,
+    float rotaryStartAngle,
+    float rotaryEndAngle,
+    juce::Slider& slider)
+{
+    auto dialArea = juce::Rectangle<float>((float) x,
+                                           (float) y,
+                                           (float) width,
+                                           (float) height).reduced(2.0f);
+    const auto centre = dialArea.getCentre();
+    const float radius = 0.5f * juce::jmin(dialArea.getWidth(),
+                                           dialArea.getHeight());
+    const float angle = rotaryStartAngle
+                        + sliderPosition
+                            * (rotaryEndAngle - rotaryStartAngle);
+    const float opacity = slider.isEnabled() ? 1.0f : 0.38f;
+
+    const auto knobColour = ButtonStyling::resolveBackgroundColour(
+        ButtonStyling::defaultBackground(),
+        slider.isMouseOverOrDragging(),
+        slider.isMouseButtonDown(),
+        false);
+
+    g.setColour(knobColour.withMultipliedAlpha(opacity));
+    g.fillEllipse(dialArea);
+
+    const auto buttonBorderColour =
+        ButtonStyling::outlineColour()
+            .withAlpha(0.38f)
+            .withMultipliedAlpha(opacity);
+
+    g.setColour(buttonBorderColour);
+    g.drawEllipse(dialArea.reduced(0.5f), 1.0f);
+
+    const auto pointerEnd = centre
+        + juce::Point<float>(std::sin(angle), -std::cos(angle))
+            * (radius * 0.67f);
+
+    g.setColour(buttonBorderColour);
+    g.drawLine(juce::Line<float>(centre, pointerEnd), 1.6f);
+}
+
+void RoutingView::ModuleRow::updateVolumeValueLabel()
+{
+    const double value = volumeSlider.getValue();
+    const int wholeValue = juce::roundToInt(value);
+    const bool isWholeValue = std::abs(value - (double) wholeValue) < 0.001;
+
+    juce::String displayValue = isWholeValue
+                                    ? juce::String(wholeValue)
+                                    : juce::String(value, 1);
+
+    if (value > 0.0)
+        displayValue = "+" + displayValue;
+
+    volumeValueLabel.setText(displayValue,
+                             juce::dontSendNotification);
+}
+
+double RoutingView::ModuleRow::adjustMethodToKnobValue(
+    int methodOverride)
+{
+    switch (methodOverride)
+    {
+        case 1:  return 0.0;
+        case 2:  return 2.0;
+        case 0:
+        default: return 1.0;
+    }
+}
+
+int RoutingView::ModuleRow::knobValueToAdjustMethod(
+    double knobValue)
+{
+    switch (juce::jlimit(0,
+                         2,
+                         juce::roundToInt(knobValue)))
+    {
+        case 0:  return 1;
+        case 2:  return 2;
+        case 1:
+        default: return 0;
+    }
+}
+
+void RoutingView::ModuleRow::updateAdjustMethodValueLabel()
+{
+    juce::String displayValue;
+
+    switch (knobValueToAdjustMethod(
+        adjustMethodSlider.getValue()))
+    {
+        case 1:  displayValue = "Scroll"; break;
+        case 2:  displayValue = "Drag";   break;
+        case 0:
+        default: displayValue = "Global"; break;
+    }
+
+    adjustMethodValueLabel.setText(displayValue,
+                                   juce::dontSendNotification);
+}
+
 RoutingView::ModuleRow::ModuleRow()
 {
     dragHandle.onDragStarted = [this](juce::Point<int> screenPosition)
@@ -111,19 +219,93 @@ RoutingView::ModuleRow::ModuleRow()
     };
     addAndMakeVisible(typeButton);
 
-    adjustLabel.setText("Adjust\nMethod", juce::dontSendNotification);
+    volumeLabel.setText("Volume", juce::dontSendNotification);
+    volumeLabel.setJustificationType(juce::Justification::centred);
+    volumeLabel.setColour(juce::Label::textColourId, juce::Colours::lightgrey);
+    volumeLabel.setFont(juce::Font(juce::FontOptions(11.0f)));
+    addAndMakeVisible(volumeLabel);
+
+    volumeSlider.setSliderStyle(juce::Slider::RotaryHorizontalVerticalDrag);
+    volumeSlider.setTextBoxStyle(juce::Slider::NoTextBox,
+                                 false,
+                                 0,
+                                 0);
+    volumeSlider.setRotaryParameters(juce::MathConstants<float>::pi * 1.25f,
+                                     juce::MathConstants<float>::pi * 2.75f,
+                                     true);
+    volumeSlider.setRange(-12.0, 12.0, 0.1);
+    volumeSlider.setValue(0.0, juce::dontSendNotification);
+    volumeSlider.setDoubleClickReturnValue(true, 0.0);
+    volumeSlider.setLookAndFeel(&volumeKnobLookAndFeel);
+    volumeSlider.setTooltip("Set this tab's output volume from -12 dB to +12 dB\nDouble-click to reset to 0 dB");
+    volumeSlider.onValueChange = [this]
+    {
+        updateVolumeValueLabel();
+
+        if (onSetOutputGainDb)
+        {
+            onSetOutputGainDb(
+                entry.tabIndex,
+                static_cast<float>(volumeSlider.getValue()));
+        }
+    };
+    addAndMakeVisible(volumeSlider);
+
+    volumeValueLabel.setJustificationType(juce::Justification::centred);
+    volumeValueLabel.setColour(juce::Label::textColourId,
+                               juce::Colours::white);
+    volumeValueLabel.setFont(ButtonStyling::textFont(10.5f, true));
+    volumeValueLabel.setInterceptsMouseClicks(false, false);
+    addAndMakeVisible(volumeValueLabel);
+    updateVolumeValueLabel();
+
+    adjustLabel.setText("Adj Method", juce::dontSendNotification);
     adjustLabel.setJustificationType(juce::Justification::centred);
     adjustLabel.setColour(juce::Label::textColourId, juce::Colours::lightgrey);
     adjustLabel.setFont(juce::Font(juce::FontOptions(11.0f)));
     addAndMakeVisible(adjustLabel);
 
-    adjustMethodEditor.onValueChanged = [this]
+    adjustMethodSlider.setSliderStyle(
+        juce::Slider::RotaryHorizontalVerticalDrag);
+    adjustMethodSlider.setTextBoxStyle(juce::Slider::NoTextBox,
+                                       false,
+                                       0,
+                                       0);
+    adjustMethodSlider.setRotaryParameters(
+        juce::MathConstants<float>::pi * 1.25f,
+        juce::MathConstants<float>::pi * 2.75f,
+        true);
+    adjustMethodSlider.setRange(0.0, 2.0, 1.0);
+    adjustMethodSlider.setValue(1.0, juce::dontSendNotification);
+    adjustMethodSlider.setDoubleClickReturnValue(true, 1.0);
+    adjustMethodSlider.setMouseDragSensitivity(60);
+    adjustMethodSlider.setVelocityBasedMode(false);
+    adjustMethodSlider.setLookAndFeel(&volumeKnobLookAndFeel);
+    adjustMethodSlider.setTooltip(
+        "Set the Pointer Control adjustment method\nLeft: Scroll  Centre: Global  Right: Drag\nDouble-click to reset to Global");
+    adjustMethodSlider.onValueChange = [this]
     {
+        updateAdjustMethodValueLabel();
+
         if (onSetPointerAdjustMethodOverride)
-            onSetPointerAdjustMethodOverride(entry.tabIndex, adjustMethodEditor.getMethodOverride());
+        {
+            onSetPointerAdjustMethodOverride(
+                entry.tabIndex,
+                knobValueToAdjustMethod(
+                    adjustMethodSlider.getValue()));
+        }
     };
-    addAndMakeVisible(adjustMethodEditor);
-    adjustMethodEditor.setTooltip("Scroll to change Adjust Method");
+    addAndMakeVisible(adjustMethodSlider);
+
+    adjustMethodValueLabel.setJustificationType(
+        juce::Justification::centred);
+    adjustMethodValueLabel.setColour(juce::Label::textColourId,
+                                     juce::Colours::white);
+    adjustMethodValueLabel.setFont(
+        ButtonStyling::textFont(10.5f, true));
+    adjustMethodValueLabel.setInterceptsMouseClicks(false, false);
+    addAndMakeVisible(adjustMethodValueLabel);
+    updateAdjustMethodValueLabel();
 
     addAndMakeVisible(midiButton);
     addAndMakeVisible(bypassButton);
@@ -176,6 +358,8 @@ RoutingView::ModuleRow::ModuleRow()
 RoutingView::ModuleRow::~ModuleRow()
 {
     midiButton.setLookAndFeel(nullptr);
+    volumeSlider.setLookAndFeel(nullptr);
+    adjustMethodSlider.setLookAndFeel(nullptr);
 }
 
 void RoutingView::ModuleRow::setModule(const ModuleEntry& newEntry)
@@ -196,7 +380,11 @@ void RoutingView::ModuleRow::setModule(const ModuleEntry& newEntry)
                             isInactive ? juce::Colours::lightgrey.withAlpha(0.65f)
                                        : juce::Colours::white);
     }
-    adjustMethodEditor.setMethodOverride(entry.pointerAdjustMethodOverride);
+    adjustMethodSlider.setValue(
+        adjustMethodToKnobValue(
+            entry.pointerAdjustMethodOverride),
+        juce::dontSendNotification);
+    updateAdjustMethodValueLabel();
     juce::String infoTooltip = entry.routingTooltip.isNotEmpty()
                                    ? entry.routingTooltip
                                    : ButtonStyling::Tooltips::routingInfo();
@@ -236,6 +424,11 @@ void RoutingView::ModuleRow::setModule(const ModuleEntry& newEntry)
 
     bypassButton.setVisualState(! entry.isBypassed);
     soloButton.setVisualState(entry.isSoloed);
+
+    volumeSlider.setValue(entry.outputGainDb,
+                          juce::dontSendNotification);
+    volumeSlider.setEnabled(entry.type != PluginSlotType::Empty);
+    updateVolumeValueLabel();
 
     repaint();
 }
@@ -302,17 +495,31 @@ void RoutingView::ModuleRow::resized()
     bypassButton.setBounds(bypassBounds);
     area.removeFromRight(8);
 
-    auto midiArea = area.removeFromRight(90);
+    auto midiArea = area.removeFromRight(80);
     midiButton.setBounds(midiArea.reduced(0, 8));
     area.removeFromRight(10);
 
-    auto adjustArea = area.removeFromRight(50).translated(0, -4);
-    auto adjustLabelArea = adjustArea.removeFromTop(24);
-    adjustArea.removeFromTop(6);
-    auto adjustEditorArea = adjustArea.removeFromTop(22);
+    auto volumeSlot = area.removeFromRight(50);
+    auto volumeStack = juce::Rectangle<int>(volumeSlot.getX(),
+                                             1,
+                                             volumeSlot.getWidth(),
+                                             getHeight() - 2);
+    volumeLabel.setBounds(volumeStack.removeFromTop(13));
+    volumeSlider.setBounds(
+        volumeStack.removeFromTop(28).withSizeKeepingCentre(28, 28));
+    volumeValueLabel.setBounds(volumeStack);
 
-    adjustLabel.setBounds(adjustLabelArea.withSizeKeepingCentre(adjustLabelArea.getWidth(), 18));
-    adjustMethodEditor.setBounds(adjustEditorArea.withSizeKeepingCentre(adjustEditorArea.getWidth(), 16));
+    area.removeFromRight(8);
+
+    auto adjustSlot = area.removeFromRight(56);
+    auto adjustStack = juce::Rectangle<int>(adjustSlot.getX(),
+                                             1,
+                                             adjustSlot.getWidth(),
+                                             getHeight() - 2);
+    adjustLabel.setBounds(adjustStack.removeFromTop(13));
+    adjustMethodSlider.setBounds(
+        adjustStack.removeFromTop(28).withSizeKeepingCentre(28, 28));
+    adjustMethodValueLabel.setBounds(adjustStack);
 
     area.removeFromRight(12);
 
@@ -387,6 +594,12 @@ void RoutingView::rebuildModuleRows()
         {
             if (onSetPointerAdjustMethodOverride)
                 onSetPointerAdjustMethodOverride(tabIndex, methodOverride);
+        };
+
+        row->onSetOutputGainDb = [this](int tabIndex, float gainDb)
+        {
+            if (onSetOutputGainDb)
+                onSetOutputGainDb(tabIndex, gainDb);
         };
 
         row->onShowMidiAssignments = [this](int tabIndex, juce::Component* anchorComponent)

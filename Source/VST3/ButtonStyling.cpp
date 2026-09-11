@@ -1,33 +1,47 @@
 #include "ButtonStyling.h"
+#include <PolyHostAssets.h>
+
+namespace
+{
+    const juce::Typeface::Ptr& getEmbeddedIconTypeface()
+    {
+        static const auto typeface = juce::Typeface::createSystemTypefaceFor(
+            PolyHostAssets::FluentSystemIconsRegular_ttf,
+            PolyHostAssets::FluentSystemIconsRegular_ttfSize);
+
+        return typeface;
+    }
+}
 
 namespace ButtonStyling
 {
     namespace Glyphs
     {
-        juce::String save()            { return juce::String::charToString((juce_wchar) 0xe74e); }
-        juce::String saveAs()          { return juce::String::charToString((juce_wchar) 0xe792); }
-        juce::String revert()          { return juce::String::charToString((juce_wchar) 0xe72c); }
-        juce::String panic()           { return juce::String::charToString((juce_wchar) 0xe783); }
-        juce::String routing()         { return juce::String::charToString((juce_wchar) 0xf003); }
-        juce::String fitWindow()       { return juce::String::charToString((juce_wchar) 0xe9a6); }
-        juce::String saveWindowSize()  { return juce::String::charToString((juce_wchar) 0xe78c); }
-        juce::String clearWindowSize() { return juce::String::charToString((juce_wchar) 0xea39); }
-        juce::String close()           { return juce::String::charToString((juce_wchar) 0xea39); }
-        juce::String reset()           { return juce::String::charToString((juce_wchar) 0xe777); }
-        juce::String metronome()       { return juce::String::charToString((juce_wchar) 0xe15d); }
-        juce::String tapTempo()        { return juce::String::charToString((juce_wchar) 0xf271); }
-        juce::String add()             { return "+"; }
-        juce::String arrowUp()         { return juce::String::charToString((juce_wchar) 0xe70e); }
-        juce::String arrowDown()       { return juce::String::charToString((juce_wchar) 0xe70d); }
-        juce::String activeTick()      { return juce::String::charToString((juce_wchar) 0xe930); }
-        juce::String bypassCross()     { return juce::String::charToString((juce_wchar) 0xf140); }
-        juce::String info()            { return juce::String::charToString((juce_wchar) 0xe946); }
-        juce::String pointerControl()  { return juce::String::charToString((juce_wchar) 0xe7c9); }
+        juce::String save()            { return juce::String::charToString((juce_wchar) 0xf680); }
+        juce::String saveAs()          { return juce::String::charToString((juce_wchar) 0xea49); }
+        juce::String revert()          { return juce::String::charToString((juce_wchar) 0xf19a); }
+        juce::String panic()           { return juce::String::charToString((juce_wchar) 0xf11f); }
+        juce::String routing()         { return juce::String::charToString((juce_wchar) 0xe1df); }
+        juce::String fitWindow()       { return juce::String::charToString((juce_wchar) 0xf68a); }
+        juce::String saveWindowSize()  { return juce::String::charToString((juce_wchar) 0xee6c); }
+        juce::String clearWindowSize() { return juce::String::charToString((juce_wchar) 0xf36a); }
+        juce::String close()           { return juce::String::charToString((juce_wchar) 0xf36a); }
+        juce::String reset()           { return juce::String::charToString((juce_wchar) 0xf140); }
+        juce::String metronome()       { return juce::String::charToString((juce_wchar) 0xf827); }
+        juce::String tapTempo()        { return juce::String::charToString((juce_wchar) 0xf77f); }
+        juce::String add()             { return juce::String::charToString((juce_wchar) 0xf10a); }
+        juce::String arrowUp()         { return juce::String::charToString((juce_wchar) 0xf2b7); }
+        juce::String arrowDown()       { return juce::String::charToString((juce_wchar) 0xf2a4); }
+        juce::String activeTick()      { return juce::String::charToString((juce_wchar) 0xf295); }
+        juce::String bypassCross()     { return juce::String::charToString((juce_wchar) 0xf62e); }
+        juce::String info()            { return juce::String::charToString((juce_wchar) 0xf4a4); }
+        juce::String pointerControl()  { return juce::String::charToString((juce_wchar) 0xe446); }
         juce::String solo()            { return "S"; }
-        juce::String clearSolo()       { return juce::String::charToString((juce_wchar) 0xe767); }
-        juce::String mapLastTouched()  { return juce::String::charToString((juce_wchar) 0xe826); }
-        juce::String mappings()        { return juce::String::charToString((juce_wchar) 0xf8a6); }
-        juce::String replace()         { return juce::String::charToString((juce_wchar) 0xe895); }
+        juce::String clearSolo()       { return juce::String::charToString((juce_wchar) 0xeb4b); }
+        juce::String mapLastTouched()  { return juce::String::charToString((juce_wchar) 0xf4e5); }
+        juce::String mappings()        { return juce::String::charToString((juce_wchar) 0xf4ee); }
+        juce::String replace()         { return juce::String::charToString((juce_wchar) 0xf18e); }
+        juce::String record()          { return juce::String::charToString((juce_wchar) 0xf662); }
     }
 
     namespace Tooltips
@@ -159,11 +173,13 @@ namespace ButtonStyling
 
     juce::Font iconFont(float height)
     {
-       #if JUCE_WINDOWS
-        return juce::Font(juce::FontOptions("Segoe Fluent Icons", height, juce::Font::plain));
-       #else
+        const auto& typeface = getEmbeddedIconTypeface();
+
+        if (typeface != nullptr)
+            return juce::Font(juce::FontOptions(typeface).withHeight(height));
+
+        jassertfalse;
         return juce::Font(juce::FontOptions(height));
-       #endif
     }
 
     juce::Font textFont(float height, bool bold)
@@ -490,9 +506,13 @@ namespace ButtonStyling
             iconColour = iconColour.withAlpha(0.5f);
 
         g.setColour(iconColour);
-        g.setFont(iconFont(iconFontHeight));
+        const auto glyphToDraw = visualStateActive ? activeGlyph : inactiveGlyph;
 
-        g.drawFittedText(visualStateActive ? activeGlyph : inactiveGlyph,
+        g.setFont(glyphToDraw == Glyphs::solo()
+                      ? textFont(iconFontHeight, true)
+                      : iconFont(iconFontHeight));
+
+        g.drawFittedText(glyphToDraw,
                          getLocalBounds().translated(0, iconYOffset),
                          juce::Justification::centred,
                          1);

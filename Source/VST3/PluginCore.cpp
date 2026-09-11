@@ -981,6 +981,18 @@ void PluginCore::prepareToPlay(double sampleRate, int samplesPerBlock)
 
         tab->hasProducedGeneratedMidi = false;
 
+        const float outputGainLinear =
+            juce::Decibels::decibelsToGain(
+                tab->outputGainDb.load(
+                    std::memory_order_acquire));
+
+        tab->outputGainLinear.reset(
+            sampleRate,
+            0.02);
+
+        tab->outputGainLinear.setCurrentAndTargetValue(
+            outputGainLinear);
+
         const bool pluginCanBeCalled =
             tab->pluginInstance != nullptr
             && ! tab->processingQuarantined.load(
@@ -1191,6 +1203,27 @@ void PluginCore::processBlock(juce::AudioBuffer<float>& buffer,
                 std::memory_order_relaxed);
 
             return true;
+        };
+
+    auto applyTabOutputGain =
+        [numSamples](HostedTabState& tabState,
+                     juce::AudioBuffer<float>& audioBuffer) noexcept
+        {
+            const float requestedGain =
+                juce::Decibels::decibelsToGain(
+                    tabState.outputGainDb.load(
+                        std::memory_order_acquire));
+
+            if (tabState.outputGainLinear.getTargetValue()
+                != requestedGain)
+            {
+                tabState.outputGainLinear.setTargetValue(
+                    requestedGain);
+            }
+
+            tabState.outputGainLinear.applyGain(
+                audioBuffer,
+                numSamples);
         };
 
     auto midiEventsMatch =
@@ -1795,6 +1828,8 @@ void PluginCore::processBlock(juce::AudioBuffer<float>& buffer,
         if (tab->bypassed)
             continue;
 
+        applyTabOutputGain(*tab, synthBuffer);
+
         if (! midiPanicRequested
             && ! midiReleaseResetRequested)
         {
@@ -2085,6 +2120,9 @@ void PluginCore::processBlock(juce::AudioBuffer<float>& buffer,
                     instance->reset();
             }
         }
+
+        if (processCompleted)
+            applyTabOutputGain(*tab, fxBuffer);
 
         const int nextFxTab =
             fxListIndex + 1 < fxIndices.size()
@@ -2493,6 +2531,8 @@ bool PluginCore::addTab(const juce::String& tabName)
 
     tab->pointerLaneTolerance = 30.0f;
     tab->pointerAdjustSensitivity = 1;
+    tab->outputGainLinear.reset(currentSampleRate, 0.02);
+    tab->outputGainLinear.setCurrentAndTargetValue(1.0f);
 
     fxIndexScratch.ensureStorageAllocated(
         hostedTabs.size() + 1);
@@ -2549,6 +2589,8 @@ bool PluginCore::clearTab(int tabIndex)
     selectedTab->slot->clearPlugin();
     selectedTab->tabName = "Empty";
     selectedTab->bypassed = false;
+    selectedTab->outputGainDb.store(0.0f,
+                                    std::memory_order_release);
     selectedTab->pointerAdjustMethodOverride = 0;
     selectedTab->selectedGlobalPointerMapRelativePath.clear();
     selectedTab->selectedGlobalPointerMapName.clear();
@@ -2672,6 +2714,37 @@ void PluginCore::setTabBypassed(int tabIndex, bool shouldBeBypassed)
         return;
 
     hostedTabs[tabIndex]->bypassed = shouldBeBypassed;
+    markDirty();
+}
+
+float PluginCore::getTabOutputGainDb(int tabIndex) const
+{
+    if (! juce::isPositiveAndBelow(tabIndex, hostedTabs.size()))
+        return 0.0f;
+
+    return hostedTabs[tabIndex]->outputGainDb.load(
+        std::memory_order_acquire);
+}
+
+void PluginCore::setTabOutputGainDb(int tabIndex, float gainDb)
+{
+    if (! juce::isPositiveAndBelow(tabIndex, hostedTabs.size()))
+        return;
+
+    const float clampedGainDb =
+        juce::jlimit(-12.0f, 12.0f, gainDb);
+
+    auto& storedGainDb =
+        hostedTabs[tabIndex]->outputGainDb;
+
+    if (storedGainDb.load(std::memory_order_acquire)
+        == clampedGainDb)
+    {
+        return;
+    }
+
+    storedGainDb.store(clampedGainDb,
+                       std::memory_order_release);
     markDirty();
 }
 
@@ -4631,6 +4704,7 @@ SessionTabData PluginCore::buildSessionTabData(int tabIndex) const
     tabData.tabName = createDefaultTabName(tabIndex);
     tabData.type = PluginSlotType::Empty;
     tabData.bypassed = false;
+    tabData.outputGainDb = 0.0f;
     tabData.hasSavedWindowBounds = routingViewSizeValid;
     tabData.savedWindowWidth = routingViewWidth;
     tabData.savedWindowHeight = routingViewHeight;
@@ -4644,6 +4718,8 @@ SessionTabData PluginCore::buildSessionTabData(int tabIndex) const
     auto* hostedTab = hostedTabs[tabIndex];
     tabData.tabName = hostedTab->tabName;
     tabData.bypassed = hostedTab->bypassed;
+    tabData.outputGainDb = hostedTab->outputGainDb.load(
+        std::memory_order_acquire);
     tabData.pointerAdjustMethodOverride = hostedTab->pointerAdjustMethodOverride;
     tabData.pointerLaneTolerance = hostedTab->pointerLaneTolerance;
     tabData.pointerAdjustSensitivity = hostedTab->pointerAdjustSensitivity;
@@ -4720,6 +4796,9 @@ bool PluginCore::restoreTabFromSessionData(int tabIndex,
                                                         : "Empty";
     clearTabRestoreIssue(*selectedTab);
     selectedTab->bypassed = tabData.bypassed;
+    selectedTab->outputGainDb.store(
+        juce::jlimit(-12.0f, 12.0f, tabData.outputGainDb),
+        std::memory_order_release);
     selectedTab->pointerAdjustMethodOverride = tabData.pointerAdjustMethodOverride;
     selectedTab->pointerLaneTolerance = tabData.pointerLaneTolerance;
     selectedTab->pointerAdjustSensitivity = juce::jlimit(1, 20, tabData.pointerAdjustSensitivity);

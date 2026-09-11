@@ -37,6 +37,7 @@ struct SessionTabData
     PluginSlotType type = PluginSlotType::Empty;
     juce::String tabName;
     bool bypassed = false;
+    float outputGainDb = 0.0f;
     bool hasSavedWindowBounds = false;
     int savedWindowWidth = 0;
     int savedWindowHeight = 0;

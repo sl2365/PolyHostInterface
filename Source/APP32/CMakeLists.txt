@@ -77,6 +77,7 @@ juce_add_binary_data(PolyHost32Assets
     NAMESPACE PolyHostAssets
     SOURCES
         "${CMAKE_CURRENT_LIST_DIR}/../app.png"
+        "${CMAKE_CURRENT_LIST_DIR}/../FluentSystemIcons-Regular.ttf"
 )
 
 if(WIN32)
@@ -101,6 +102,8 @@ target_sources(PolyHost32 PRIVATE
     "${PHI_SHARED_SOURCE_DIR}/PluginEditor.h"
     "${PHI_SHARED_SOURCE_DIR}/MainView.cpp"
     "${PHI_SHARED_SOURCE_DIR}/MainView.h"
+    "${PHI_SHARED_SOURCE_DIR}/MidiKeyboardPanel.cpp"
+    "${PHI_SHARED_SOURCE_DIR}/MidiKeyboardPanel.h"
     "${PHI_SHARED_SOURCE_DIR}/Instructions.cpp"
     "${PHI_SHARED_SOURCE_DIR}/Instructions.h"
     "${PHI_SHARED_SOURCE_DIR}/PluginCore.cpp"
@@ -149,6 +152,7 @@ target_compile_definitions(PolyHost32
         JUCE_USE_CURL=0
         JUCE_MODAL_LOOPS_PERMITTED=1
         JUCE_VST3_CAN_REPLACE_VST2=0
+        JUCE_ASIO=1
 
         JUCE_PLUGINHOST_VST3=1
         JUCE_PLUGINHOST_AU=0

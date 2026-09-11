@@ -70,6 +70,15 @@ public:
     bool getStandaloneMidiThruEnabled() const;
     void setStandaloneMidiThruEnabled(bool shouldEnable);
 
+    bool getMidiKeyboardVisible() const;
+    void setMidiKeyboardVisible(bool shouldShow);
+
+    int getMidiKeyboardWidthMode() const;
+    void setMidiKeyboardWidthMode(int widthMode);
+
+    int getMidiKeyboardBendRangeOctaves() const;
+    void setMidiKeyboardBendRangeOctaves(int octaves);
+
     juce::String getAudioDeviceName() const;
     void setAudioDeviceName(const juce::String& name);
 

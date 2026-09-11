@@ -9,7 +9,11 @@ PolyHostPluginEditor::PolyHostPluginEditor(PolyHostPluginProcessor& p,
     addAndMakeVisible(mainView);
     setResizable(true, false);
     setResizeLimits(minWidth, minHeight, maxWidth, maxHeight);
-    setSize(defaultWidth, defaultHeight);
+    const int keyboardExtraHeight =
+        mainView.getAppSettings().getMidiKeyboardVisible()
+            ? MidiKeyboardPanel::preferredHeight + 8
+            : 0;
+    setSize(defaultWidth, defaultHeight + keyboardExtraHeight);
 }
 
 PolyHostPluginEditor::~PolyHostPluginEditor()

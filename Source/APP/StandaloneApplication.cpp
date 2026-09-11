@@ -1896,7 +1896,7 @@ private:
     {
         0,
         "Start Recording",
-        juce::String::charToString((juce_wchar) 0xe7c8),
+        ButtonStyling::Glyphs::record(),
         ButtonStyling::ToolbarIconButton::ContentType::IconGlyph,
         ButtonStyling::defaultButtonWidth(),
         {},

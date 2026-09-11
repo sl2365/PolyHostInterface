@@ -99,6 +99,12 @@ if exist "%BUILD_DIR%\PolyHost32_artefacts\Release\Standalone\%EXENAME%" (
         pause
         exit /b 1
     )
+    copy /Y "%ROOT%Source\FluentSystemIcons-LICENSE.txt" "%DIST_DIR%\FluentSystemIcons-LICENSE.txt" >nul
+    if errorlevel 1 (
+        echo ERROR: Failed to copy the Fluent System Icons licence to dist-32.
+        pause
+        exit /b 1
+    )
     echo Copied PHI32 EXE to:
     echo %FINAL_EXE%
 ) else (
