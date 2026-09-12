@@ -23,7 +23,7 @@ See the demos at the bottom of the page for a few gifs of the Pointer Control in
 
 | Feature | Status - Some features only apply to APP or VST3 |
 |---|---|
-| VST2/3 x32 | ✅ Working - Bridging proved far too problematic. Added a standalone that has 32bit plugin support. Please note that each needs a separate installation location due to Presets loading incompatible plugins. There will NOT be a PHI32 VST3 version, unless I get enough request for it. |
+| VST2/3 x32 | ✅ Working - Bridging proved far too problematic. Added a standalone that has 32bit plugin support. There will NOT be a PHI32 VST3 version, unless I get enough request for it. |
 | VST2 x64 | ✅ Working - Requires Steinberg VST2 SDK to build — see below |
 | VST3 x64 | ✅ Working - Full support for Shell VST's|
 | CLAP x64 | ⚠️ Once JUCE natively supports CLAP, then it will be added to PHI |
