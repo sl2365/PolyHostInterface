@@ -2719,6 +2719,19 @@ void MainView::timerCallback()
 {
     processor.sampleSuspensionDiagnostics();
 
+    const int currentCpuPercent =
+        juce::jlimit(
+            0,
+            100,
+            juce::roundToInt(
+                processor.getAudioCpuUsagePercent()));
+
+    if (currentCpuPercent != lastDisplayedCpuPercent)
+    {
+        lastDisplayedCpuPercent = currentCpuPercent;
+        repaint();
+    }
+
     processPendingPointerMidi();
     pointerControl.handleExternalMouseMove();
     pointerControl.releaseDragIfIdle((double) appSettings.getPointerControlDragReturnDelayMs());
@@ -6003,7 +6016,11 @@ void MainView::paint(juce::Graphics& g)
     auto& core = processor.getCore();
     juce::String statusSource = temporaryStatusMessage.isNotEmpty() ? temporaryStatusMessage
                                                                     : core.getStatusText();
-    juce::String statusText = "PolyHostInterface VST3  |  " + statusSource;
+    juce::String statusText =
+        "CPU: "
+        + juce::String(lastDisplayedCpuPercent)
+        + "%  |  "
+        + statusSource;
 
     g.setColour(juce::Colours::lightgrey);
     g.setFont(juce::Font(juce::FontOptions(14.0f)));

@@ -33,6 +33,7 @@ See the demos at the bottom of the page for a few gifs of the Pointer Control in
 | Tab-ordering = FX routing order | ✅ Working |
 | Portable settings (no AppData/registry) | ✅ Working |
 | Audio / MIDI recording | ✅ Working |
+| ASIO audio driver (standalone PHI64 and PHI32) | ✅ Working - Requires an ASIO driver compatible with the application's 32-bit or 64-bit architecture |
 | Pointer Control functionality | ✅ Working - Absolute knob mode (1) and 3x Relative knob modes (2),(3) and (4) |
 | Mouse button emulation | ✅ Working - (Left, Middle, Right buttons) |
 | Keyboard emulation | ✅ Working - (Limited to: Up, Down, Enter, mainly for menu navigation) |
@@ -62,7 +63,7 @@ Tabs can be reordered, soloed, bypassed, and selected directly from this view.
 ### Routing View Explained
 - The 8 dots to the left are used as a drag handle, allowing much easier reordering than previous versions, which used up/down buttons.
 - Click the Synth/FX labels to close routing view and open the tab for that row. Next to which is the plugin name.
-- Adjust Method is used for setting the PointerControl mode. Global uses the setting specified in the PointerControlSettings panel. Drag sets only this tab/plugin to use drag method of adjustment. Scroll sets it to use mouse scroll as adjustment type. Setting this to Drag or Scroll allows a global setting to be used for every other tab/plugin, while allowing you to set specific setting per tab for independant plugin control. Then, in practise, usage is pretty seemless and invisible.
+- The Adj Method knob sets the PointerControl mode for that tab. Its three fixed positions are Scroll on the left, Global in the centre and Drag on the right; double-clicking resets it to Global. Global uses the setting specified in the Pointer Control Settings panel. Drag or Scroll overrides that global setting only for the selected tab.
 - The MIDI buttons are used to designate the MIDI channel used for that plugin tab. ie, you may want to designate a keyboard to the synths, but have a MIDI controller to adjust FX so you may need to specify channel per device for each plugin.
 - The Green buttons are used to enable/disable the audio/MIDI for that tab/plugin so effectively making it a bypass/mute function.
 - Then comes the 'S' button, used to Solo each plugin tab. You can Solo any number of tabs. Bypass/Mute states are restored when the last Solo button is deactivated.
@@ -309,6 +310,8 @@ One-time installs (unavoidable for C++)
 ### 3. [Install JUCE Portable](https://github.com/juce-framework/JUCE/releases) (8.0.15)
 	Download the required version: 'juce-x.x.x-windows.zip'
 	Extract to: _Projects\_Tools\JUCE\_x.x.x
+
+	The standalone PHI64 and PHI32 builds enable JUCE's bundled ASIO support. Before distributing an ASIO-enabled build, comply with either GPLv3 or Steinberg's proprietary ASIO SDK licence, as described in `JUCE\modules\juce_audio_devices\native\asio\LICENSE.txt`.
 
 ### 4. VST2.4 sdk
 	Place this here: _Projects\_Tools\vstsdk2.4

@@ -196,6 +196,7 @@ void PolyHostPluginProcessor::prepareToPlay(double sampleRate,
     lastQueuedMidiKeyboardPitchBend.store(8192, std::memory_order_relaxed);
     pendingMidiKeyboardPitchBendRange.store(false, std::memory_order_relaxed);
     pendingMidiKeyboardModulation.store(-1, std::memory_order_relaxed);
+    audioProcessLoadMeasurer.reset(sampleRate, samplesPerBlock);
 
     core.prepareToPlay(sampleRate, samplesPerBlock);
 
@@ -233,12 +234,16 @@ void PolyHostPluginProcessor::releaseResources()
         standaloneAudioExtension->releaseResources();
 
     core.releaseResources();
+    audioProcessLoadMeasurer.reset();
 }
 
 void PolyHostPluginProcessor::processBlock(
     juce::AudioBuffer<float>& buffer,
     juce::MidiBuffer& midiMessages)
 {
+    const auto processStartTicks =
+        juce::Time::getHighResolutionTicks();
+
     auto ticksToMicros =
         [](juce::int64 tickCount) noexcept
         {
@@ -349,9 +354,6 @@ void PolyHostPluginProcessor::processBlock(
     diagnosticLastInputMidiEventCount.store(
         midiMessages.getNumEvents(),
         std::memory_order_relaxed);
-
-    const auto processStartTicks =
-        juce::Time::getHighResolutionTicks();
 
     juce::ScopedNoDenormals noDenormals;
 
@@ -491,6 +493,13 @@ void PolyHostPluginProcessor::processBlock(
         ticksToMicros(
             processEndTicks
             - processStartTicks);
+
+    if (buffer.getNumSamples() > 0)
+    {
+        audioProcessLoadMeasurer.registerRenderTime(
+            static_cast<double>(processMicros) * 0.001,
+            buffer.getNumSamples());
+    }
 
     const int postCoreMicros =
         ticksToMicros(
@@ -954,6 +963,22 @@ void PolyHostPluginProcessor::queueMidiKeyboardModulation(int value) noexcept
     pendingMidiKeyboardModulation.store(
         juce::jlimit(0, 127, value),
         std::memory_order_release);
+}
+
+double PolyHostPluginProcessor::getAudioCpuUsagePercent() const noexcept
+{
+    const auto lastProcessActivityMs =
+        diagnosticLastProcessActivityMs.load(
+            std::memory_order_relaxed);
+
+    if (lastProcessActivityMs == 0
+        || juce::Time::getMillisecondCounter()
+               - lastProcessActivityMs > 250u)
+    {
+        return 0.0;
+    }
+
+    return audioProcessLoadMeasurer.getLoadAsPercentage();
 }
 
 void PolyHostPluginProcessor::

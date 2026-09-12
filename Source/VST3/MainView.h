@@ -733,6 +733,7 @@ private:
 
     bool lastKnownDirtyState = false;
     bool lastKnownShowingState = true;
+    int lastDisplayedCpuPercent = 0;
     bool pendingMissingPluginPrompt = false;
     int pendingMissingPluginPromptDelayTicks = 0;
     bool suppressEmptyEditorResize = false;

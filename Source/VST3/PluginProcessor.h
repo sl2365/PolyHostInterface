@@ -91,6 +91,7 @@ public:
     void queueMidiKeyboardPitchBend(int value) noexcept;
     void setMidiKeyboardPitchBendRangeOctaves(int octaves) noexcept;
     void queueMidiKeyboardModulation(int value) noexcept;
+    double getAudioCpuUsagePercent() const noexcept;
     void sampleSuspensionDiagnostics();
     juce::String buildProcessorDiagnosticsText() const;
 
@@ -150,6 +151,7 @@ private:
     std::vector<MacroParameter*> macroParameters;
     juce::MidiBuffer processorMidiInputScratchBuffer;
     juce::MidiBuffer midiOutputResetScratchBuffer;
+    juce::AudioProcessLoadMeasurer audioProcessLoadMeasurer;
     std::atomic<int> pendingMidiKeyboardPitchBend { -1 };
     std::atomic<int> midiKeyboardPitchBendRangeSemitones { 12 };
     std::atomic<int> lastQueuedMidiKeyboardPitchBend { 8192 };
