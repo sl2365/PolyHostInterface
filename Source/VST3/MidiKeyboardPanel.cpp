@@ -41,6 +41,18 @@ void MidiKeyboardPanel::setWidthMode(int newWidthMode)
 
     releaseAllOwnedNotes();
     widthMode = newWidthMode;
+    firstVisibleNote = juce::jlimit(0,
+                                    getMaximumFirstNote(),
+                                    firstVisibleNote);
+    repaint();
+}
+
+void MidiKeyboardPanel::setNoteNamesVisible(bool shouldShow)
+{
+    if (noteNamesVisible == shouldShow)
+        return;
+
+    noteNamesVisible = shouldShow;
     repaint();
 }
 
@@ -142,6 +154,46 @@ void MidiKeyboardPanel::paint(juce::Graphics& graphics)
         graphics.setColour(juce::Colour(0xff111126));
         graphics.drawRoundedRectangle(keyBounds.reduced(0.45f), 1.5f, 0.9f);
     }
+
+    if (noteNamesVisible)
+    {
+        const auto fontHeight = juce::jlimit(8.0f, 12.0f, whiteWidth * 0.48f);
+        graphics.setFont(juce::Font(juce::FontOptions(fontHeight,
+                                                       juce::Font::bold)));
+        graphics.setColour(juce::Colour(0xff343641).withAlpha(0.82f));
+
+        for (int key = 0; key < whiteKeyCount; ++key)
+        {
+            const int note = noteForWhiteKey(key);
+            if (note % 12 != 0)
+                continue;
+
+            const float x = static_cast<float>(keys.getX())
+                          + whiteWidth * static_cast<float>(key);
+            const auto labelBounds = juce::Rectangle<float> {
+                x + 1.0f,
+                static_cast<float>(keys.getBottom()) - fontHeight - 5.0f,
+                juce::jmax(1.0f, whiteWidth - 2.0f),
+                fontHeight + 2.0f
+            };
+            graphics.drawFittedText(
+                juce::MidiMessage::getMidiNoteName(note, true, true, 4),
+                labelBounds.toNearestInt(),
+                juce::Justification::centred,
+                1);
+        }
+    }
+}
+
+void MidiKeyboardPanel::resized()
+{
+    const auto clampedFirstNote = juce::jlimit(
+        0, getMaximumFirstNote(), firstVisibleNote);
+    if (clampedFirstNote != firstVisibleNote)
+    {
+        releaseAllOwnedNotes();
+        firstVisibleNote = clampedFirstNote;
+    }
 }
 
 void MidiKeyboardPanel::mouseDown(const juce::MouseEvent& event)
@@ -151,6 +203,7 @@ void MidiKeyboardPanel::mouseDown(const juce::MouseEvent& event)
     if (event.mods.isLeftButtonDown()
         && getPitchBendBounds().contains(event.getPosition()))
     {
+        pitchBendScrollResetDeadlineMs = 0;
         dragTarget = DragTarget::pitchBend;
         updateControllerFromMouse(event.position);
         return;
@@ -243,6 +296,44 @@ void MidiKeyboardPanel::mouseExit(const juce::MouseEvent&)
     setMouseCursor(juce::MouseCursor::NormalCursor);
 }
 
+void MidiKeyboardPanel::mouseWheelMove(
+    const juce::MouseEvent& event,
+    const juce::MouseWheelDetails& wheel)
+{
+    auto delta = std::abs(wheel.deltaY) >= std::abs(wheel.deltaX)
+                     ? wheel.deltaY : wheel.deltaX;
+    if (wheel.isReversed)
+        delta = -delta;
+
+    if (std::abs(delta) < 0.0001f)
+        return;
+
+    if (getPitchBendBounds().contains(event.getPosition()))
+    {
+        auto change = juce::roundToInt(delta * 4096.0f);
+        if (change == 0)
+            change = delta > 0.0f ? 1 : -1;
+        setPitchBendValue(pitchBendValue + change);
+        pitchBendScrollResetDeadlineMs =
+            juce::Time::getMillisecondCounter() + 100u;
+        return;
+    }
+
+    if (getModulationBounds().contains(event.getPosition()))
+    {
+        auto change = juce::roundToInt(delta * 64.0f);
+        if (change == 0)
+            change = delta > 0.0f ? 1 : -1;
+        setModulationValue(modulationValue + change);
+        return;
+    }
+
+    if (! getKeysBounds().contains(event.getPosition()))
+        return;
+
+    scrollByOctaves(delta > 0.0f ? 1 : -1);
+}
+
 juce::Rectangle<int> MidiKeyboardPanel::getControllerArea() const
 {
     auto area = getLocalBounds().reduced(5);
@@ -308,9 +399,9 @@ float MidiKeyboardPanel::getWhiteKeyWidth() const
                : 0.0f;
 }
 
-int MidiKeyboardPanel::noteForWhiteKey(int whiteKey)
+int MidiKeyboardPanel::noteForWhiteKey(int whiteKey) const
 {
-    return firstNote
+    return firstVisibleNote
          + (whiteKey / whiteKeysPerOctave) * 12
          + whiteNotePattern[static_cast<size_t>(whiteKey % whiteKeysPerOctave)];
 }
@@ -319,6 +410,34 @@ bool MidiKeyboardPanel::hasBlackKeyAfter(int whiteKey)
 {
     return blackKeyAfterWhitePattern[
         static_cast<size_t>(whiteKey % whiteKeysPerOctave)];
+}
+
+int MidiKeyboardPanel::getMaximumFirstNote() const
+{
+    const int whiteKeyCount = getVisibleWhiteKeyCount();
+    if (whiteKeyCount <= 0)
+        return initialFirstNote;
+
+    const int lastKey = whiteKeyCount - 1;
+    const int lastOffset = (lastKey / whiteKeysPerOctave) * 12
+                         + whiteNotePattern[static_cast<size_t>(
+                               lastKey % whiteKeysPerOctave)];
+    return juce::jmax(0, ((127 - lastOffset) / 12) * 12);
+}
+
+void MidiKeyboardPanel::scrollByOctaves(int octaveDelta)
+{
+    const int newFirstNote = juce::jlimit(
+        0,
+        getMaximumFirstNote(),
+        firstVisibleNote + octaveDelta * 12);
+
+    if (newFirstNote == firstVisibleNote)
+        return;
+
+    releaseAllOwnedNotes();
+    firstVisibleNote = newFirstNote;
+    repaint();
 }
 
 juce::Rectangle<float> MidiKeyboardPanel::getBlackKeyBounds(int whiteKey) const
@@ -541,7 +660,41 @@ void MidiKeyboardPanel::setModulationValue(int value)
     repaint();
 }
 
+void MidiKeyboardPanel::displayExternalPitchBend(int value)
+{
+    pitchBendScrollResetDeadlineMs = 0;
+    value = juce::jlimit(0, 16383, value);
+
+    if (pitchBendValue == value)
+        return;
+
+    pitchBendValue = value;
+    repaint();
+}
+
+void MidiKeyboardPanel::displayExternalModulation(int value)
+{
+    value = juce::jlimit(0, 127, value);
+
+    if (modulationValue == value)
+        return;
+
+    modulationValue = value;
+    repaint();
+}
+
 void MidiKeyboardPanel::timerCallback()
 {
+    if (pitchBendScrollResetDeadlineMs != 0)
+    {
+        const auto now = juce::Time::getMillisecondCounter();
+        if (static_cast<juce::int32> (
+                now - pitchBendScrollResetDeadlineMs) >= 0)
+        {
+            pitchBendScrollResetDeadlineMs = 0;
+            setPitchBendValue(8192);
+        }
+    }
+
     repaint();
 }

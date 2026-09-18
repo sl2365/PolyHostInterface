@@ -123,7 +123,9 @@ void RecordingView::RecordingModeSwitch::paint(juce::Graphics& graphics)
         switchArea.getHeight() * 0.5f;
     graphics.setColour(
         isEnabled()
-            ? juce::Colour(0xFF3A6EA5)
+            ? (midiSelected
+                   ? juce::Colour(0xFF3A6EA5)
+                   : juce::Colour(0xFFE08132))
             : juce::Colour(0xFF4A4E58));
     graphics.fillRoundedRectangle(switchArea.toFloat(),
                                   cornerRadius);

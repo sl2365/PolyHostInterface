@@ -2818,6 +2818,11 @@ public:
             std::move(callback));
     }
 
+    void setAppSettings(AppSettings* settingsIn)
+    {
+        appSettings = settingsIn;
+    }
+
     juce::PopupMenu getAdditionalMenuForName(
         const juce::String& menuName) override
     {
@@ -2834,6 +2839,21 @@ public:
         {
             menu.addItem(commandAudioSettings,
                          "Audio Settings");
+
+            if (appSettings != nullptr)
+            {
+                menu.addSeparator();
+                menu.addItem(commandSessionRecall,
+                             "Session Recall",
+                             true,
+                             appSettings->getSessionRecallEnabled());
+                menu.addItem(commandSingleInstance,
+                             "Single Instance",
+                             true,
+                             appSettings->getSingleInstanceEnabled());
+                menu.addSeparator();
+            }
+
             return;
         }
 
@@ -2869,6 +2889,22 @@ public:
             return true;
         }
 
+        if (menuItemID == commandSessionRecall
+            && appSettings != nullptr)
+        {
+            appSettings->setSessionRecallEnabled(
+                ! appSettings->getSessionRecallEnabled());
+            return true;
+        }
+
+        if (menuItemID == commandSingleInstance
+            && appSettings != nullptr)
+        {
+            appSettings->setSingleInstanceEnabled(
+                ! appSettings->getSingleInstanceEnabled());
+            return true;
+        }
+
         if (menuItemID == commandQuit)
         {
             if (auto* application =
@@ -2888,7 +2924,9 @@ private:
     {
         commandAudioSettings = 10001,
         commandMidiSettings = 10002,
-        commandQuit = 10003
+        commandQuit = 10003,
+        commandSessionRecall = 10004,
+        commandSingleInstance = 10005
     };
 
     void showMidiSettingsDialog()
@@ -2994,6 +3032,7 @@ private:
     juce::StandalonePluginHolder& holder;
     StandaloneMidiOutputController& midiOutputController;
     StandaloneTempoControls tempoControls;
+    AppSettings* appSettings = nullptr;
 };
 
 class PolyHostStandaloneWindow final : public juce::DocumentWindow
@@ -3066,6 +3105,8 @@ public:
 
         if (mainView != nullptr)
         {
+            menuExtension.setAppSettings(
+                &mainView->getAppSettings());
             menuExtension.setRecordingViewToggleCallback(
                 [safeMainView =
                      juce::Component::SafePointer<MainView>(mainView)]
@@ -3090,15 +3131,20 @@ public:
         setResizable(editor->isResizable(), false);
 
         constexpr int minimumStandaloneWidth = 530;
+        constexpr int minimumStandaloneHeight = 300;
 
         setResizeLimits(
             minimumStandaloneWidth,
-            1,
+            minimumStandaloneHeight,
             32768,
             32768);
 
-        if (getWidth() < minimumStandaloneWidth)
-            setSize(minimumStandaloneWidth, getHeight());
+        if (getWidth() < minimumStandaloneWidth
+            || getHeight() < minimumStandaloneHeight)
+        {
+            setSize(juce::jmax(minimumStandaloneWidth, getWidth()),
+                    juce::jmax(minimumStandaloneHeight, getHeight()));
+        }
 
         centreWithSize(getWidth(), getHeight());
     }
@@ -3232,6 +3278,9 @@ public:
     {
         AppSettings settings;
 
+        sessionRecallEnabled = settings.getSessionRecallEnabled();
+        singleInstanceEnabled = settings.getSingleInstanceEnabled();
+
         const auto savedStandaloneState =
             settings.getAudioDeviceState().trim();
 
@@ -3245,6 +3294,9 @@ public:
                     *savedStateXml);
             }
         }
+
+        if (! sessionRecallEnabled)
+            standaloneProperties.removeValue("filterState");
     }
 
     const juce::String getApplicationName() override
@@ -3259,7 +3311,7 @@ public:
 
     bool moreThanOneInstanceAllowed() override
     {
-        return false;
+        return ! singleInstanceEnabled;
     }
 
     void anotherInstanceStarted(
@@ -3331,12 +3383,15 @@ public:
         mainWindow.reset();
         DebugLog::write("[Shutdown] window destruction returned");
 
+        AppSettings settings;
+
+        if (! settings.getSessionRecallEnabled())
+            standaloneProperties.removeValue("filterState");
+
         if (auto stateXml =
                 standaloneProperties.createXml(
                     "StandaloneProperties"))
         {
-            AppSettings settings;
-
             settings.setAudioDeviceState(
                 stateXml->toString());
         }
@@ -3456,7 +3511,9 @@ private:
         graphics.setFont(
             juce::Font(juce::FontOptions(16.0f)));
         graphics.drawFittedText(
-            "Loading last session...",
+            sessionRecallEnabled
+                ? "Loading last session..."
+                : "Starting blank session...",
             38,
             137,
             424,
@@ -3584,6 +3641,8 @@ private:
     }
 
     juce::PropertySet standaloneProperties;
+    bool sessionRecallEnabled = true;
+    bool singleInstanceEnabled = true;
     std::unique_ptr<juce::SplashScreen> startupSplash;
     std::unique_ptr<PolyHostStandaloneWindow> mainWindow;
 };

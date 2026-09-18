@@ -1,394 +1,289 @@
 #include "MacroMappingsView.h"
+
 #include <algorithm>
+#include <array>
 
-MacroMappingsView::SortHeaderButton::SortHeaderButton(
-    const juce::String& text)
-    : juce::TextButton(text)
+namespace
 {
-    setMouseCursor(juce::MouseCursor::PointingHandCursor);
+constexpr auto backgroundColour = 0xFF1B263B;
+constexpr auto tableBackgroundColour = 0xFF151A23;
+constexpr auto selectedRowColour = 0xFF385A72;
+constexpr auto accentAColour = 0xFF57D6D0;
+constexpr auto accentBColour = 0xFFFFA24C;
+constexpr auto macroColour = 0xFF61D9C7;
+
+juce::Colour colourForTab(int tabIndex)
+{
+    static constexpr std::array<juce::uint32, 25> palette {
+        0xFF2E6F9E, 0xFFA65D2E, 0xFF397D54, 0xFF704F9B, 0xFF9A3F50,
+        0xFF2F7F7B, 0xFF8A7028, 0xFF465EAF, 0xFF98503D, 0xFF34735F,
+        0xFF7E4F82, 0xFF2B718D, 0xFF64743A, 0xFF964966, 0xFF355C8A,
+        0xFF90612F, 0xFF3F7650, 0xFF684C84, 0xFF8D493F, 0xFF357883,
+        0xFF7E6B32, 0xFF5665A0, 0xFF92544B, 0xFF3D786D, 0xFF824A70
+    };
+
+    const auto index = static_cast<std::size_t>(
+        juce::jmax(0, tabIndex) % static_cast<int>(palette.size()));
+    return juce::Colour(palette[index]);
+}
 }
 
-void MacroMappingsView::SortHeaderButton::setDirection(
-    Direction newDirection)
+class MacroMappingsView::MappedCell final : public juce::Component
 {
-    if (direction == newDirection)
-        return;
-
-    direction = newDirection;
-    repaint();
-}
-
-void MacroMappingsView::SortHeaderButton::paintButton(
-    juce::Graphics& g,
-    bool isMouseOverButton,
-    bool isButtonDown)
-{
-    auto bounds = getLocalBounds();
-
-    if (isMouseOverButton || isButtonDown)
+public:
+    explicit MappedCell(MacroMappingsView& ownerIn) : owner(ownerIn)
     {
-        g.setColour(
-            juce::Colour(0xFF3A506B).withAlpha(
-                isButtonDown ? 0.65f : 0.40f));
-        g.fillRoundedRectangle(
-            bounds.toFloat().reduced(1.0f),
-            3.0f);
-    }
-
-    const bool isActive = direction != Direction::none;
-    const auto font =
-        juce::Font(juce::FontOptions(13.0f, juce::Font::bold));
-
-    g.setFont(font);
-    g.setColour(
-        isActive
-            ? juce::Colour(0xFFB9DAFF)
-            : juce::Colour(0xFF79B8FF));
-    g.drawText(getButtonText(),
-               bounds,
-               juce::Justification::centredLeft,
-               true);
-
-    if (! isActive)
-        return;
-
-    const float arrowCentreX = juce::jmin(
-        (float) bounds.getRight() - 5.0f,
-        (float) bounds.getX()
-            + (float) getButtonText().length() * 7.0f
-            + 7.0f);
-    const float arrowCentreY =
-        (float) bounds.getCentreY();
-
-    juce::Path arrow;
-
-    if (direction == Direction::ascending)
-    {
-        arrow.startNewSubPath(
-            arrowCentreX,
-            arrowCentreY - 3.0f);
-        arrow.lineTo(
-            arrowCentreX - 3.5f,
-            arrowCentreY + 2.5f);
-        arrow.lineTo(
-            arrowCentreX + 3.5f,
-            arrowCentreY + 2.5f);
-    }
-    else
-    {
-        arrow.startNewSubPath(
-            arrowCentreX - 3.5f,
-            arrowCentreY - 2.5f);
-        arrow.lineTo(
-            arrowCentreX + 3.5f,
-            arrowCentreY - 2.5f);
-        arrow.lineTo(
-            arrowCentreX,
-            arrowCentreY + 3.0f);
-    }
-
-    arrow.closeSubPath();
-    g.fillPath(arrow);
-}
-
-MacroMappingsView::MappingRow::DragHandle::DragHandle()
-{
-    setMouseCursor(juce::MouseCursor::DraggingHandCursor);
-    setTooltip("Drag to reorder this mapping");
-}
-
-void MacroMappingsView::MappingRow::DragHandle::setReorderingEnabled(
-    bool shouldBeEnabled)
-{
-    reorderingEnabled = shouldBeEnabled;
-    dragStarted = false;
-
-    setMouseCursor(
-        reorderingEnabled
-            ? juce::MouseCursor::DraggingHandCursor
-            : juce::MouseCursor::NormalCursor);
-
-    setTooltip(
-        reorderingEnabled
-            ? "Drag to reorder this mapping"
-            : "Return to Macro order before reordering mappings");
-
-    repaint();
-}
-
-void MacroMappingsView::MappingRow::DragHandle::paint(juce::Graphics& g)
-{
-    const auto centre = getLocalBounds().toFloat().getCentre();
-    const auto colour = ! reorderingEnabled
-                            ? juce::Colours::lightgrey.withAlpha(0.25f)
-                            : (dragStarted || isMouseOverOrDragging()
-                                   ? juce::Colour(0xFF79B8FF)
-                                   : juce::Colours::lightgrey.withAlpha(0.70f));
-
-    g.setColour(colour);
-
-    constexpr float dotSize = 3.0f;
-    constexpr float xOffset = 3.25f;
-    constexpr float ySpacing = 6.0f;
-
-    for (int column = -1; column <= 1; column += 2)
-    {
-        for (int row = -1; row <= 1; ++row)
+        enabledButton.setClickingTogglesState(true);
+        enabledButton.setTooltip(
+            "Assign this parameter to the next free Macro, or pause/resume its existing Macro");
+        enabledButton.setColour(juce::ToggleButton::tickColourId,
+                                juce::Colour(macroColour));
+        enabledButton.setColour(juce::ToggleButton::tickDisabledColourId,
+                                juce::Colour(macroColour).withAlpha(0.35f));
+        enabledButton.onClick = [this]
         {
-            g.fillEllipse(
-                centre.x + (float) column * xOffset - dotSize * 0.5f,
-                centre.y + (float) row * ySpacing - dotSize * 0.5f,
-                dotSize,
-                dotSize);
+            owner.changeMappingEnabled(entry,
+                                       enabledButton.getToggleState());
+        };
+        addAndMakeVisible(enabledButton);
+    }
+
+    void setEntry(const ParameterEntry& newEntry)
+    {
+        entry = newEntry;
+        enabledButton.setToggleState(entry.macroIndex >= 0
+                                         && entry.mappingEnabled,
+                                     juce::dontSendNotification);
+        enabledButton.setTooltip(
+            entry.macroIndex < 0
+                ? "Assign this parameter to the next free PHI Macro"
+                : (entry.mappingEnabled
+                       ? "Temporarily pause this Macro mapping without deleting it"
+                       : "Resume this preserved Macro mapping"));
+    }
+
+    void paint(juce::Graphics& g) override
+    {
+        g.setColour(juce::Colours::white.withAlpha(
+            owner.showSeqwencerTargets ? 0.12f : 0.24f));
+        g.drawVerticalLine(getWidth() - 1, 2.0f,
+                           (float) getHeight() - 2.0f);
+    }
+
+    void resized() override
+    {
+        enabledButton.setBounds(
+            getLocalBounds().withSizeKeepingCentre(26, getHeight()));
+    }
+
+private:
+    MacroMappingsView& owner;
+    ParameterEntry entry;
+    juce::ToggleButton enabledButton;
+};
+
+class MacroMappingsView::TargetsCell final : public juce::Component
+{
+public:
+    explicit TargetsCell(MacroMappingsView& ownerIn) : owner(ownerIn)
+    {
+        configureButton(buttonA, "A", juce::Colour(accentAColour));
+        configureButton(buttonB, "B", juce::Colour(accentBColour));
+        buttonA.onClick = [this]
+        {
+            owner.changeTarget(entry, 0, buttonA.getToggleState());
+        };
+        buttonB.onClick = [this]
+        {
+            owner.changeTarget(entry, 1, buttonB.getToggleState());
+        };
+        addAndMakeVisible(buttonA);
+        addAndMakeVisible(buttonB);
+    }
+
+    void setEntry(const ParameterEntry& newEntry, bool isSerialMode)
+    {
+        entry = newEntry;
+        const auto stateA = entry.targetA;
+        const auto stateB = isSerialMode ? stateA : entry.targetB;
+        buttonA.setToggleState(stateA, juce::dontSendNotification);
+        buttonB.setToggleState(stateB, juce::dontSendNotification);
+        buttonA.setTooltip(isSerialMode
+                               ? "Shared Seqwencer SERIAL target"
+                               : "Seqwencer A target");
+        buttonB.setTooltip(isSerialMode
+                               ? "Shared Seqwencer SERIAL target"
+                               : "Seqwencer B target");
+    }
+
+    void paint(juce::Graphics& g) override
+    {
+        // Keep the Targets/Macro boundary more distinct than the ordinary
+        // table grid so the controls cannot appear to belong to one column.
+        g.setColour(juce::Colours::white.withAlpha(0.24f));
+        g.drawVerticalLine(getWidth() - 1, 1.0f,
+                           (float) getHeight() - 1.0f);
+    }
+
+    void resized() override
+    {
+        auto area = getLocalBounds().reduced(6, 1);
+        const auto half = area.getWidth() / 2;
+        buttonA.setBounds(area.removeFromLeft(half));
+        buttonB.setBounds(area);
+    }
+
+private:
+    static void configureButton(juce::ToggleButton& button,
+                                const juce::String& text,
+                                juce::Colour accent)
+    {
+        button.setButtonText(text);
+        button.setClickingTogglesState(true);
+        button.setColour(juce::ToggleButton::textColourId,
+                         juce::Colours::white);
+        button.setColour(juce::ToggleButton::tickColourId, accent);
+        button.setColour(juce::ToggleButton::tickDisabledColourId,
+                         accent.withAlpha(0.35f));
+    }
+
+    MacroMappingsView& owner;
+    ParameterEntry entry;
+    juce::ToggleButton buttonA;
+    juce::ToggleButton buttonB;
+};
+
+class MacroMappingsView::MacroCell final : public juce::Component
+{
+public:
+    explicit MacroCell(MacroMappingsView& ownerIn)
+        : owner(ownerIn),
+          replaceButton(ButtonStyling::Glyphs::replace()),
+          deleteButton(ButtonStyling::Glyphs::close(),
+                       ButtonStyling::destructiveBackground())
+    {
+        replaceButton.onClick = [this]
+        {
+            if (entry.macroIndex >= 0 && owner.onReplaceMapping)
+                owner.onReplaceMapping(entry.macroIndex);
+        };
+        deleteButton.onClick = [this]
+        {
+            if (entry.macroIndex >= 0)
+                owner.confirmDelete(entry);
+        };
+        addAndMakeVisible(replaceButton);
+        addAndMakeVisible(deleteButton);
+    }
+
+    void setEntry(const ParameterEntry& newEntry)
+    {
+        entry = newEntry;
+        const auto mapped = entry.macroIndex >= 0;
+        replaceButton.setVisible(mapped);
+        deleteButton.setVisible(mapped);
+        replaceButton.setTooltip(mapped
+            ? "Replace Macro "
+                + juce::String(entry.macroIndex + 1).paddedLeft('0', 3)
+                + " with the last touched parameter"
+            : juce::String());
+        deleteButton.setTooltip(mapped
+            ? "Permanently delete Macro "
+                + juce::String(entry.macroIndex + 1).paddedLeft('0', 3)
+                + " and its Seqwencer assignments"
+            : juce::String());
+        repaint();
+    }
+
+    void paint(juce::Graphics& g) override
+    {
+        if (entry.macroIndex >= 0)
+        {
+            g.setColour(juce::Colour(macroColour));
+            g.setFont(juce::Font(juce::FontOptions(12.5f,
+                                                   juce::Font::bold)));
+            g.drawFittedText(
+                juce::String(entry.macroIndex + 1).paddedLeft('0', 3),
+                getLocalBounds().withTrimmedRight(60).reduced(5, 1),
+                juce::Justification::centred,
+                1);
         }
-    }
-}
 
-void MacroMappingsView::MappingRow::DragHandle::mouseDown(
-    const juce::MouseEvent& event)
-{
-    juce::ignoreUnused(event);
-
-    if (! reorderingEnabled)
-        return;
-
-    dragStarted = false;
-    repaint();
-}
-
-void MacroMappingsView::MappingRow::DragHandle::mouseDrag(
-    const juce::MouseEvent& event)
-{
-    if (! reorderingEnabled
-        || ! event.mods.isLeftButtonDown())
-        return;
-
-    const auto screenPosition = event.getScreenPosition();
-
-    if (! dragStarted
-        && event.getDistanceFromDragStart() >= 4)
-    {
-        dragStarted = true;
-
-        if (onDragStarted)
-            onDragStarted(screenPosition);
+        g.setColour(juce::Colours::white.withAlpha(0.12f));
+        g.drawVerticalLine(0, 1.0f,
+                           (float) getHeight() - 1.0f);
+        g.drawVerticalLine(getWidth() - 1, 2.0f,
+                           (float) getHeight() - 2.0f);
     }
 
-    if (dragStarted && onDragMoved)
-        onDragMoved(screenPosition);
-
-    repaint();
-}
-
-void MacroMappingsView::MappingRow::DragHandle::mouseUp(
-    const juce::MouseEvent& event)
-{
-    if (! reorderingEnabled)
-        return;
-
-    if (dragStarted && onDragEnded)
-        onDragEnded(event.getScreenPosition());
-
-    dragStarted = false;
-    repaint();
-}
-
-MacroMappingsView::MappingRow::MappingRow()
-{
-    auto configureLabel = [](juce::Label& label, juce::Justification justification)
+    void resized() override
     {
-        label.setJustificationType(justification);
-        label.setColour(juce::Label::textColourId, juce::Colours::white);
-    };
+        auto area = getLocalBounds().reduced(4, 3);
+        deleteButton.setBounds(area.removeFromRight(25));
+        area.removeFromRight(3);
+        replaceButton.setBounds(area.removeFromRight(25));
+    }
 
-    configureLabel(macroLabel, juce::Justification::centredLeft);
-    configureLabel(tabLabel, juce::Justification::centredLeft);
-    configureLabel(pluginLabel, juce::Justification::centredLeft);
-    configureLabel(parameterLabel, juce::Justification::centredLeft);
-
-    addAndMakeVisible(macroLabel);
-    addAndMakeVisible(tabLabel);
-    addAndMakeVisible(pluginLabel);
-    addAndMakeVisible(parameterLabel);
-    addAndMakeVisible(dragHandle);
-    addAndMakeVisible(replaceButton);
-    addAndMakeVisible(deleteButton);
-
-    replaceButton.setTooltip("Replace this macro target with the\ncurrent last touched parameter");
-    deleteButton.setTooltip("Delete this macro mapping");
-
-    dragHandle.onDragStarted = [this](juce::Point<int> screenPosition)
-    {
-        if (onDragStarted)
-            onDragStarted(entry.macroIndex, screenPosition);
-    };
-
-    dragHandle.onDragMoved = [this](juce::Point<int> screenPosition)
-    {
-        if (onDragMoved)
-            onDragMoved(entry.macroIndex, screenPosition);
-    };
-
-    dragHandle.onDragEnded = [this](juce::Point<int> screenPosition)
-    {
-        if (onDragEnded)
-            onDragEnded(entry.macroIndex, screenPosition);
-    };
-
-    replaceButton.onClick = [this]
-    {
-        if (onReplace)
-            onReplace(entry.macroIndex);
-    };
-
-    deleteButton.onClick = [this]
-    {
-        if (onDeleteMapping)
-            onDeleteMapping(entry.macroIndex);
-    };
-}
-
-void MacroMappingsView::MappingRow::setMapping(const MappingEntry& newEntry)
-{
-    entry = newEntry;
-
-    macroLabel.setText("Macro " + juce::String(entry.macroIndex + 1).paddedLeft('0', 3),
-                       juce::dontSendNotification);
-
-    tabLabel.setText(entry.tabIndex >= 0 ? ("Tab " + juce::String(entry.tabIndex + 1)) : "-",
-                     juce::dontSendNotification);
-
-    pluginLabel.setText(entry.pluginName.isNotEmpty() ? entry.pluginName : "-",
-                        juce::dontSendNotification);
-
-    parameterLabel.setText(entry.parameterName.isNotEmpty()
-                               ? entry.parameterName
-                               : (entry.parameterIndex >= 0
-                                      ? ("Parameter " + juce::String(entry.parameterIndex))
-                                      : "-"),
-                           juce::dontSendNotification);
-
-    repaint();
-}
-
-void MacroMappingsView::MappingRow::setReorderingEnabled(
-    bool shouldBeEnabled)
-{
-    dragHandle.setReorderingEnabled(shouldBeEnabled);
-}
-
-void MacroMappingsView::MappingRow::paint(juce::Graphics& g)
-{
-    auto area = getLocalBounds().toFloat();
-
-    g.setColour(juce::Colour(0xFF243B55));
-    g.fillRoundedRectangle(area.reduced(1.0f), 8.0f);
-
-    g.setColour(juce::Colour(0xFF3A506B));
-    g.drawRoundedRectangle(area.reduced(1.0f), 8.0f, 1.2f);
-}
-
-void MacroMappingsView::MappingRow::resized()
-{
-    auto area = getLocalBounds().reduced(10);
-
-    auto dragArea = area.removeFromLeft(20);
-    dragHandle.setBounds(
-        dragArea.withSizeKeepingCentre(
-            dragArea.getWidth(),
-            ButtonStyling::defaultButtonHeight()));
-    area.removeFromLeft(8);
-
-    auto deleteArea = area.removeFromRight(ButtonStyling::defaultButtonWidth());
-    deleteArea = deleteArea.withSizeKeepingCentre(deleteArea.getWidth(),
-                                                  ButtonStyling::defaultButtonHeight());
-    deleteButton.setBounds(deleteArea);
-
-    area.removeFromRight(6);
-
-    auto replaceArea = area.removeFromRight(ButtonStyling::defaultButtonWidth());
-    replaceArea = replaceArea.withSizeKeepingCentre(replaceArea.getWidth(),
-                                                    ButtonStyling::defaultButtonHeight());
-    replaceButton.setBounds(replaceArea);
-
-    area.removeFromRight(10);
-
-    macroLabel.setBounds(area.removeFromLeft(100));
-    area.removeFromLeft(10);
-
-    tabLabel.setBounds(area.removeFromLeft(70));
-    area.removeFromLeft(10);
-
-    pluginLabel.setBounds(area.removeFromLeft(220));
-    area.removeFromLeft(10);
-
-    parameterLabel.setBounds(area);
-}
+private:
+    MacroMappingsView& owner;
+    ParameterEntry entry;
+    ButtonStyling::SmallIconButton replaceButton;
+    ButtonStyling::SmallIconButton deleteButton;
+};
 
 MacroMappingsView::MacroMappingsView()
 {
     titleLabel.setText("Macro Mappings", juce::dontSendNotification);
     titleLabel.setJustificationType(juce::Justification::centredLeft);
-    titleLabel.setFont(juce::Font(juce::FontOptions(22.0f, juce::Font::bold)));
+    titleLabel.setFont(juce::Font(juce::FontOptions(22.0f,
+                                                    juce::Font::bold)));
     titleLabel.setColour(juce::Label::textColourId, juce::Colours::white);
     addAndMakeVisible(titleLabel);
 
-    helpLabel.setText("These are global PolyHost macro mappings. Use Macro 001-128 in your DAW, ignore the MIDI CC entries.",
-                      juce::dontSendNotification);
+    helpLabel.setColour(juce::Label::textColourId,
+                        juce::Colours::lightgrey);
+    helpLabel.setFont(juce::Font(juce::FontOptions(13.0f)));
     helpLabel.setJustificationType(juce::Justification::centredLeft);
-    helpLabel.setColour(juce::Label::textColourId, juce::Colours::lightgrey);
-    helpLabel.setFont(juce::Font(juce::FontOptions(14.0f)));
     addAndMakeVisible(helpLabel);
 
-    filterLabel.setText("Filter:", juce::dontSendNotification);
-    filterLabel.setJustificationType(juce::Justification::centredLeft);
-    filterLabel.setColour(juce::Label::textColourId, juce::Colours::white);
-    addAndMakeVisible(filterLabel);
-
-    filterEditor.setTextToShowWhenEmpty("Search by macro, tab, plugin, or parameter", juce::Colours::grey);
+    filterEditor.setTextToShowWhenEmpty(
+        "Search tabs, plug-ins, parameters or Macros...",
+        juce::Colours::grey);
+    filterEditor.setColour(juce::TextEditor::backgroundColourId,
+                           juce::Colour(tableBackgroundColour));
+    filterEditor.setColour(juce::TextEditor::textColourId,
+                           juce::Colours::white);
+    filterEditor.setColour(juce::TextEditor::outlineColourId,
+                           juce::Colours::white.withAlpha(0.25f));
     filterEditor.onTextChange = [this]
     {
-        setFilterText(filterEditor.getText());
+        filterText = filterEditor.getText().trim();
+        rebuildFilter();
     };
     addAndMakeVisible(filterEditor);
 
-    auto configureHeaderLabel = [this](juce::Label& label, const juce::String& text)
+    assignedOnlyButton.setClickingTogglesState(true);
+    assignedOnlyButton.setTooltip(
+        "Toggle between every parameter and parameters with a Macro assignment");
+    assignedOnlyButton.setColour(
+        juce::TextButton::buttonColourId,
+        ButtonStyling::defaultBackground());
+    assignedOnlyButton.setColour(
+        juce::TextButton::buttonOnColourId,
+        juce::Colour(macroColour).darker(0.45f));
+    assignedOnlyButton.onClick = [this]
     {
-        label.setText(text, juce::dontSendNotification);
-        label.setJustificationType(juce::Justification::centredLeft);
-        label.setColour(juce::Label::textColourId, juce::Colours::lightgrey);
-        label.setFont(juce::Font(juce::FontOptions(13.0f, juce::Font::bold)));
-        addAndMakeVisible(label);
+        assignedOnly = assignedOnlyButton.getToggleState();
+        rebuildFilter();
     };
+    addAndMakeVisible(assignedOnlyButton);
 
-    configureHeaderLabel(macroHeaderLabel, "Macro");
-
-    tabHeaderButton.onClick = [this]
-    {
-        cycleSort(SortColumn::tab);
-    };
-
-    pluginHeaderButton.onClick = [this]
-    {
-        cycleSort(SortColumn::plugin);
-    };
-
-    parameterHeaderButton.onClick = [this]
-    {
-        cycleSort(SortColumn::parameter);
-    };
-
-    addAndMakeVisible(tabHeaderButton);
-    addAndMakeVisible(pluginHeaderButton);
-    addAndMakeVisible(parameterHeaderButton);
-    updateSortHeaderButtons();
-
+    undoButton.setEnabled(false);
     undoButton.onClick = [this]
     {
         if (onUndoLastEdit)
             onUndoLastEdit();
     };
-    undoButton.setEnabled(false);
     addAndMakeVisible(undoButton);
 
     clearAllButton.onClick = [this]
@@ -398,48 +293,80 @@ MacroMappingsView::MacroMappingsView()
     };
     addAndMakeVisible(clearAllButton);
 
-    emptyLabel.setText("No macro mappings.\n\nAdjust a hosted parameter, then click the toolbar 'Map Last Touched' button.",
-                       juce::dontSendNotification);
-    emptyLabel.setJustificationType(juce::Justification::centred);
-    emptyLabel.setColour(juce::Label::textColourId, juce::Colours::lightgrey);
-    addAndMakeVisible(emptyLabel);
+    parameterTable.setModel(this);
+    parameterTable.setRowHeight(28);
+    parameterTable.setHeaderHeight(28);
+    parameterTable.setOutlineThickness(1);
+    parameterTable.setMultipleSelectionEnabled(false);
+    parameterTable.setColour(juce::ListBox::backgroundColourId,
+                             juce::Colour(tableBackgroundColour));
+    parameterTable.setColour(juce::ListBox::outlineColourId,
+                             juce::Colours::white.withAlpha(0.18f));
 
-    viewport.setViewedComponent(&contentComponent, false);
-    viewport.setScrollBarsShown(true, false);
-    viewport.setSingleStepSizes(16, 4);
-    addAndMakeVisible(viewport);
+    auto& header = parameterTable.getHeader();
+    header.addColumn("Tab", tabColumn, 58, 48, 90);
+    header.addColumn("Plugin", pluginColumn, 220, 120, 420);
+    header.addColumn("Parameter", parameterColumn, 350, 150, 620);
+    header.addColumn("Mapped", mappedColumn, 84, 72, 110);
+    header.addColumn("Targets", targetsColumn, 128, 110, 170);
+    header.addColumn("Macro", macroColumn, 134, 118, 170);
+    header.setPopupMenuActive(false);
+    header.setStretchToFitActive(true);
+    header.setSortColumnId(tabColumn, true);
+    addAndMakeVisible(parameterTable);
+
+    countLabel.setColour(juce::Label::textColourId,
+                         juce::Colours::lightgrey);
+    countLabel.setJustificationType(juce::Justification::centredLeft);
+    addAndMakeVisible(countLabel);
+
+    setParameters({}, false, false);
 }
 
-void MacroMappingsView::setMappings(const juce::Array<MappingEntry>& newMappings)
+void MacroMappingsView::setParameters(
+    const juce::Array<ParameterEntry>& newParameters,
+    bool shouldShowSeqwencerTargets,
+    bool isSerialMode)
 {
-    if (draggedMacroIndex >= 0)
+    allParameters = newParameters;
+    serialMode = isSerialMode;
+
+    showSeqwencerTargets = shouldShowSeqwencerTargets;
+    auto& header = parameterTable.getHeader();
+    header.setColumnVisible(targetsColumn, showSeqwencerTargets);
+
+    if (! showSeqwencerTargets && sortColumn == targetsColumn)
     {
-        deferredMappings = newMappings;
-        hasDeferredMappings = true;
-        return;
+        sortColumn = tabColumn;
+        sortForwards = true;
+        header.setSortColumnId(tabColumn, true);
     }
 
-    allMappings = newMappings;
+    helpLabel.setText(
+        showSeqwencerTargets
+            ? (serialMode
+                   ? "Mapped pauses or resumes a Macro. SERIAL mirrors A/B as one 64-step target; Replace keeps the Macro number and X deletes it."
+                   : "Mapped pauses or resumes a Macro. A/B are independent Seqwencer targets; Replace keeps the Macro number and X deletes it.")
+            : "Mapped assigns the next free Macro or pauses/resumes it. Replace keeps the Macro number; X permanently deletes the assignment.",
+        juce::dontSendNotification);
 
-    if (allMappings.size() > 1)
-    {
-        std::sort(allMappings.begin(),
-                  allMappings.end(),
-                  [](const MappingEntry& first, const MappingEntry& second)
-                  {
-                      return first.macroIndex < second.macroIndex;
-                  });
-    }
+    clearAllButton.setEnabled(
+        std::any_of(allParameters.begin(), allParameters.end(),
+                    [](const ParameterEntry& entry)
+                    {
+                        return entry.macroIndex >= 0;
+                    }));
 
-    rebuildRows();
-    resized();
+    rebuildFilter();
 }
 
 void MacroMappingsView::setFilterText(const juce::String& newFilterText)
 {
-    filterText = newFilterText.trim();
-    rebuildRows();
-    resized();
+    const auto trimmed = newFilterText.trim();
+    if (filterEditor.getText() != trimmed)
+        filterEditor.setText(trimmed, juce::dontSendNotification);
+    filterText = trimmed;
+    rebuildFilter();
 }
 
 void MacroMappingsView::setUndoAvailable(bool shouldBeAvailable)
@@ -447,537 +374,337 @@ void MacroMappingsView::setUndoAvailable(bool shouldBeAvailable)
     undoButton.setEnabled(shouldBeAvailable);
 }
 
-bool MacroMappingsView::matchesFilter(const MappingEntry& entry) const
+int MacroMappingsView::getNumRows()
 {
+    return filteredParameterIndices.size();
+}
+
+const MacroMappingsView::ParameterEntry*
+MacroMappingsView::getEntryForRow(int rowNumber) const
+{
+    if (! juce::isPositiveAndBelow(rowNumber,
+                                   filteredParameterIndices.size()))
+        return nullptr;
+
+    const auto entryIndex = filteredParameterIndices[rowNumber];
+    return juce::isPositiveAndBelow(entryIndex, allParameters.size())
+        ? &allParameters.getReference(entryIndex)
+        : nullptr;
+}
+
+void MacroMappingsView::paintRowBackground(juce::Graphics& g,
+                                           int rowNumber,
+                                           int width,
+                                           int height,
+                                           bool rowIsSelected)
+{
+    if (rowIsSelected)
+        g.fillAll(juce::Colour(selectedRowColour));
+    else if ((rowNumber & 1) != 0)
+        g.fillAll(juce::Colours::white.withAlpha(0.025f));
+
+    g.setColour(juce::Colours::white.withAlpha(0.08f));
+    g.drawHorizontalLine(height - 1, 0.0f, (float) width);
+}
+
+void MacroMappingsView::paintCell(juce::Graphics& g,
+                                  int rowNumber,
+                                  int columnId,
+                                  int width,
+                                  int height,
+                                  bool rowIsSelected)
+{
+    const auto* entry = getEntryForRow(rowNumber);
+    if (entry == nullptr
+        || columnId == mappedColumn
+        || columnId == targetsColumn
+        || columnId == macroColumn)
+        return;
+
+    juce::String cellText;
+    auto justification = juce::Justification::centredLeft;
+
+    if (columnId == tabColumn)
+    {
+        cellText = juce::String(entry->tabIndex + 1);
+        justification = juce::Justification::centred;
+    }
+    else if (columnId == pluginColumn)
+    {
+        cellText = entry->pluginName;
+    }
+    else if (columnId == parameterColumn)
+    {
+        cellText = entry->parameterName;
+    }
+
+    const auto tabTextColour = colourForTab(entry->tabIndex)
+        .interpolatedWith(juce::Colours::white,
+                          rowIsSelected ? 0.55f : 0.35f);
+    g.setColour(tabTextColour);
+    g.setFont(juce::Font(juce::FontOptions(12.5f)));
+    g.drawFittedText(cellText,
+                     juce::Rectangle<int>(0, 0, width, height).reduced(8, 1),
+                     justification,
+                     1);
+
+    g.setColour(juce::Colours::white.withAlpha(0.10f));
+    g.drawVerticalLine(width - 1, 2.0f, (float) height - 2.0f);
+}
+
+juce::Component* MacroMappingsView::refreshComponentForCell(
+    int rowNumber,
+    int columnId,
+    bool,
+    juce::Component* existingComponentToUpdate)
+{
+    const auto* entry = getEntryForRow(rowNumber);
+    if (entry == nullptr)
+    {
+        delete existingComponentToUpdate;
+        return nullptr;
+    }
+
+    if (columnId == mappedColumn)
+    {
+        auto* cell = dynamic_cast<MappedCell*>(existingComponentToUpdate);
+        if (cell == nullptr)
+        {
+            delete existingComponentToUpdate;
+            cell = new MappedCell(*this);
+        }
+        cell->setEntry(*entry);
+        return cell;
+    }
+
+    if (columnId == targetsColumn && showSeqwencerTargets)
+    {
+        auto* cell = dynamic_cast<TargetsCell*>(existingComponentToUpdate);
+        if (cell == nullptr)
+        {
+            delete existingComponentToUpdate;
+            cell = new TargetsCell(*this);
+        }
+        cell->setEntry(*entry, serialMode);
+        return cell;
+    }
+
+    if (columnId == macroColumn)
+    {
+        auto* cell = dynamic_cast<MacroCell*>(existingComponentToUpdate);
+        if (cell == nullptr)
+        {
+            delete existingComponentToUpdate;
+            cell = new MacroCell(*this);
+        }
+        cell->setEntry(*entry);
+        return cell;
+    }
+
+    delete existingComponentToUpdate;
+    return nullptr;
+}
+
+void MacroMappingsView::sortOrderChanged(int newSortColumnId,
+                                         bool isForwards)
+{
+    if (newSortColumnId < tabColumn || newSortColumnId > macroColumn
+        || (! showSeqwencerTargets && newSortColumnId == targetsColumn))
+        return;
+
+    sortColumn = newSortColumnId;
+    sortForwards = isForwards;
+    rebuildFilter();
+}
+
+bool MacroMappingsView::matchesFilter(const ParameterEntry& entry) const
+{
+    if (assignedOnly && entry.macroIndex < 0)
+        return false;
+
     if (filterText.isEmpty())
         return true;
 
-    const auto needle = filterText.toLowerCase();
+    auto searchable = juce::String(entry.tabIndex + 1)
+        + " " + entry.tabName
+        + " " + entry.pluginName
+        + " " + entry.parameterName;
 
-    const juce::String haystack =
-        ("macro " + juce::String(entry.macroIndex + 1)
-         + " " + entry.label
-         + " tab " + juce::String(entry.tabIndex + 1)
-         + " " + entry.pluginName
-         + " " + entry.parameterName).toLowerCase();
+    if (entry.macroIndex >= 0)
+    {
+        searchable += " macro "
+            + juce::String(entry.macroIndex + 1).paddedLeft('0', 3)
+            + (entry.mappingEnabled ? " mapped enabled" : " paused disabled");
+    }
 
-    return haystack.contains(needle);
+    return searchable.toLowerCase().contains(filterText.toLowerCase());
 }
 
-void MacroMappingsView::cycleSort(SortColumn column)
+int MacroMappingsView::compareEntries(const ParameterEntry& first,
+                                      const ParameterEntry& second) const
 {
-    if (sortColumn != column)
+    auto result = 0;
+
+    if (sortColumn == tabColumn)
+        result = first.tabIndex - second.tabIndex;
+    else if (sortColumn == pluginColumn)
+        result = first.pluginName.compareNatural(second.pluginName);
+    else if (sortColumn == parameterColumn)
+        result = first.parameterName.compareNatural(second.parameterName);
+    else if (sortColumn == mappedColumn)
     {
-        sortColumn = column;
-        sortAscending = true;
+        const auto firstState = first.macroIndex < 0
+            ? 0 : (first.mappingEnabled ? 2 : 1);
+        const auto secondState = second.macroIndex < 0
+            ? 0 : (second.mappingEnabled ? 2 : 1);
+        result = firstState - secondState;
     }
-    else if (sortAscending)
+    else if (sortColumn == targetsColumn)
     {
-        sortAscending = false;
+        const auto firstMask = (first.targetA ? 1 : 0)
+            | ((serialMode ? first.targetA : first.targetB) ? 2 : 0);
+        const auto secondMask = (second.targetA ? 1 : 0)
+            | ((serialMode ? second.targetA : second.targetB) ? 2 : 0);
+        result = firstMask - secondMask;
     }
-    else
+    else if (sortColumn == macroColumn)
     {
-        sortColumn = SortColumn::macro;
-        sortAscending = true;
+        const auto firstMacro = first.macroIndex >= 0
+            ? first.macroIndex : 1000;
+        const auto secondMacro = second.macroIndex >= 0
+            ? second.macroIndex : 1000;
+        result = firstMacro - secondMacro;
     }
 
-    updateSortHeaderButtons();
-    rebuildRows();
-    resized();
-    viewport.setViewPosition(0, 0);
+    if (result == 0)
+        result = first.tabIndex - second.tabIndex;
+    if (result == 0)
+        result = first.pluginName.compareNatural(second.pluginName);
+    if (result == 0)
+        result = first.parameterName.compareNatural(second.parameterName);
+    if (result == 0)
+        result = first.parameterIndex - second.parameterIndex;
+
+    return sortForwards ? result : -result;
+}
+
+void MacroMappingsView::rebuildFilter()
+{
+    filteredParameterIndices.clearQuick();
+
+    for (int index = 0; index < allParameters.size(); ++index)
+    {
+        if (matchesFilter(allParameters.getReference(index)))
+            filteredParameterIndices.add(index);
+    }
+
+    std::stable_sort(filteredParameterIndices.begin(),
+                     filteredParameterIndices.end(),
+                     [this](int firstIndex, int secondIndex)
+                     {
+                         return compareEntries(
+                                    allParameters.getReference(firstIndex),
+                                    allParameters.getReference(secondIndex)) < 0;
+                     });
+
+    const auto filteredCount = filteredParameterIndices.size();
+    const auto totalCount = allParameters.size();
+    countLabel.setText(
+        filteredCount == totalCount
+            ? juce::String(totalCount)
+                + (totalCount == 1 ? " parameter" : " parameters")
+            : juce::String(filteredCount) + " of " + juce::String(totalCount)
+                + " parameters",
+        juce::dontSendNotification);
+
+    parameterTable.updateContent();
+    parameterTable.repaint();
     repaint();
 }
 
-void MacroMappingsView::sortFilteredMappings()
+void MacroMappingsView::changeMappingEnabled(const ParameterEntry& entry,
+                                             bool enabled)
 {
-    if (sortColumn == SortColumn::macro
-        || filteredMappings.size() < 2)
-    {
+    if (! onSetMappingEnabled)
         return;
+
+    juce::String errorMessage;
+    if (! onSetMappingEnabled(entry, enabled, errorMessage))
+    {
+        showError(errorMessage.isNotEmpty()
+                      ? errorMessage
+                      : "PHI could not change that Macro mapping.");
+        parameterTable.updateContent();
     }
-
-    const auto selectedColumn = sortColumn;
-    const bool ascending = sortAscending;
-
-    std::stable_sort(
-        filteredMappings.begin(),
-        filteredMappings.end(),
-        [selectedColumn, ascending](const MappingEntry& first,
-                                    const MappingEntry& second)
-        {
-            int comparison = 0;
-
-            if (selectedColumn == SortColumn::tab)
-            {
-                const bool firstIsValid = first.tabIndex >= 0;
-                const bool secondIsValid = second.tabIndex >= 0;
-
-                if (firstIsValid != secondIsValid)
-                    return firstIsValid;
-
-                if (first.tabIndex < second.tabIndex)
-                    comparison = -1;
-                else if (first.tabIndex > second.tabIndex)
-                    comparison = 1;
-            }
-            else if (selectedColumn == SortColumn::plugin)
-            {
-                const bool firstIsEmpty = first.pluginName.isEmpty();
-                const bool secondIsEmpty = second.pluginName.isEmpty();
-
-                if (firstIsEmpty != secondIsEmpty)
-                    return ! firstIsEmpty;
-
-                comparison =
-                    first.pluginName.compareIgnoreCase(
-                        second.pluginName);
-            }
-            else if (selectedColumn == SortColumn::parameter)
-            {
-                const bool firstHasName = first.parameterName.isNotEmpty();
-                const bool secondHasName = second.parameterName.isNotEmpty();
-
-                if (firstHasName != secondHasName)
-                    return firstHasName;
-
-                if (firstHasName)
-                {
-                    comparison =
-                        first.parameterName.compareIgnoreCase(
-                            second.parameterName);
-                }
-                else if (first.parameterIndex < second.parameterIndex)
-                {
-                    comparison = -1;
-                }
-                else if (first.parameterIndex > second.parameterIndex)
-                {
-                    comparison = 1;
-                }
-            }
-
-            if (comparison == 0)
-                return false;
-
-            return ascending
-                       ? comparison < 0
-                       : comparison > 0;
-        });
 }
 
-void MacroMappingsView::updateSortHeaderButtons()
+void MacroMappingsView::changeTarget(const ParameterEntry& entry,
+                                     int lane,
+                                     bool assigned)
 {
-    using Direction = SortHeaderButton::Direction;
+    if (! onSetSeqwencerTarget)
+        return;
 
-    const auto directionFor = [this](SortColumn column)
+    juce::String errorMessage;
+    if (! onSetSeqwencerTarget(entry, lane, assigned, errorMessage))
     {
-        if (sortColumn != column)
-            return Direction::none;
-
-        return sortAscending
-                   ? Direction::ascending
-                   : Direction::descending;
-    };
-
-    tabHeaderButton.setDirection(
-        directionFor(SortColumn::tab));
-    pluginHeaderButton.setDirection(
-        directionFor(SortColumn::plugin));
-    parameterHeaderButton.setDirection(
-        directionFor(SortColumn::parameter));
-
-    const auto setTooltip =
-        [this](SortHeaderButton& button,
-               SortColumn column,
-               const juce::String& title)
-        {
-            if (sortColumn != column)
-            {
-                button.setTooltip(
-                    "Sort by " + title + " in ascending order");
-            }
-            else if (sortAscending)
-            {
-                button.setTooltip(
-                    "Sorted by " + title
-                    + " ascending. Click for descending order");
-            }
-            else
-            {
-                button.setTooltip(
-                    "Sorted by " + title
-                    + " descending. Click to restore Macro order");
-            }
-        };
-
-    setTooltip(tabHeaderButton, SortColumn::tab, "Tab");
-    setTooltip(pluginHeaderButton, SortColumn::plugin, "Plugin");
-    setTooltip(parameterHeaderButton, SortColumn::parameter, "Parameter");
+        showError(errorMessage.isNotEmpty()
+                      ? errorMessage
+                      : "PHI could not change that Seqwencer target.");
+        parameterTable.updateContent();
+    }
 }
 
-void MacroMappingsView::rebuildRows()
+void MacroMappingsView::confirmDelete(const ParameterEntry& entry)
 {
-    filteredMappings.clear();
+    if (entry.macroIndex < 0 || ! onDeleteMapping)
+        return;
 
-    for (auto& entry : allMappings)
-    {
-        if (matchesFilter(entry))
-            filteredMappings.add(entry);
-    }
+    juce::Component::SafePointer<MacroMappingsView> safeThis(this);
+    juce::AlertWindow::showOkCancelBox(
+        juce::MessageBoxIconType::WarningIcon,
+        "Delete Macro Mapping",
+        "Delete Macro "
+            + juce::String(entry.macroIndex + 1).paddedLeft('0', 3)
+            + " from " + entry.pluginName + " / "
+            + entry.parameterName + "?\n\nThis also removes its "
+              "Seqwencer A and B assignments.",
+        "Delete",
+        "Cancel",
+        nullptr,
+        juce::ModalCallbackFunction::create(
+            [safeThis, macroIndex = entry.macroIndex](int result)
+            {
+                if (safeThis != nullptr && result != 0
+                    && safeThis->onDeleteMapping)
+                    safeThis->onDeleteMapping(macroIndex);
+            }));
+}
 
-    sortFilteredMappings();
-
-    mappingRows.clear();
-    contentComponent.removeAllChildren();
-
-    for (auto& mapping : filteredMappings)
-    {
-        auto* row = mappingRows.add(new MappingRow());
-        row->setMapping(mapping);
-        row->setReorderingEnabled(
-            sortColumn == SortColumn::macro);
-
-        row->onDeleteMapping = [this](int macroIndex)
-        {
-            if (onDeleteMapping)
-                onDeleteMapping(macroIndex);
-        };
-
-        row->onDragStarted = [this](int macroIndex, juce::Point<int> screenPosition)
-        {
-            beginMappingDrag(macroIndex, screenPosition);
-        };
-
-        row->onDragMoved = [this](int macroIndex, juce::Point<int> screenPosition)
-        {
-            updateMappingDrag(macroIndex, screenPosition);
-        };
-
-        row->onDragEnded = [this](int macroIndex, juce::Point<int> screenPosition)
-        {
-            endMappingDrag(macroIndex, screenPosition);
-        };
-
-        row->onReplace = [this](int macroIndex)
-        {
-            if (onReplaceMapping)
-                onReplaceMapping(macroIndex);
-        };
-
-        contentComponent.addAndMakeVisible(row);
-    }
-
-    const bool hasMappings = ! filteredMappings.isEmpty();
-    viewport.setVisible(hasMappings);
-    emptyLabel.setVisible(! hasMappings);
-
-    macroHeaderLabel.setVisible(hasMappings);
-    tabHeaderButton.setVisible(hasMappings);
-    pluginHeaderButton.setVisible(hasMappings);
-    parameterHeaderButton.setVisible(hasMappings);
+void MacroMappingsView::showError(const juce::String& message)
+{
+    juce::AlertWindow::showMessageBoxAsync(
+        juce::MessageBoxIconType::WarningIcon,
+        "Macro Mappings",
+        message);
 }
 
 void MacroMappingsView::paint(juce::Graphics& g)
 {
-    g.fillAll(juce::Colour(0xFF1B263B));
-}
+    g.fillAll(juce::Colour(backgroundColour));
 
-void MacroMappingsView::paintOverChildren(juce::Graphics& g)
-{
-    if (draggedMacroIndex < 0
-        || dropInsertionIndex < 0
-        || mappingRows.isEmpty()
-        || ! viewport.isVisible())
+    if (filteredParameterIndices.isEmpty())
     {
-        return;
+        g.setColour(juce::Colours::lightgrey);
+        g.setFont(juce::Font(juce::FontOptions(14.0f)));
+        g.drawFittedText(
+            allParameters.isEmpty()
+                ? "No automatable parameters are available. Load a synth or effect into PHI first."
+                : "No parameters match this search.",
+            parameterTable.getBounds().reduced(20),
+            juce::Justification::centred,
+            3);
     }
-
-    const int contentY = getDropIndicatorContentY();
-
-    const int localY =
-        getLocalPoint(
-            &contentComponent,
-            juce::Point<int>(0, contentY)).y;
-
-    auto clip = viewport.getBounds().reduced(2);
-
-    if (localY < clip.getY() - 2
-        || localY > clip.getBottom() + 2)
-    {
-        return;
-    }
-
-    juce::Graphics::ScopedSaveState saveState(g);
-    g.reduceClipRegion(clip);
-
-    auto line = juce::Rectangle<float>(
-        (float) clip.getX() + 8.0f,
-        (float) localY - 1.5f,
-        (float) juce::jmax(0, clip.getWidth() - 28),
-        3.0f);
-
-    const auto indicatorColour = juce::Colour(0xFF4DA3FF);
-
-    g.setColour(indicatorColour);
-    g.fillRoundedRectangle(line, 1.5f);
-    g.fillEllipse(line.getX() - 2.0f,
-                  line.getCentreY() - 3.5f,
-                  7.0f,
-                  7.0f);
-    g.fillEllipse(line.getRight() - 5.0f,
-                  line.getCentreY() - 3.5f,
-                  7.0f,
-                  7.0f);
-}
-
-void MacroMappingsView::beginMappingDrag(
-    int macroIndex,
-    juce::Point<int> screenPosition)
-{
-    if (sortColumn != SortColumn::macro
-        || findFilteredMappingIndex(macroIndex) < 0)
-        return;
-
-    draggedMacroIndex = macroIndex;
-    lastDragScreenPosition = screenPosition;
-    dropInsertionIndex = getDropInsertionIndex(screenPosition);
-    startTimerHz(30);
-    repaint();
-}
-
-void MacroMappingsView::updateMappingDrag(
-    int macroIndex,
-    juce::Point<int> screenPosition)
-{
-    if (macroIndex != draggedMacroIndex)
-        return;
-
-    lastDragScreenPosition = screenPosition;
-    autoScrollForDrag(screenPosition);
-
-    const int newInsertionIndex =
-        getDropInsertionIndex(screenPosition);
-
-    if (newInsertionIndex != dropInsertionIndex)
-    {
-        dropInsertionIndex = newInsertionIndex;
-        repaint();
-    }
-}
-
-void MacroMappingsView::endMappingDrag(
-    int macroIndex,
-    juce::Point<int> screenPosition)
-{
-    if (macroIndex != draggedMacroIndex)
-        return;
-
-    stopTimer();
-    lastDragScreenPosition = screenPosition;
-
-    const int sourceRowIndex =
-        findFilteredMappingIndex(macroIndex);
-
-    const auto viewportPosition =
-        viewport.getLocalPoint(
-            nullptr,
-            screenPosition);
-
-    const bool droppedInsideViewport =
-        viewport.getLocalBounds().contains(
-            viewportPosition);
-
-    if (droppedInsideViewport)
-    {
-        dropInsertionIndex =
-            getDropInsertionIndex(screenPosition);
-    }
-
-    int destinationRowIndex =
-        droppedInsideViewport
-            ? dropInsertionIndex
-            : sourceRowIndex;
-
-    if (sourceRowIndex < destinationRowIndex)
-        --destinationRowIndex;
-
-    destinationRowIndex = juce::jlimit(
-        0,
-        juce::jmax(0, filteredMappings.size() - 1),
-        destinationRowIndex);
-
-    const int destinationMacroIndex =
-        juce::isPositiveAndBelow(
-            destinationRowIndex,
-            filteredMappings.size())
-            ? filteredMappings.getReference(
-                  destinationRowIndex).macroIndex
-            : macroIndex;
-
-    draggedMacroIndex = -1;
-    dropInsertionIndex = -1;
-    repaint();
-
-    auto deferredMappingsToApply = deferredMappings;
-    const bool shouldApplyDeferredMappings = hasDeferredMappings;
-
-    deferredMappings.clear();
-    hasDeferredMappings = false;
-
-    if (destinationMacroIndex == macroIndex
-        || ! onMoveMapping)
-    {
-        if (shouldApplyDeferredMappings)
-        {
-            juce::Component::SafePointer<MacroMappingsView> safeThis(this);
-
-            juce::MessageManager::callAsync(
-                [safeThis, deferredMappingsToApply]
-                {
-                    if (safeThis != nullptr)
-                        safeThis->setMappings(deferredMappingsToApply);
-                });
-        }
-
-        return;
-    }
-
-    juce::Component::SafePointer<MacroMappingsView> safeThis(this);
-
-    juce::MessageManager::callAsync(
-        [safeThis, macroIndex, destinationMacroIndex]
-        {
-            if (safeThis != nullptr && safeThis->onMoveMapping)
-            {
-                safeThis->onMoveMapping(
-                    macroIndex,
-                    destinationMacroIndex);
-            }
-        });
-}
-
-void MacroMappingsView::autoScrollForDrag(
-    juce::Point<int> screenPosition)
-{
-    if (! viewport.isVisible())
-        return;
-
-    const auto localPosition =
-        viewport.getLocalPoint(
-            nullptr,
-            screenPosition);
-
-    constexpr int edgeSize = 28;
-    constexpr int scrollStep = 18;
-
-    auto viewPosition = viewport.getViewPosition();
-    int newY = viewPosition.y;
-
-    if (localPosition.y < edgeSize)
-        newY -= scrollStep;
-    else if (localPosition.y > viewport.getHeight() - edgeSize)
-        newY += scrollStep;
-
-    const int maximumY =
-        juce::jmax(
-            0,
-            contentComponent.getHeight()
-                - viewport.getViewHeight());
-
-    newY = juce::jlimit(0, maximumY, newY);
-
-    if (newY != viewPosition.y)
-    {
-        viewport.setViewPosition(
-            viewPosition.x,
-            newY);
-        repaint();
-    }
-}
-
-int MacroMappingsView::getDropInsertionIndex(
-    juce::Point<int> screenPosition) const
-{
-    if (mappingRows.isEmpty())
-        return -1;
-
-    const auto contentPosition =
-        contentComponent.getLocalPoint(
-            nullptr,
-            screenPosition);
-
-    for (int rowIndex = 0;
-         rowIndex < mappingRows.size();
-         ++rowIndex)
-    {
-        const auto* row = mappingRows[rowIndex];
-
-        if (row != nullptr
-            && contentPosition.y
-                < row->getBounds().getCentreY())
-        {
-            return rowIndex;
-        }
-    }
-
-    return mappingRows.size();
-}
-
-int MacroMappingsView::getDropIndicatorContentY() const
-{
-    if (mappingRows.isEmpty()
-        || dropInsertionIndex < 0)
-    {
-        return 0;
-    }
-
-    if (dropInsertionIndex <= 0)
-        return mappingRows[0]->getY();
-
-    if (dropInsertionIndex >= mappingRows.size())
-        return mappingRows[mappingRows.size() - 1]->getBottom() + 4;
-
-    const auto* previousRow =
-        mappingRows[dropInsertionIndex - 1];
-    const auto* nextRow =
-        mappingRows[dropInsertionIndex];
-
-    if (previousRow == nullptr || nextRow == nullptr)
-        return 0;
-
-    return (previousRow->getBottom()
-            + nextRow->getY())
-           / 2;
-}
-
-int MacroMappingsView::findFilteredMappingIndex(
-    int macroIndex) const
-{
-    for (int index = 0;
-         index < filteredMappings.size();
-         ++index)
-    {
-        if (filteredMappings.getReference(index).macroIndex
-            == macroIndex)
-        {
-            return index;
-        }
-    }
-
-    return -1;
-}
-
-void MacroMappingsView::timerCallback()
-{
-    if (draggedMacroIndex < 0)
-    {
-        stopTimer();
-        return;
-    }
-
-    updateMappingDrag(
-        draggedMacroIndex,
-        lastDragScreenPosition);
 }
 
 void MacroMappingsView::resized()
@@ -985,67 +712,26 @@ void MacroMappingsView::resized()
     auto area = getLocalBounds().reduced(16);
 
     auto topRow = area.removeFromTop(34);
-
-    auto clearAllArea = topRow.removeFromRight(90);
-    clearAllButton.setBounds(clearAllArea.withSizeKeepingCentre(90, 22));
-
+    clearAllButton.setBounds(
+        topRow.removeFromRight(74).withSizeKeepingCentre(74, 24));
     topRow.removeFromRight(8);
-
-    auto undoArea = topRow.removeFromRight(70);
-    undoButton.setBounds(undoArea.withSizeKeepingCentre(70, 22));
-
+    undoButton.setBounds(
+        topRow.removeFromRight(58).withSizeKeepingCentre(58, 24));
     topRow.removeFromRight(8);
-
-    auto editorArea = topRow.removeFromRight(280);
-    filterEditor.setBounds(editorArea.withSizeKeepingCentre(editorArea.getWidth(), 23));
-
+    assignedOnlyButton.setBounds(
+        topRow.removeFromRight(106).withSizeKeepingCentre(106, 24));
     topRow.removeFromRight(8);
-
-    auto labelArea = topRow.removeFromRight(45);
-    filterLabel.setBounds(labelArea);
-
-    topRow.removeFromRight(16);
-
+    filterEditor.setBounds(
+        topRow.removeFromRight(270).withSizeKeepingCentre(270, 26));
+    topRow.removeFromRight(12);
     titleLabel.setBounds(topRow);
 
-    area.removeFromTop(6);
-    helpLabel.setBounds(area.removeFromTop(24));
-    area.removeFromTop(10);
+    area.removeFromTop(5);
+    helpLabel.setBounds(area.removeFromTop(22));
+    area.removeFromTop(9);
 
-    auto headerRow = area.removeFromTop(22);
-    headerRow.removeFromLeft(10);
-    headerRow.removeFromLeft(20);
-    headerRow.removeFromLeft(8);
-
-    macroHeaderLabel.setBounds(headerRow.removeFromLeft(100));
-    headerRow.removeFromLeft(10);
-
-    tabHeaderButton.setBounds(headerRow.removeFromLeft(70));
-    headerRow.removeFromLeft(10);
-
-    pluginHeaderButton.setBounds(headerRow.removeFromLeft(220));
-    headerRow.removeFromLeft(10);
-
-    parameterHeaderButton.setBounds(headerRow);
-
-    area.removeFromTop(6);
-
-    emptyLabel.setBounds(area);
-    viewport.setBounds(area);
-
-    auto contentArea = viewport.getLocalBounds();
-    constexpr int topPadding = 6;
-    constexpr int bottomPadding = 2;
-    int y = topPadding;
-    constexpr int rowHeight = 52;
-    constexpr int rowGap = 8;
-
-    for (auto* row : mappingRows)
-    {
-        row->setBounds(0, y, juce::jmax(0, contentArea.getWidth() - 12), rowHeight);
-        y += rowHeight + rowGap;
-    }
-
-    contentComponent.setSize(juce::jmax(0, contentArea.getWidth() - 12),
-                             juce::jmax(y + bottomPadding, viewport.getHeight()));
+    auto footer = area.removeFromBottom(24);
+    countLabel.setBounds(footer);
+    area.removeFromBottom(7);
+    parameterTable.setBounds(area);
 }

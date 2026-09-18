@@ -19,15 +19,22 @@ public:
 
     void setWidthMode(int newWidthMode);
     int getWidthMode() const noexcept { return widthMode; }
+    void setNoteNamesVisible(bool shouldShow);
+    bool areNoteNamesVisible() const noexcept { return noteNamesVisible; }
     void releaseAllOwnedNotes();
+    void displayExternalPitchBend(int value);
+    void displayExternalModulation(int value);
 
     void paint(juce::Graphics& graphics) override;
+    void resized() override;
     void mouseDown(const juce::MouseEvent& event) override;
     void mouseDrag(const juce::MouseEvent& event) override;
     void mouseUp(const juce::MouseEvent& event) override;
     void mouseMove(const juce::MouseEvent& event) override;
     void mouseEnter(const juce::MouseEvent& event) override;
     void mouseExit(const juce::MouseEvent& event) override;
+    void mouseWheelMove(const juce::MouseEvent& event,
+                        const juce::MouseWheelDetails& wheel) override;
 
 private:
     enum class DragTarget
@@ -40,7 +47,7 @@ private:
 
     static constexpr int midiChannel = 1;
     static constexpr int allMidiChannels = 0xffff;
-    static constexpr int firstNote = 24;
+    static constexpr int initialFirstNote = 24;
     static constexpr int whiteKeysPerOctave = 7;
     static constexpr int maximumWhiteKeyCount = 61;
     static constexpr float fixedWhiteKeyWidth = 20.0f;
@@ -54,8 +61,10 @@ private:
     int getVisibleWhiteKeyCount() const;
     float getWhiteKeyWidth() const;
 
-    static int noteForWhiteKey(int whiteKey);
+    int noteForWhiteKey(int whiteKey) const;
     static bool hasBlackKeyAfter(int whiteKey);
+    int getMaximumFirstNote() const;
+    void scrollByOctaves(int octaveDelta);
     juce::Rectangle<float> getBlackKeyBounds(int whiteKey) const;
     int noteAtPosition(juce::Point<float> position) const;
 
@@ -82,8 +91,11 @@ private:
     std::array<bool, 128> momentaryNotes {};
     int momentaryNote = -1;
     int widthMode = 5;
+    int firstVisibleNote = initialFirstNote;
+    bool noteNamesVisible = true;
     int pitchBendValue = 8192;
     int modulationValue = 0;
+    juce::uint32 pitchBendScrollResetDeadlineMs = 0;
     DragTarget dragTarget = DragTarget::none;
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(MidiKeyboardPanel)

@@ -103,6 +103,7 @@ target_sources(PolyHost PRIVATE
     "${PHI_SHARED_SOURCE_DIR}/Instructions.h"
     "${PHI_SHARED_SOURCE_DIR}/PluginCore.cpp"
     "${PHI_SHARED_SOURCE_DIR}/PluginCore.h"
+    "${PHI_SHARED_SOURCE_DIR}/SeqwencerBridgeProtocol.h"
     "${PHI_SHARED_SOURCE_DIR}/TabModel.cpp"
     "${PHI_SHARED_SOURCE_DIR}/TabModel.h"
     "${PHI_SHARED_SOURCE_DIR}/SlotModel.cpp"

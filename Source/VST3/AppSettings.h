@@ -33,6 +33,12 @@ public:
     bool getClearDebugLogOnStartup() const;
     void setClearDebugLogOnStartup(bool shouldClear);
 
+    bool getSessionRecallEnabled() const;
+    void setSessionRecallEnabled(bool shouldEnable);
+
+    bool getSingleInstanceEnabled() const;
+    void setSingleInstanceEnabled(bool shouldEnable);
+
     AppSettings();
     void load();
     void save();
@@ -45,6 +51,9 @@ public:
     int getRoutingWindowHeight() const;
     void setRoutingWindowSize(int width, int height);
     void clearRoutingWindowSize();
+
+    int getMacroMappingsViewHeight() const;
+    void setMacroMappingsViewHeight(int height);
 
     juce::String getLastPresetPath() const;
     void setLastPresetPath(const juce::String& path);
@@ -72,6 +81,9 @@ public:
 
     bool getMidiKeyboardVisible() const;
     void setMidiKeyboardVisible(bool shouldShow);
+
+    bool getMidiKeyboardNoteNamesVisible() const;
+    void setMidiKeyboardNoteNamesVisible(bool shouldShow);
 
     int getMidiKeyboardWidthMode() const;
     void setMidiKeyboardWidthMode(int widthMode);

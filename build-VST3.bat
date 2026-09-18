@@ -24,7 +24,53 @@
 :: ============================================================
 
 @echo off
-setlocal
+setlocal EnableExtensions
+
+if /i "%~1"=="--run-build" goto :run_build
+
+set "RESULTS_LOG=%~dp0Results.log"
+set "PHI_BUILD_SCRIPT=%~f0"
+set "PHI_BUILD_CAPTURE=1"
+
+echo Starting PHI VST3 build...
+echo Progress and warnings will appear below and be saved to Results.log.
+echo.
+
+where powershell.exe >nul 2>nul
+if errorlevel 1 (
+    echo BUILD FAILED
+    echo   - Windows PowerShell was not found
+    echo.
+    pause
+    exit /b 1
+)
+
+powershell.exe -NoProfile -ExecutionPolicy Bypass -Command ^
+  "$writer = [System.IO.StreamWriter]::new($env:RESULTS_LOG, $false, [System.Text.UTF8Encoding]::new($false));" ^
+  "$exitCode = 1;" ^
+  "try {" ^
+  "  & $env:PHI_BUILD_SCRIPT --run-build 2>&1 | ForEach-Object {" ^
+  "    $line = $_.ToString();" ^
+  "    [Console]::WriteLine($line);" ^
+  "    $writer.WriteLine($line);" ^
+  "    $writer.Flush();" ^
+  "  };" ^
+  "  $exitCode = $LASTEXITCODE;" ^
+  "} finally { $writer.Dispose(); };" ^
+  "exit $exitCode"
+set "BUILD_EXIT_CODE=%ERRORLEVEL%"
+
+echo.
+echo Results saved:
+echo   %RESULTS_LOG%
+echo.
+pause
+exit /b %BUILD_EXIT_CODE%
+
+:run_build
+set "CMAKE_GENERATOR="
+set "CMAKE_GENERATOR_PLATFORM="
+set "CMAKE_GENERATOR_TOOLSET="
 
 set "ROOT=%~dp0"
 set "TOOLS=%ROOT%..\_Tools"
@@ -36,6 +82,7 @@ set "BUILT_BUNDLE=%BUILD_DIR%\PolyHostPlugin_artefacts\Release\VST3\%PLUGIN_NAME
 set "BUILT_BINARY=%BUILT_BUNDLE%\Contents\x86_64-win\%PLUGIN_NAME%"
 set "FINAL_PLUGIN=%DIST_DIR%\%PLUGIN_NAME%"
 set "APP_NAME=savihost3x64.exe"
+set "MIDI_ROUTING_TEST=%BUILD_DIR%\Release\PhiHostedMidiRoutingTests.exe"
 
 echo.
 echo ============================================================
@@ -50,7 +97,7 @@ if not exist "%CMAKE%" (
     echo Expected shared tools folder:
     echo %TOOLS%
     echo.
-    pause
+    if not defined PHI_BUILD_CAPTURE pause
     exit /b 1
 )
 
@@ -60,7 +107,7 @@ if not exist "%VSWHERE%" (
     echo Install Visual Studio 2022 Community or Build Tools.
     echo Make sure Desktop development with C++ is installed.
     echo.
-    pause
+    if not defined PHI_BUILD_CAPTURE pause
     exit /b 1
 )
 
@@ -78,7 +125,32 @@ echo Configuring plugin project...
 if errorlevel 1 (
     echo.
     echo Configure step FAILED.
-    pause
+    if not defined PHI_BUILD_CAPTURE pause
+    exit /b 1
+)
+
+echo.
+echo Building and running hosted MIDI routing tests...
+"%CMAKE%" --build "%BUILD_DIR%" --config Release --target PhiHostedMidiRoutingTests
+if errorlevel 1 (
+    echo.
+    echo Hosted MIDI routing test build FAILED.
+    if not defined PHI_BUILD_CAPTURE pause
+    exit /b 1
+)
+
+if not exist "%MIDI_ROUTING_TEST%" (
+    echo ERROR: Hosted MIDI routing test was not found at:
+    echo %MIDI_ROUTING_TEST%
+    if not defined PHI_BUILD_CAPTURE pause
+    exit /b 1
+)
+
+"%MIDI_ROUTING_TEST%"
+if errorlevel 1 (
+    echo.
+    echo Hosted MIDI routing tests FAILED.
+    if not defined PHI_BUILD_CAPTURE pause
     exit /b 1
 )
 
@@ -88,7 +160,7 @@ echo Building Release...
 if errorlevel 1 (
     echo.
     echo Build FAILED.
-    pause
+    if not defined PHI_BUILD_CAPTURE pause
     exit /b 1
 )
 
@@ -101,7 +173,7 @@ if not exist "%BUILT_BINARY%" (
     echo %BUILT_BINARY%
     echo.
     echo The build may have succeeded, but JUCE may have used a different artefacts path.
-    pause
+    if not defined PHI_BUILD_CAPTURE pause
     exit /b 1
 )
 
@@ -114,21 +186,21 @@ copy /Y "%BUILT_BINARY%" "%FINAL_PLUGIN%" >nul
 if errorlevel 1 (
     echo ERROR: Failed to copy VST3 binary to:
     echo %FINAL_PLUGIN%
-    pause
+    if not defined PHI_BUILD_CAPTURE pause
     exit /b 1
 )
 
 copy /Y "%ROOT%Source\FluentSystemIcons-LICENSE.txt" "%DIST_DIR%\FluentSystemIcons-LICENSE.txt" >nul
 if errorlevel 1 (
     echo ERROR: Failed to copy the Fluent System Icons licence to dist.
-    pause
+    if not defined PHI_BUILD_CAPTURE pause
     exit /b 1
 )
 
 if not exist "%FINAL_PLUGIN%" (
     echo ERROR: Final VST3 binary was not copied successfully:
     echo %FINAL_PLUGIN%
-    pause
+    if not defined PHI_BUILD_CAPTURE pause
     exit /b 1
 )
 

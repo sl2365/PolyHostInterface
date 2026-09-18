@@ -42,6 +42,8 @@ See the demos at the bottom of the page for a few gifs of the Pointer Control in
 | Plugin Repair - locates missing plugins | ✅ Working |
 | Standalone App | ✅ Working |
 | VST3 Plugin for use in other hosts | ✅ Working |
+| Optional standalone session recall | ✅ Working - Options > Session Recall |
+| Optional standalone single-instance mode | ✅ Working - Options > Single Instance |
 
 ## Features
 
@@ -88,12 +90,16 @@ These macros can be mapped to plugin parameters so they can be automated from th
 
 Macro features include:
 - map the last touched plugin parameter to the next free macro
+- browse every automatable parameter, including currently unmapped parameters
+- tick Mapped to assign the next free macro, or pause/resume an existing one
 - replace an existing macro target with the last touched parameter
-- reorder mappings
 - delete individual mappings
 - clear all mappings
 - undo the last macro mapping edit
-- filter/search mappings in the Macro Mappings view
+- search all parameters in the Macro Mappings view
+- toggle Assigned Only to retain mapped and paused rows while hiding unmapped rows
+- sort any column without changing a macro assignment
+- identify each plug-in quickly using fixed text colours in the first three columns
 
 Each mapping stores:
 - macro slot number
@@ -104,17 +110,69 @@ Each mapping stores:
 
 Please note: Only use the Macros 001-128, ignore the MIDI CC 0-129 etc as these are for Host side control but I couldnt find a way to hide them.
 
-### Macro Mappings View
-This provides a complete list of all current macro assignments in the preset.
+### Unified Macro Mappings and Seqwencer Targets
 
-It allows:
-- browsing all active mappings
-- filtering by macro, tab, plugin, or parameter
-- reordering mappings
-- replacing targets
-- deleting mappings
-- clearing all mappings
-- Undo allows undoing the last action only
+PHI's Macro Mappings view is now the complete parameter browser. It always
+shows the Tab, Plugin, Parameter, Mapped and Macro columns. Tick Mapped on an
+unassigned row to use the next free Macro. Unticking Mapped temporarily pauses
+control while preserving the Macro number and Seqwencer targets. Tick it again
+to resume. Replace keeps the Macro number and changes its destination to the
+last touched parameter; X permanently deletes the mapping. Undo and Clear All
+remain available.
+
+Seqwencer Stage 3.0.1 adds the Targets column to this same view while Seqwencer is
+loaded. Click Seqwencer's **PHI** selector and then **TARGET**, or open Macro
+Mappings from PHI's toolbar. Tick A, B or both beside any automatable
+parameter. PHI automatically assigns the next free macro when needed. Clicking
+any column header only sorts the display and never changes a Macro assignment.
+The Targets column is completely removed whenever Seqwencer is not loaded.
+Removing Seqwencer does not delete the Macro mappings or their saved A/B target
+bits. PHI keeps them in the preset and hides the Targets column until Seqwencer
+is loaded again. The Macro-column X or Clear All are the explicit deletion paths.
+
+Macro Mappings opens tall enough for ten parameter rows by default. PHI
+remembers only the height subsequently chosen by dragging; the view returns to
+its standard width whenever it is opened. The standalone window also enforces a
+300-pixel minimum height so its interface cannot collapse into the title bar.
+
+Assigned Only switches between the complete parameter list and parameters that
+already have a Macro number. Paused mappings remain visible. A fixed palette
+colours only the text in the Tab, Plugin and Parameter cells for the first 25
+tabs, then repeats; row backgrounds remain dark and the Mapped, Targets and
+Macro cells keep their functional colours.
+
+In Parallel, A and B are independent. When both address one parameter, the
+current value furthest from zero wins and an exact magnitude tie uses A. In
+SERIAL the A/B boxes mirror one shared 64-step target; the separate saved B
+Parallel assignment is retained. Unticking both stops Seqwencer control without
+deleting the macro. Click the cross beside an assigned Macro number to delete
+that macro after confirmation, which also clears both Seqwencer assignments.
+Targets and Macro have a clearly drawn divider. Unmapped Macro cells remain
+blank, and assignment changes refresh only the target table rather than
+rebuilding the full PHI interface.
+
+Every PHI build entry point streams its normal console output to the window and
+simultaneously writes it to `Results.log` in the project root. Each new build
+replaces the previous log. The scripts also clear mismatched inherited CMake
+generator variables before configuring, preventing misleading generator-platform
+warnings while retaining the explicit x64 or Win32 platform selected by the
+script.
+
+Seqwencer itself is omitted to prevent self-modulation feedback. Per-step Gate
+modes remain exclusive to Seqwencer's audio Gate. PHI consumes the private
+high-resolution bridge packets internally rather than forwarding them to MIDI
+outputs. Plugin Diagnostics shows the cumulative packet count.
+
+Seqwencer's PHI controls are revealed only after PHI sends its private presence
+message. Inside Seqwencer, clicking an FX button selects its bottom-row controls;
+the small LED inside that button independently turns the effect on or off.
+
+When PHI VST3 runs inside a DAW, PHI snapshots the outer host position once per
+audio block and forwards that stable position to every hosted plug-in. If the
+outer host supplies sample or second time but omits PPQ, PHI derives PPQ using
+the reported tempo. Observed timeline movement also corrects an outer host that
+incorrectly reports a stopped transport. Plugin Diagnostics reports exactly
+which outer timing fields were received and forwarded.
 
 ### Pointer Control
 The Pointer Control system is designed for a much speedier programming of any plugin using just a small handful of knobs and buttons on your MIDI controller, instead of assigning one knob/button per parameter. This means you spend less time assigning knobs to parameters. For synth programmers, this is likely far quicker than traditional methods.
@@ -206,6 +264,7 @@ Only in standalone mode. It is possible to record both Audio and MIDI output to 
 Open the Record settings via: Options > Recording, or by right-clicking the Record button at the the top right of the interface.
 
 Select the recording mode via the toggle: Audio or MIDI.
+The recording-mode toggle is orange for Audio and blue for MIDI.
 Select the Count-in method: 0 Bars=instant, Wait Note=Recording starts on receiving a MIDI note input.
 Recordings are listed in the right side of the window, double click to open wav files in your default Windows app.
 
@@ -343,7 +402,9 @@ MIDI Device(s)    Audio In from DAW/Host
                     |
               [Audio Out]  ->  Output meter
 ```
-MIDI is always wired in parallel. Synth and FX audio routing is partially flexible, where plugins are in series and routing can be modified by entering the Routing page. Click the Routing toolbar button and a list of all tabs appears, use Up and Down buttons to manage the processing order.
+Incoming host or hardware MIDI is wired in parallel and filtered by each tab's MIDI-channel assignment. Dedicated zero-audio arpeggiators, sequencers and MIDI effects additionally route their generated MIDI forwards through the tab order. Place the MIDI effect before the synth it should control; generated MIDI never travels backwards to an earlier tab. Internal arp-to-synth routing does not depend on the Send generated MIDI output option.
+
+Synth and FX audio routing is partially flexible, where plugins are in series and routing can be modified by entering the Routing page. Click the Routing toolbar button and a list of all tabs appears to manage the processing order.
 
 ## Changing the CMake version used by PHI
 

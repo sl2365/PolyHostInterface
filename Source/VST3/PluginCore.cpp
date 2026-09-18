@@ -1,11 +1,14 @@
 #include "PluginCore.h"
 #include "DebugLog.h"
+#include "HostedMidiRouting.h"
+#include "SeqwencerBridgeProtocol.h"
 #include <algorithm>
 #include <cmath>
 #include <cstring>
 
 namespace
 {
+    using juce::int64;
     bool writeXmlAtomically(const juce::XmlElement& xml,
                             const juce::File& targetFile)
     {
@@ -150,7 +153,7 @@ namespace
         return c >= '0' && c <= '9';
     }
 
-    int naturalCompareText(::juce_wchar c)
+    int naturalCompareText(juce::juce_wchar c)
     {
         return c >= '0' && c <= '9';
     }
@@ -1162,6 +1165,15 @@ void PluginCore::processBlock(juce::AudioBuffer<float>& buffer,
     if (numSamples <= 0 || hostChannels <= 0)
         return;
 
+    for (auto* tab : hostedTabs)
+    {
+        if (tab == nullptr)
+            continue;
+
+        tab->midiRouteReadyThisBlock = false;
+        tab->midiPreprocessedThisBlock = false;
+    }
+
     auto containsNonFiniteSamples =
         [](const juce::AudioBuffer<float>& audioBuffer) noexcept
         {
@@ -1403,6 +1415,84 @@ void PluginCore::processBlock(juce::AudioBuffer<float>& buffer,
             for (const auto processedMetadata :
                  processedMidi)
             {
+                const auto& message =
+                    processedMetadata.getMessage();
+
+                auto browserSerialMode = false;
+                if (message.isSysEx()
+                    && seqwencer_bridge::decodeTargetBrowserRequest(
+                        reinterpret_cast<const std::uint8_t*>(
+                            message.getSysExData()),
+                        static_cast<std::size_t>(
+                            message.getSysExDataSize()),
+                        browserSerialMode))
+                {
+                    seqwencerSerialMode.store(
+                        browserSerialMode,
+                        std::memory_order_release);
+                    seqwencerTargetBrowserRequestPending.store(
+                        browserSerialMode ? 1 : 0,
+                        std::memory_order_release);
+                    seqwencerBridgeMessageCount.fetch_add(
+                        1,
+                        std::memory_order_relaxed);
+                    ++processedEventIndex;
+                    continue;
+                }
+
+                int bridgeSourceLane = 0;
+                int bridgeMacroIndex = 0;
+                float bridgeValue = 0.0f;
+                bool bridgeBipolar = false;
+                bool bridgeActive = false;
+
+                if (message.isSysEx()
+                    && seqwencer_bridge::decodeLaneValue(
+                        reinterpret_cast<const std::uint8_t*>(
+                            message.getSysExData()),
+                        static_cast<std::size_t>(
+                            message.getSysExDataSize()),
+                        bridgeSourceLane,
+                        bridgeBipolar,
+                        bridgeActive,
+                        bridgeValue))
+                {
+                    seqwencerSerialMode.store(
+                        bridgeSourceLane == seqwencer_bridge::serialLane,
+                        std::memory_order_release);
+                    applySeqwencerLaneValue(
+                        bridgeSourceLane,
+                        bridgeBipolar,
+                        bridgeActive,
+                        bridgeValue);
+                    seqwencerBridgeMessageCount.fetch_add(
+                        1,
+                        std::memory_order_relaxed);
+                    ++processedEventIndex;
+                    continue;
+                }
+
+                if (message.isSysEx()
+                    && seqwencer_bridge::decodeModulationValue(
+                        reinterpret_cast<const std::uint8_t*>(
+                            message.getSysExData()),
+                        static_cast<std::size_t>(
+                            message.getSysExDataSize()),
+                        bridgeSourceLane,
+                        bridgeMacroIndex,
+                        bridgeValue))
+                {
+                    juce::ignoreUnused(bridgeSourceLane);
+                    setMacroValueFromSeqwencerBridge(
+                        bridgeMacroIndex,
+                        bridgeValue);
+                    seqwencerBridgeMessageCount.fetch_add(
+                        1,
+                        std::memory_order_relaxed);
+                    ++processedEventIndex;
+                    continue;
+                }
+
                 int matchingInputCount = 0;
 
                 for (const auto inputMetadata :
@@ -1448,9 +1538,6 @@ void PluginCore::processBlock(juce::AudioBuffer<float>& buffer,
                         true;
                 }
 
-                const auto& message =
-                    processedMetadata.getMessage();
-
                 const bool shouldAppend =
                     isAdditionalEvent
                     || (tabState.hasProducedGeneratedMidi
@@ -1467,6 +1554,61 @@ void PluginCore::processBlock(juce::AudioBuffer<float>& buffer,
             }
 
             return false;
+        };
+
+    auto findMidiSourceBeforeTab =
+        [this] (int tabIndex) -> const juce::MidiBuffer&
+        {
+            const int sourceIndex =
+                phi_midi_routing::findLatestReadySourceBefore(
+                    tabIndex,
+                    [this] (int candidateIndex)
+                    {
+                        auto* sourceTab =
+                            hostedTabs[candidateIndex];
+                        return sourceTab != nullptr
+                            && sourceTab->midiRouteReadyThisBlock;
+                    });
+
+            if (sourceIndex >= 0)
+                return hostedTabs[sourceIndex]->midiScratchBuffer;
+
+            return hostMidiInputScratchBuffer;
+        };
+
+    auto isMidiOnlyFx =
+        [this] (int tabIndex) noexcept
+        {
+            if (! juce::isPositiveAndBelow(
+                    tabIndex,
+                    hostedTabs.size()))
+            {
+                return false;
+            }
+
+            auto* tab = hostedTabs[tabIndex];
+
+            if (tab == nullptr
+                || tab->pluginInstance == nullptr
+                || tab->bypassed
+                || tab->processingQuarantined.load(
+                    std::memory_order_acquire)
+                || getHostedTabType(tabIndex)
+                    != PluginSlotType::FX)
+            {
+                return false;
+            }
+
+            auto* instance = tab->pluginInstance.get();
+
+            return phi_midi_routing::isMidiOnlyEffect(
+                true,
+                tab->bypassed,
+                tab->processingQuarantined.load(
+                    std::memory_order_acquire),
+                instance->producesMidi(),
+                instance->getTotalNumInputChannels(),
+                instance->getTotalNumOutputChannels());
         };
 
     if (hostChannels > hostBufferChannelCapacity
@@ -1620,6 +1762,144 @@ void PluginCore::processBlock(juce::AudioBuffer<float>& buffer,
             true);
     }
 
+    // MIDI-only effects such as dedicated arpeggiators must run before the
+    // synths beneath them.  PHI's audio graph processes synth audio before FX
+    // audio, so these zero-audio processors receive a separate MIDI-only pass
+    // and are skipped later in the audio-FX pass.
+    for (int i = 0; i < hostedTabs.size(); ++i)
+    {
+        if (! isMidiOnlyFx(i))
+            continue;
+
+        auto* tab = hostedTabs[i];
+        auto* instance = tab->pluginInstance.get();
+        tab->midiPreprocessedThisBlock = true;
+
+        auto& routedMidi = tab->midiScratchBuffer;
+        buildMidiBufferForTab(
+            i,
+            findMidiSourceBeforeTab(i),
+            routedMidi);
+
+        auto& inputMidi = tab->midiInputScratchBuffer;
+        inputMidi.clear();
+        inputMidi.addEvents(
+            routedMidi,
+            0,
+            numSamples,
+            0);
+
+        auto& dummyAudio = tab->audioBypassScratchBuffer;
+        dummyAudio.setSize(
+            hostChannels,
+            numSamples,
+            false,
+            false,
+            true);
+        dummyAudio.clear();
+
+        const auto parameterCallbacksBefore =
+            tab->diagnosticParameterCallbacks.load(
+                std::memory_order_relaxed);
+        const auto processorChangedCallbacksBefore =
+            tab->diagnosticProcessorChangedCallbacks.load(
+                std::memory_order_relaxed);
+
+        instance->setPlayHead(playHead);
+        tab->diagnosticProcessCallsStarted.fetch_add(
+            1,
+            std::memory_order_relaxed);
+
+        const auto processStartTicks =
+            juce::Time::getHighResolutionTicks();
+        const bool processCompleted =
+            processHostedPluginCrashGuard(
+                *instance,
+                dummyAudio,
+                routedMidi);
+        const auto processEndTicks =
+            juce::Time::getHighResolutionTicks();
+
+        if (! processCompleted)
+        {
+            tab->diagnosticProcessingFaultCount.fetch_add(
+                1,
+                std::memory_order_relaxed);
+            instance->setPlayHead(nullptr);
+            tab->processingQuarantined.store(
+                true,
+                std::memory_order_release);
+            tab->hasProducedGeneratedMidi = false;
+            routedMidi.clear();
+            midiOutputResetReady.store(
+                true,
+                std::memory_order_release);
+            continue;
+        }
+
+        const int processMicros =
+            juce::roundToInt(
+                juce::jlimit(
+                    0.0,
+                    2147483647.0,
+                    juce::Time::highResolutionTicksToSeconds(
+                        processEndTicks - processStartTicks)
+                        * 1000000.0));
+        tab->diagnosticLastProcessMicros.store(
+            processMicros,
+            std::memory_order_relaxed);
+
+        int recordedMaxProcessMicros =
+            tab->diagnosticMaxProcessMicros.load(
+                std::memory_order_relaxed);
+
+        while (processMicros > recordedMaxProcessMicros
+               && ! tab->diagnosticMaxProcessMicros
+                        .compare_exchange_weak(
+                            recordedMaxProcessMicros,
+                            processMicros,
+                            std::memory_order_relaxed,
+                            std::memory_order_relaxed))
+        {
+        }
+
+        tab->diagnosticProcessCallsCompleted.fetch_add(
+            1,
+            std::memory_order_relaxed);
+        tab->diagnosticLastBlockParameterCallbacks.store(
+            tab->diagnosticParameterCallbacks.load(
+                std::memory_order_relaxed)
+                - parameterCallbacksBefore,
+            std::memory_order_relaxed);
+        tab->diagnosticLastBlockProcessorChangedCallbacks.store(
+            tab->diagnosticProcessorChangedCallbacks.load(
+                std::memory_order_relaxed)
+                - processorChangedCallbacksBefore,
+            std::memory_order_relaxed);
+
+        if (midiPanicRequested)
+            instance->reset();
+
+        if (! midiPanicRequested
+            && ! midiReleaseResetRequested)
+        {
+            const bool hostedPanicBurst =
+                appendGeneratedMidiEvents(
+                    routedMidi,
+                    inputMidi,
+                    *tab);
+
+            if (hostedPanicBurst)
+            {
+                instance->reset();
+                routedMidi.clear();
+                continue;
+            }
+        }
+
+        tab->midiRouteReadyThisBlock = true;
+    }
+
     for (int i = 0; i < hostedTabs.size(); ++i)
     {
         auto* tab = hostedTabs[i];
@@ -1650,7 +1930,7 @@ void PluginCore::processBlock(juce::AudioBuffer<float>& buffer,
 
         buildMidiBufferForTab(
             i,
-            hostMidiInputScratchBuffer,
+            findMidiSourceBeforeTab(i),
             synthMidi,
             tab->bypassed);
 
@@ -1833,10 +2113,23 @@ void PluginCore::processBlock(juce::AudioBuffer<float>& buffer,
         if (! midiPanicRequested
             && ! midiReleaseResetRequested)
         {
-            appendGeneratedMidiEvents(
-                synthMidi,
-                synthInputMidi,
-                *tab);
+            const bool hostedPanicBurst =
+                appendGeneratedMidiEvents(
+                    synthMidi,
+                    synthInputMidi,
+                    *tab);
+
+            if (hostedPanicBurst)
+            {
+                instance->reset();
+                synthMidi.clear();
+            }
+            else
+            {
+                tab->midiRouteReadyThisBlock =
+                    instance->producesMidi()
+                    || tab->hasProducedGeneratedMidi;
+            }
         }
 
         const int nextFxTab =
@@ -1883,6 +2176,55 @@ void PluginCore::processBlock(juce::AudioBuffer<float>& buffer,
         }
     }
 
+    auto routeFxAudioOutput =
+        [&] (int fxListIndex,
+             juce::AudioBuffer<float>& fxBuffer)
+        {
+            const int nextFxTab =
+                fxListIndex + 1 < fxIndices.size()
+                    ? fxIndices[fxListIndex + 1]
+                    : -1;
+
+            if (nextFxTab >= 0)
+            {
+                auto* targetTab = hostedTabs[nextFxTab];
+
+                if (targetTab != nullptr)
+                {
+                    auto& targetBuffer =
+                        targetTab->audioScratchBuffer;
+
+                    for (int ch = 0;
+                         ch < hostChannels;
+                         ++ch)
+                    {
+                        targetBuffer.addFrom(
+                            ch,
+                            0,
+                            fxBuffer,
+                            ch,
+                            0,
+                            numSamples);
+                    }
+                }
+            }
+            else
+            {
+                for (int ch = 0;
+                     ch < hostChannels;
+                     ++ch)
+                {
+                    finalOutput.addFrom(
+                        ch,
+                        0,
+                        fxBuffer,
+                        ch,
+                        0,
+                        numSamples);
+                }
+            }
+        };
+
     for (int fxListIndex = 0;
          fxListIndex < fxIndices.size();
          ++fxListIndex)
@@ -1906,13 +2248,31 @@ void PluginCore::processBlock(juce::AudioBuffer<float>& buffer,
         auto& fxBuffer =
             tab->audioScratchBuffer;
 
+        if (tab->midiPreprocessedThisBlock)
+        {
+            applyTabOutputGain(*tab, fxBuffer);
+            routeFxAudioOutput(fxListIndex, fxBuffer);
+            continue;
+        }
+
         auto& fxMidi =
             tab->midiScratchBuffer;
 
         buildMidiBufferForTab(
             tabIndex,
-            hostMidiInputScratchBuffer,
+            findMidiSourceBeforeTab(tabIndex),
             fxMidi);
+
+        if (tab->isSeqwencer)
+        {
+            const auto presencePacket =
+                seqwencer_bridge::encodePhiPresence();
+            fxMidi.addEvent(
+                juce::MidiMessage::createSysExMessage(
+                    presencePacket.data(),
+                    static_cast<int>(presencePacket.size())),
+                0);
+        }
 
         auto& fxInputMidi =
             tab->midiInputScratchBuffer;
@@ -2117,57 +2477,23 @@ void PluginCore::processBlock(juce::AudioBuffer<float>& buffer,
                         *tab);
 
                 if (hostedPanicBurst)
+                {
                     instance->reset();
+                    fxMidi.clear();
+                }
+                else
+                {
+                    tab->midiRouteReadyThisBlock =
+                        instance->producesMidi()
+                        || tab->hasProducedGeneratedMidi;
+                }
             }
         }
 
         if (processCompleted)
             applyTabOutputGain(*tab, fxBuffer);
 
-        const int nextFxTab =
-            fxListIndex + 1 < fxIndices.size()
-                ? fxIndices[fxListIndex + 1]
-                : -1;
-
-        if (nextFxTab >= 0)
-        {
-            auto* targetTab =
-                hostedTabs[nextFxTab];
-
-            if (targetTab != nullptr)
-            {
-                auto& targetBuffer =
-                    targetTab->audioScratchBuffer;
-
-                for (int ch = 0;
-                     ch < hostChannels;
-                     ++ch)
-                {
-                    targetBuffer.addFrom(
-                        ch,
-                        0,
-                        fxBuffer,
-                        ch,
-                        0,
-                        numSamples);
-                }
-            }
-        }
-        else
-        {
-            for (int ch = 0;
-                 ch < hostChannels;
-                 ++ch)
-            {
-                finalOutput.addFrom(
-                    ch,
-                    0,
-                    fxBuffer,
-                    ch,
-                    0,
-                    numSamples);
-            }
-        }
+        routeFxAudioOutput(fxListIndex, fxBuffer);
     }
 
     buffer.makeCopyOf(finalOutput, true);
@@ -3627,11 +3953,32 @@ juce::String PluginCore::buildPluginDiagnosticsText(int tabIndex) const
     addLine("Output Channels", juce::String(instance->getTotalNumOutputChannels()));
     addLine("Accepts MIDI", boolText(instance->acceptsMidi()));
     addLine("Produces MIDI", boolText(instance->producesMidi()));
+    addLine(
+        "Routes MIDI To Later Tabs",
+        boolText(
+            ! hostedTab->bypassed
+            && ! hostedTab->processingQuarantined.load(
+                std::memory_order_acquire)
+            && instance->producesMidi()
+            && (hostedTab->pluginType == PluginSlotType::Synth
+                || phi_midi_routing::isMidiOnlyEffect(
+                    hostedTab->pluginType == PluginSlotType::FX,
+                    false,
+                    false,
+                    true,
+                    instance->getTotalNumInputChannels(),
+                    instance->getTotalNumOutputChannels()))));
     addLine("Latency Samples", juce::String(instance->getLatencySamples()));
     addLine("Tail Length Seconds", juce::String(instance->getTailLengthSeconds(), 3));
     addLine("Parameter Count", juce::String(instance->getParameters().size()));
 
     addSection("Hosted Runtime Diagnostics");
+    addLine(
+        "Seqwencer Bridge Packets Received",
+        juce::String(
+            (juce::int64) seqwencerBridgeMessageCount.load(
+                std::memory_order_relaxed)));
+
     addLine(
         "Process Calls Started",
         juce::String(
@@ -4012,6 +4359,8 @@ void PluginCore::disposeHostedPluginInstance(
     const juce::String& diagnosticContext,
     bool releaseHealthyPluginResources)
 {
+    tab.isSeqwencer = false;
+
     if (tab.pluginInstance == nullptr)
     {
         tab.processingQuarantined.store(
@@ -4440,6 +4789,8 @@ bool PluginCore::loadMainSlotPluginFromDescription(const juce::PluginDescription
 
     selectedTab->pluginType =
         slotTypeFromDescription(description);
+    selectedTab->isSeqwencer =
+        description.name.equalsIgnoreCase("Seqwencer");
 
     DebugLog::write("[PluginLoadDiagnostic] 40 channel query begin");
 
@@ -4647,6 +4998,10 @@ void PluginCore::resetForNewPreset()
     macroMappings.clear();
     lastTouchedParameter = {};
     macroCurrentValues.fill(0.0f);
+    seqwencerTargetBrowserRequestPending.store(
+        -1,
+        std::memory_order_release);
+    seqwencerSerialMode.store(false, std::memory_order_release);
     dirtyMarkingResumeTimeMs = 0;
     routingViewWidth = 800;
     routingViewHeight = 500;
@@ -5405,6 +5760,342 @@ bool PluginCore::hasMacroMappingsUndoState() const
     return hasMacroMappingsUndoSnapshot;
 }
 
+bool PluginCore::hasLoadedSeqwencer() const noexcept
+{
+    for (const auto* tab : hostedTabs)
+    {
+        if (tab != nullptr
+            && tab->pluginInstance != nullptr
+            && tab->isSeqwencer)
+        {
+            return true;
+        }
+    }
+
+    return false;
+}
+
+juce::Array<PluginCore::HostedParameterChoice>
+PluginCore::getHostedParameterChoices() const
+{
+    juce::Array<HostedParameterChoice> choices;
+
+    for (int tabIndex = 0; tabIndex < hostedTabs.size(); ++tabIndex)
+    {
+        const auto* tab = hostedTabs[tabIndex];
+        if (tab == nullptr || tab->pluginInstance == nullptr)
+            continue;
+
+        juce::PluginDescription description;
+        tab->pluginInstance->fillInPluginDescription(description);
+        const auto pluginName = getHostedPluginDisplayName(tabIndex).trim();
+
+        // Seqwencer is the modulation source, not a destination. Omitting it
+        // also prevents accidental self-modulation feedback.
+        if (description.name.equalsIgnoreCase("Seqwencer")
+            || pluginName.equalsIgnoreCase("Seqwencer"))
+        {
+            continue;
+        }
+
+        auto tabName = tab->tabName.trim();
+        if (tabName.isEmpty())
+            tabName = "Tab " + juce::String(tabIndex + 1);
+
+        const auto& parameters = tab->pluginInstance->getParameters();
+        for (int parameterIndex = 0;
+             parameterIndex < parameters.size();
+             ++parameterIndex)
+        {
+            auto* parameter = parameters[parameterIndex];
+            if (parameter == nullptr || ! parameter->isAutomatable())
+                continue;
+
+            auto parameterName = parameter->getName(256).trim();
+            if (parameterName.isEmpty())
+            {
+                parameterName = "Parameter "
+                              + juce::String(parameterIndex + 1);
+            }
+
+            HostedParameterChoice choice;
+            choice.tabIndex = tabIndex;
+            choice.tabName = tabName;
+            choice.pluginName = pluginName.isNotEmpty()
+                ? pluginName : tabName;
+            choice.parameterIndex = parameterIndex;
+            choice.parameterName = parameterName;
+
+            const auto mappingIndex = findMacroMappingIndexByTarget(
+                tabIndex,
+                parameterIndex);
+            if (mappingIndex >= 0)
+            {
+                const auto& mapping =
+                    macroMappings.getReference(mappingIndex);
+                choice.macroIndex = mapping.macroIndex;
+                choice.mappingEnabled = mapping.enabled;
+                choice.targetA = (mapping.seqwencerTargetMask
+                                  & seqwencer_bridge::targetMaskA) != 0;
+                choice.targetB = (mapping.seqwencerTargetMask
+                                  & seqwencer_bridge::targetMaskB) != 0;
+            }
+
+            choices.add(std::move(choice));
+        }
+    }
+
+    return choices;
+}
+
+bool PluginCore::mapHostedParameterToMacro(
+    int macroIndex,
+    int tabIndex,
+    int parameterIndex,
+    juce::String* errorMessage)
+{
+    const auto fail = [errorMessage](const juce::String& message)
+    {
+        if (errorMessage != nullptr)
+            *errorMessage = message;
+        return false;
+    };
+
+    if (macroIndex < 0 || macroIndex >= (int) macroCurrentValues.size())
+        return fail("The requested PHI macro is invalid.");
+
+    if (! juce::isPositiveAndBelow(tabIndex, hostedTabs.size()))
+        return fail("The selected PHI tab is no longer available.");
+
+    auto* tab = hostedTabs[tabIndex];
+    if (tab == nullptr || tab->pluginInstance == nullptr)
+        return fail("The selected plug-in is no longer loaded.");
+
+    auto& parameters = tab->pluginInstance->getParameters();
+    if (! juce::isPositiveAndBelow(parameterIndex, parameters.size())
+        || parameters[parameterIndex] == nullptr)
+    {
+        return fail("The selected parameter is no longer available.");
+    }
+
+    auto* parameter = parameters[parameterIndex];
+    if (! parameter->isAutomatable())
+        return fail("The selected parameter cannot be automated.");
+
+    const int duplicateMappingIndex =
+        findMacroMappingIndexByTarget(tabIndex, parameterIndex);
+    const int existingMacroMappingIndex =
+        findMacroMappingIndexByMacroSlot(macroIndex);
+
+    if (duplicateMappingIndex >= 0
+        && duplicateMappingIndex != existingMacroMappingIndex)
+    {
+        const auto existingMacro =
+            macroMappings.getReference(duplicateMappingIndex).macroIndex + 1;
+        return fail("That parameter is already assigned to Macro "
+                    + juce::String(existingMacro).paddedLeft('0', 3)
+                    + ".");
+    }
+
+    const auto pluginName = getHostedPluginDisplayName(tabIndex).trim();
+    auto parameterName = parameter->getName(256).trim();
+    if (parameterName.isEmpty())
+        parameterName = "Parameter " + juce::String(parameterIndex + 1);
+
+    SessionData::MacroMapping mapping;
+    if (existingMacroMappingIndex >= 0)
+        mapping = macroMappings.getReference(existingMacroMappingIndex);
+
+    if (existingMacroMappingIndex >= 0
+        && mapping.tabIndex == tabIndex
+        && mapping.parameterIndex == parameterIndex
+        && mapping.enabled)
+    {
+        if (errorMessage != nullptr)
+            errorMessage->clear();
+        return true;
+    }
+
+    storeMacroMappingsUndoState();
+    mapping.macroIndex = macroIndex;
+    mapping.tabIndex = tabIndex;
+    mapping.pluginName = pluginName;
+    mapping.parameterIndex = parameterIndex;
+    mapping.parameterName = parameterName;
+    mapping.enabled = true;
+    mapping.label = pluginName.isNotEmpty()
+        ? pluginName + " " + parameterName
+        : parameterName;
+
+    if (existingMacroMappingIndex >= 0)
+        macroMappings.set(existingMacroMappingIndex, mapping);
+    else
+        macroMappings.add(mapping);
+
+    macroCurrentValues[(size_t) macroIndex] = parameter->getValue();
+    markDirty();
+
+    if (errorMessage != nullptr)
+        errorMessage->clear();
+    return true;
+}
+
+bool PluginCore::setHostedParameterMacroEnabled(
+    int tabIndex,
+    int parameterIndex,
+    bool enabled,
+    juce::String* errorMessage)
+{
+    auto mappingIndex = findMacroMappingIndexByTarget(
+        tabIndex,
+        parameterIndex);
+
+    if (mappingIndex < 0)
+    {
+        if (! enabled)
+        {
+            if (errorMessage != nullptr)
+                errorMessage->clear();
+            return true;
+        }
+
+        const auto freeMacroIndex = getNextFreeMacroIndex();
+        if (freeMacroIndex < 0)
+        {
+            if (errorMessage != nullptr)
+                *errorMessage = "All 128 PHI macros are already assigned.";
+            return false;
+        }
+
+        return mapHostedParameterToMacro(
+            freeMacroIndex,
+            tabIndex,
+            parameterIndex,
+            errorMessage);
+    }
+
+    auto mapping = macroMappings.getReference(mappingIndex);
+    if (mapping.enabled == enabled)
+    {
+        if (errorMessage != nullptr)
+            errorMessage->clear();
+        return true;
+    }
+
+    storeMacroMappingsUndoState();
+    mapping.enabled = enabled;
+    macroMappings.set(mappingIndex, mapping);
+    markDirty();
+
+    if (errorMessage != nullptr)
+        errorMessage->clear();
+    return true;
+}
+
+bool PluginCore::setSeqwencerTargetAssignment(
+    int tabIndex,
+    int parameterIndex,
+    int lane,
+    bool assigned,
+    bool serialMode,
+    juce::String* errorMessage)
+{
+    const auto fail = [errorMessage](const juce::String& message)
+    {
+        if (errorMessage != nullptr)
+            *errorMessage = message;
+        return false;
+    };
+
+    if (lane < 0 || lane > 1)
+        return fail("The requested Seqwencer lane is invalid.");
+
+    auto mappingIndex = findMacroMappingIndexByTarget(
+        tabIndex,
+        parameterIndex);
+    auto createdMapping = false;
+
+    if (mappingIndex < 0)
+    {
+        if (! assigned)
+        {
+            if (errorMessage != nullptr)
+                errorMessage->clear();
+            return true;
+        }
+
+        const auto macroIndex = getNextFreeMacroIndex();
+        if (macroIndex < 0)
+            return fail("All 128 PHI macros are already assigned.");
+
+        if (! mapHostedParameterToMacro(
+                macroIndex,
+                tabIndex,
+                parameterIndex,
+                errorMessage))
+        {
+            return false;
+        }
+
+        mappingIndex = findMacroMappingIndexByTarget(
+            tabIndex,
+            parameterIndex);
+        if (mappingIndex < 0)
+            return fail("PHI could not create the macro mapping.");
+        createdMapping = true;
+    }
+
+    auto mapping = macroMappings.getReference(mappingIndex);
+    const auto newMask = seqwencer_bridge::updateTargetMask(
+        mapping.seqwencerTargetMask,
+        lane,
+        assigned,
+        serialMode);
+
+    if (newMask != mapping.seqwencerTargetMask || (assigned && ! mapping.enabled))
+    {
+        if (! createdMapping)
+            storeMacroMappingsUndoState();
+        mapping.seqwencerTargetMask = juce::jlimit(0, 3, newMask);
+        if (assigned)
+            mapping.enabled = true;
+        macroMappings.set(mappingIndex, mapping);
+        markDirty();
+    }
+
+    if (errorMessage != nullptr)
+        errorMessage->clear();
+    return true;
+}
+
+bool PluginCore::deleteSeqwencerTargetMacro(
+    int tabIndex,
+    int parameterIndex,
+    juce::String* errorMessage)
+{
+    const auto mappingIndex = findMacroMappingIndexByTarget(
+        tabIndex,
+        parameterIndex);
+    if (mappingIndex < 0)
+    {
+        if (errorMessage != nullptr)
+            *errorMessage = "That parameter no longer has a PHI macro mapping.";
+        return false;
+    }
+
+    const auto macroIndex = macroMappings.getReference(mappingIndex).macroIndex;
+    if (! clearMacroMapping(macroIndex))
+    {
+        if (errorMessage != nullptr)
+            *errorMessage = "PHI could not delete that macro mapping.";
+        return false;
+    }
+
+    if (errorMessage != nullptr)
+        errorMessage->clear();
+    return true;
+}
+
 bool PluginCore::undoLastMacroMappingsEdit()
 {
     if (! hasMacroMappingsUndoSnapshot)
@@ -5656,15 +6347,114 @@ void PluginCore::setMacroValueFromHost(
     }
 }
 
+void PluginCore::setMacroValueFromSeqwencerBridge(
+    int macroIndex,
+    float normalizedValue)
+{
+    const bool previousApplyingState =
+        applyingSeqwencerBridgeValue.exchange(
+            true,
+            std::memory_order_acq_rel);
+
+    setMacroValueFromHost(
+        macroIndex,
+        normalizedValue);
+
+    applyingSeqwencerBridgeValue.store(
+        previousApplyingState,
+        std::memory_order_release);
+}
+
+void PluginCore::applySeqwencerLaneValue(
+    int sourceLane,
+    bool bipolar,
+    bool active,
+    float normalizedValue)
+{
+    normalizedValue = juce::jlimit(0.0f, 1.0f, normalizedValue);
+
+    if (sourceLane == seqwencer_bridge::serialLane)
+    {
+        if (! active)
+            return;
+
+        for (const auto& mapping : macroMappings)
+        {
+            if (mapping.enabled
+                && (mapping.seqwencerTargetMask
+                    & seqwencer_bridge::targetMaskA) != 0)
+            {
+                setMacroValueFromSeqwencerBridge(
+                    mapping.macroIndex,
+                    normalizedValue);
+            }
+        }
+        return;
+    }
+
+    if (sourceLane != seqwencer_bridge::sequencerALane
+        && sourceLane != seqwencer_bridge::sequencerBLane)
+    {
+        return;
+    }
+
+    auto& laneState = seqwencerLaneStates[static_cast<std::size_t>(sourceLane)];
+    laneState.normalizedValue = normalizedValue;
+    laneState.bipolar = bipolar;
+    laneState.active = active;
+    laneState.received = true;
+
+    const auto& stateA = seqwencerLaneStates[0];
+    const auto& stateB = seqwencerLaneStates[1];
+
+    for (const auto& mapping : macroMappings)
+    {
+        if (! mapping.enabled)
+            continue;
+
+        const auto useA = (mapping.seqwencerTargetMask
+                           & seqwencer_bridge::targetMaskA) != 0
+                       && stateA.received && stateA.active;
+        const auto useB = (mapping.seqwencerTargetMask
+                           & seqwencer_bridge::targetMaskB) != 0
+                       && stateB.received && stateB.active;
+
+        if (! useA && ! useB)
+            continue;
+
+        auto routedValue = useA
+            ? stateA.normalizedValue : stateB.normalizedValue;
+        if (useA && useB)
+        {
+            routedValue = seqwencer_bridge::selectFurthestFromZero(
+                stateA.normalizedValue,
+                stateA.bipolar,
+                stateB.normalizedValue,
+                stateB.bipolar);
+        }
+
+        setMacroValueFromSeqwencerBridge(
+            mapping.macroIndex,
+            routedValue);
+    }
+}
+
 void PluginCore::audioProcessorParameterChanged(
     juce::AudioProcessor* processor,
     int parameterIndex,
     float newValue)
 {
-    captureLastTouchedParameter(
-        processor,
-        parameterIndex,
-        newValue);
+    const bool isSeqwencerBridgeChange =
+        applyingSeqwencerBridgeValue.load(
+            std::memory_order_acquire);
+
+    if (! isSeqwencerBridgeChange)
+    {
+        captureLastTouchedParameter(
+            processor,
+            parameterIndex,
+            newValue);
+    }
 
     const int tabIndex =
         findHostedTabIndexForProcessor(processor);
@@ -5685,6 +6475,9 @@ void PluginCore::audioProcessorParameterChanged(
     tab->diagnosticParameterCallbacks.fetch_add(
         1,
         std::memory_order_relaxed);
+
+    if (isSeqwencerBridgeChange)
+        return;
 
     const auto captureExpiry =
         pointerAutomationCaptureExpiryMs.load(
@@ -5740,6 +6533,10 @@ void PluginCore::audioProcessorChanged(
 {
     juce::ignoreUnused(details);
 
+    const bool isSeqwencerBridgeChange =
+        applyingSeqwencerBridgeValue.load(
+            std::memory_order_acquire);
+
     const int tabIndex =
         findHostedTabIndexForProcessor(
             processor);
@@ -5755,6 +6552,9 @@ void PluginCore::audioProcessorChanged(
                 std::memory_order_relaxed);
         }
     }
+
+    if (isSeqwencerBridgeChange)
+        return;
 
     auto* selectedTab =
         getSelectedHostedTab();

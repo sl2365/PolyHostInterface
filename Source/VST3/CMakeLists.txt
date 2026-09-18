@@ -1,13 +1,19 @@
 cmake_minimum_required(VERSION 3.22)
 
 # ── VST3 Plugin Version ────────────────────────────────────────────────────────
-set(POLYHOST_VERSION "2.5.45")
+set(POLYHOST_VERSION "2.5.62")
 
 project(PolyHostInterface VERSION ${POLYHOST_VERSION} LANGUAGES C CXX)
 
 set(CMAKE_MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
+
+add_executable(PhiHostedMidiRoutingTests
+    tests/HostedMidiRoutingTests.cpp
+    HostedMidiRouting.h
+)
+target_compile_features(PhiHostedMidiRoutingTests PRIVATE cxx_std_17)
 
 set(SHARED_TOOLS_DIR "${CMAKE_SOURCE_DIR}/../../../_Tools")
 set(JUCE_SHARED_PATH "${SHARED_TOOLS_DIR}/JUCE/_8.0.15")
@@ -58,12 +64,14 @@ target_sources(PolyHostPlugin PRIVATE
     PluginEditor.h
     MainView.cpp
     MainView.h
+    HostedMidiRouting.h
     MidiKeyboardPanel.cpp
     MidiKeyboardPanel.h
     Instructions.cpp
     Instructions.h
     PluginCore.cpp
     PluginCore.h
+    SeqwencerBridgeProtocol.h
     TabModel.cpp
     TabModel.h
     SlotModel.cpp

@@ -109,6 +109,8 @@ std::unique_ptr<juce::XmlElement> SessionManager::createXmlFromSessionData(const
             mappingXml->setAttribute("parameterIndex", mapping.parameterIndex);
             mappingXml->setAttribute("parameterName", mapping.parameterName);
             mappingXml->setAttribute("enabled", mapping.enabled);
+            mappingXml->setAttribute("seqwencerTargetMask",
+                                     mapping.seqwencerTargetMask);
         }
     }
 
@@ -205,6 +207,10 @@ bool SessionManager::restoreSessionDataFromXml(const juce::XmlElement& xml,
             mapping.parameterIndex = mappingXml->getIntAttribute("parameterIndex", -1);
             mapping.parameterName = mappingXml->getStringAttribute("parameterName");
             mapping.enabled = mappingXml->getBoolAttribute("enabled", true);
+            mapping.seqwencerTargetMask = juce::jlimit(
+                0,
+                3,
+                mappingXml->getIntAttribute("seqwencerTargetMask", 0));
 
             if (mapping.macroIndex >= 0)
                 session.macroMappings.add(mapping);

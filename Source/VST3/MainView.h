@@ -69,6 +69,10 @@ public:
 
     AppSettings& getAppSettings() { return appSettings; }
     PolyHostPluginProcessor& getProcessor() { return processor; }
+    bool isShowingMacroMappingsView() const noexcept
+    {
+        return showingMacroMappingsView;
+    }
     juce::Point<int> getHostedEditorLocalPointFromScreen(juce::Point<int> screenPoint) const;
     juce::Point<int> getHostedEditorScreenPointFromLocal(juce::Point<int> localPoint) const;
 
@@ -556,6 +560,7 @@ private:
 
         commandMidiKeyboardShow = 2800,
         commandMidiKeyboardFixedKeyWidth = 2801,
+        commandMidiKeyboardNoteNames = 2802,
         commandMidiKeyboardOctavesBase = 2810,
         commandMidiKeyboardBendRangeBase = 2820
     };
@@ -568,6 +573,7 @@ private:
     void timerCallback() override;
 
     void refreshFromCore();
+    void refreshMacroMappingsView();
     void refreshDirtyUiOnly();
     void refreshHostedEditor();
     void clearHostedEditor();
@@ -604,6 +610,7 @@ private:
     void refreshPointerControlTarget();
     void showPointerControlSettingsDialog();
     void showMidiOutputSettingsDialog();
+    void showSeqwencerTargetBrowser(bool serialMode);
     void showAboutDialog();
     void buildAndStorePresetLoadReport(const juce::File& file,
                                        const SessionData& sessionData,
@@ -734,6 +741,7 @@ private:
     bool lastKnownDirtyState = false;
     bool lastKnownShowingState = true;
     int lastDisplayedCpuPercent = 0;
+    juce::uint32 lastCpuDisplayUpdateMs = 0;
     bool pendingMissingPluginPrompt = false;
     int pendingMissingPluginPromptDelayTicks = 0;
     bool suppressEmptyEditorResize = false;

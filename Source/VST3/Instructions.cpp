@@ -30,8 +30,9 @@ namespace
             "1. Load a plugin into the current tab.\n"
             "2. Add more tabs for more instruments or effects.\n"
             "3. Assign MIDI channels and adjust the routing order.\n"
-            "4. Use presets to save the full PHI session.\n"
-            "5. Use external pointer maps for plugins that need MIDI-controlled mouse/pointer operation.\n\n"
+            "4. Use Macro Mappings to expose hosted parameters and optionally target them from Seqwencer.\n"
+            "5. Use presets to save the full PHI session.\n"
+            "6. Use external pointer maps for plugins that need MIDI-controlled mouse/pointer operation.\n\n"
             "The standalone version also provides audio and MIDI device settings, tempo and metronome controls, and audio or MIDI recording. These standalone-only controls are not shown when PHI is loaded as a VST3 plugin.\n\n"
             "Audio/MIDI Routing\n"
             "_________________________________________________________________\n\n"
@@ -71,7 +72,7 @@ namespace
             "The selected tab determines which plugin GUI, pointer map, MIDI-channel assignments, and plugin details are currently active. Use the tab scroll buttons when the window is too narrow to show every tab." ) });
 
         topics.push_back({ "Presets", makeBody("Presets",
-            "PHI presets save the current tab layout, loaded plugins, plugin states, MIDI assignments, routing-related tab state, selected external pointer maps, and macro mappings.\n\n"
+            "PHI presets save the current tab layout, loaded plugins, plugin states, MIDI assignments, routing-related tab state, selected external pointer maps, Macro mappings, paused/enabled mapping states, and Seqwencer A/B target assignments.\n\n"
             "The Presets menu is rebuilt from the current contents of the active presets folder whenever it is opened. Preset subfolders appear as submenus, so presets can be organised into folders without losing direct menu access.\n\n"
             "Use Presets > New Preset to clear the current session and begin an untitled preset.\n\n"
             "Use File > Save Preset to save over the current preset.\n\n"
@@ -120,6 +121,7 @@ namespace
             "Each tab has its own MIDI-channel assignment. This allows different MIDI channels to control different hosted plugins.\n\n"
             "Use the MIDI Ch control on a tab or in Routing View to select MIDI Ch: All or one or more individual channels from 1 to 16.\n\n"
             "MIDI Ch: All routes every channel into that tab. When MIDI Ch: All is enabled, the individual channel entries are disabled to avoid conflicting assignments.\n\n"
+            "Dedicated MIDI-only arpeggiators, sequencers and MIDI effects feed their generated notes to later tabs. Place the arp before the synth in PHI's tab order. Generated MIDI never travels backwards to an earlier tab, and each receiving tab still applies its own MIDI-channel assignment.\n\n"
             "In standalone mode, physical MIDI input devices are enabled globally in MIDI > MIDI Settings. The per-tab MIDI Ch control then filters the combined incoming stream by channel. In the VST3 version, MIDI arrives from the DAW or VST3 host." ) });
 
         topics.push_back({ "MIDI Settings / Output", makeBody("MIDI Settings / Output",
@@ -128,6 +130,7 @@ namespace
             "Enable the physical MIDI input devices PHI should receive. Choose a hardware or virtual MIDI output, then optionally enable Send generated MIDI to output and MIDI Thru. Generated MIDI includes events produced by hosted arpeggiators, sequencers and MIDI effects. MIDI Thru also forwards the original incoming MIDI.\n\n"
             "VST3:\n\n"
             "Send generated MIDI to host returns MIDI created or changed by hosted plugins to the DAW. MIDI Thru also returns the original MIDI received from the DAW.\n\n"
+            "These output switches do not control internal arp-to-synth routing. A dedicated MIDI-only arp placed before a synth controls that synth even when Send generated MIDI is off.\n\n"
             "Do not route PHI's MIDI output back into its own input, because MIDI Thru can create duplicate notes or a feedback loop. Moving an on-screen plugin parameter normally produces plugin automation, not MIDI; it is recorded or sent only if that hosted plugin actually generates MIDI events." ) });
 
         topics.push_back({ "MIDI Monitor", makeBody("MIDI Monitor",
@@ -150,22 +153,42 @@ namespace
 
         topics.push_back({ "MIDI Keyboard", makeBody("MIDI Keyboard",
             "Options > Keyboard > Show displays or hides PHI's MIDI keyboard beneath the hosted plugin.\n\n"
+            "Options > Keyboard > Notes shows or hides C-note labels such as C1, C2, C3 and C4. This choice is saved in PHI's settings.\n\n"
             "Options > Keyboard > Width selects fixed key width or a fixed display of 3 to 8 octaves.\n\n"
+            "Move the mouse wheel over the keys to shift the visible keyboard range by octaves. The range is constrained to valid MIDI notes.\n\n"
             "Options > Keyboard > Bend Range selects 1 to 4 octaves. PHI sends the standard MIDI pitch-bend-sensitivity RPN on channel 1 at the start of a pitch-wheel gesture. A hosted plugin must support both Pitch Bend and that RPN for the selected range to take effect.\n\n"
-            "The Pitch Bend wheel returns to its centre when released. The Mod wheel sends MIDI CC1 and remains at its selected position. A hosted plugin must respond to CC1 for modulation to be heard.\n\n"
+            "The Pitch Bend wheel returns to its centre when released. Scrolling over it moves the bend while the wheel is turning, then returns it to centre shortly after scrolling stops. The Mod wheel sends MIDI CC1 and remains at its selected position; scrolling over it adjusts the retained value. A hosted plugin must respond to CC1 for modulation to be heard.\n\n"
+            "Incoming hardware Pitch Bend and Mod Wheel (CC1) messages update the two on-screen wheels while the same MIDI continues through PHI's normal routing.\n\n"
             "The keyboard, Pitch Bend wheel and Mod wheel use MIDI channel 1 and follow the normal Routing View MIDI-channel assignments." ) });
 
         topics.push_back({ "Macro Mapping", makeBody("Macro Mapping",
-            "Macro Mapping lets PHI assign the last touched hosted-plugin parameter to macro controls.\n\n"
-            "Touch or move a plugin parameter, then use the Map Last Touched control to assign it.\n\n"
-            "Click the highlighted Tab, Plugin, or Parameter title in the Macro Mappings view to sort ascending, descending, then return to Macro order. Use the drag handle at the left of each row while Macro order is active to move mappings between Macro 001-128 slots. You can also filter mappings, replace a target with the current last touched parameter, delete mappings, undo the last mapping edit, or clear all mappings.\n\n"
+            "Macro Mappings lists every automatable parameter in every loaded hosted plug-in, whether it is currently mapped or not. Search the list or click any column heading to organise the display; sorting never changes a Macro assignment. Assigned Only hides unmapped rows while retaining active and paused mappings. Text in the first three columns uses a fixed colour for each tab while row backgrounds remain dark.\n\n"
+            "Tick Mapped to assign an unmapped parameter to the next free Macro. Untick it to pause control without losing its Macro number or Seqwencer targets, then tick it again to resume. The Replace button keeps the Macro number but changes its destination to the current last touched parameter. The X permanently deletes the mapping and its Seqwencer assignments. Undo and Clear All remain available.\n\n"
             "In the PHI VST3 version, automate Macro 001-128 from the DAW to control the mapped hosted-plugin parameters. The additional MIDI CC parameter entries exposed by some hosts are not the macro controls.\n\n"
+            "When Seqwencer is loaded, the same view adds a Targets column. Tick A or B to let that sequencer control the parameter. In Parallel the lanes are independent; in SERIAL the A/B boxes mirror one shared 64-step target while the saved B Parallel assignment is preserved. Seqwencer's PHI > TARGET button opens this integrated Macro Mappings view directly. The Targets column is completely removed when Seqwencer is not loaded.\n\n"
+            "Removing Seqwencer does not delete these mappings or their saved A/B target bits. PHI keeps them with the preset, hides the Targets column, and simply receives no Seqwencer modulation. Loading Seqwencer again reveals and resumes the saved assignments. Use the Macro-column X only when you intend to delete the complete Macro mapping and its A/B assignments.\n\n"
             "Mappings are saved with the PHI preset. Standalone PHI has no DAW automation source, although the mappings remain part of a preset that can also be loaded in PHI VST3." ) });
+
+        topics.push_back({ "Seqwencer Integration", makeBody("Seqwencer Integration",
+            "Seqwencer is both a post-synth audio Gate and a PHI parameter-modulation source. Put it after a synth or audio source when using its built-in Gate. The PHI parameter bridge can target exposed parameters from any other loaded hosted plug-in; Seqwencer itself is deliberately omitted from PHI's destination list to prevent self-modulation feedback.\n\n"
+            "FX AND TARGETS\n\n"
+            "Click the GATE or PHI body in Seqwencer's left FX rail to show that section's controls. The small LED inside each FX button independently enables or disables it. PHI appears only when Seqwencer detects PHI. Open PHI controls and click TARGET to open PHI's integrated Macro Mappings view.\n\n"
+            "Tick A or B beside any hosted parameter. PHI creates the next free Macro automatically if the parameter was not already mapped. Unticking A/B stops that lane controlling the destination but keeps its Macro. Unticking Mapped pauses all Macro and Seqwencer control without deleting the number. The Macro-column X deletes the full mapping.\n\n"
+            "PARALLEL AND SERIAL\n\n"
+            "Parallel runs the two 32-step lanes independently. Their A/B target checkboxes and lane enable states are independent. SERIAL plays A1-A32 followed by B1-B32 as one 64-step sequence. A is the shared SERIAL destination set; the B target display mirrors it while the saved Parallel B assignments remain intact. In SERIAL, the compact A/B buttons choose which Attack, Release and Bipolar profile controls the entire 64-step run. Both grids continue playing.\n\n"
+            "GATE CONTROLS\n\n"
+            "Each Gate step cycles through Off, Short, Long and Link. Off is silent. Short and Long use the adjustable Short Step and Long Step length knobs. Link carries continuously into the next step. Volume, Depth, Short Step and Long Step can each be dragged by their dotted label into either target list. Teal text means A, orange means B, and violet means both. A target-list checkbox temporarily disables only that assignment; X removes it. In SERIAL the shared assignments intentionally mirror.\n\n"
+            "The Gate button must be on for the built-in audio Gate to affect sound. Turning Gate off does not erase its pattern or target lists. These internal Gate targets are separate from PHI parameter targets.\n\n"
+            "SEQUENCE CONTROLS\n\n"
+            "Start and End choose the active range: 1-32 in Parallel and 1-64 in SERIAL. Direction offers Loop, Bounce, Reverse and Played. Played resets to Start on the first note of a new phrase; overlapping chord or legato notes do not retrigger until every held note has been released. Rate includes straight and triplet divisions. Host Sync follows the timing supplied by PHI or the outer DAW; PHI VST3 forwards the outer DAW timeline to hosted plug-ins. If a nested host supplies no moving timeline, Seqwencer falls back to advancing safely rather than freezing. Mix blends the dry input with the gated result.\n\n"
+            "Bipolar changes the lane display and its PHI modulation range without destroying negative step data. Negative values are treated as zero by the unipolar audio Gate but remain available for bipolar PHI targets. Equal adjacent Link values remain continuous without an artificial dip.\n\n"
+            "SEQWENCER PRESETS\n\n"
+            "Seqwencer's PRESETS button opens its portable preset browser. Save and load files from Data/Presets beside Seqwencer.vst3. Presets contain the complete musical state and target routing. Data/Settings.ini stores interface settings such as the last window size. Keep the Data folder beside Seqwencer.vst3 when moving the plug-in to another computer." ) });
 
         topics.push_back({ "Plugin Diagnostics", makeBody("Plugin Diagnostics",
             "Plugin Diagnostics shows detailed information about the selected tab and hosted plugin.\n\n"
             "Open Routing View and click the information button for a plugin to open its diagnostics.\n\n"
-            "Diagnostics can include plugin name, manufacturer, format, unique ID, path, channel layout, latency, tail length, parameter count, state status, MIDI assignments, pointer-map status, and restore warnings.\n\n"
+            "Diagnostics can include plugin name, manufacturer, format, unique ID, path, channel layout, latency, tail length, parameter count, state status, MIDI assignments, pointer-map status, restore warnings, and the outer DAW timing fields PHI forwards to hosted plug-ins.\n\n"
             "Use this when diagnosing plugin identity, pointer-map matching, missing plugin restore problems, or unusual hosted-plugin behaviour." ) });
 
         topics.push_back({ "Preset Load Report", makeBody("Preset Load Report",
@@ -206,7 +229,7 @@ namespace
 
         topics.push_back({ "Recording", makeBody("Recording",
             "Audio and MIDI recording are available only in standalone PHI. Open the Recording view with Options > Recording or by right-clicking the Record button. Recording continues if the view is closed or another tab is selected.\n\n"
-            "Use the Audio/MIDI switch to choose the recording type, then left-click the Record button to arm recording. The button is orange while waiting for count-in or Wait Note, and red once recording is being captured. Left-click it again to cancel an armed recording or stop an active recording.\n\n"
+            "Use the Audio/MIDI switch to choose the recording type. Its track is orange for Audio and blue for MIDI. Then left-click the Record button to arm recording. The button is orange while waiting for count-in or Wait Note, and red once recording is being captured. Left-click it again to cancel an armed recording or stop an active recording.\n\n"
             "Count-in can be set to 0, 1, 2, 4 or 8 bars, or Wait Note. A bar count-in begins on a newly synchronised first beat. Wait Note preserves the existing metronome timing and starts recording at the first MIDI note-on. The metronome sounds while armed when its mode permits it, but is not recorded.\n\n"
             "Audio mode records the stereo PHI output as a 24-bit WAV file. MIDI mode creates a standard Type 1 MIDI file at 960 PPQ in 4/4. MIDI recording can include external notes, external controllers, and MIDI generated by hosted plugins. At least one MIDI source must remain selected.\n\n"
             "Completed files are stored in the Recordings folder beside the standalone executable. PHI creates the folder when required. The file list switches between WAV and MIDI files; double-click a completed file to open it in the Windows default application." ) });
@@ -233,6 +256,8 @@ namespace
         topics.push_back({ "Settings / Debug", makeBody("Settings / Debug",
             "Options > Pointer Control Settings opens pointer-specific configuration.\n\n"
             "In standalone PHI, Options > Audio Settings configures the audio driver, including ASIO, input and output devices, sample rate, buffer size and active channels. An installed ASIO driver can be selected from the Audio device type list. Options > Recording opens or closes Recording View. These two items are not present in PHI VST3.\n\n"
+            "Session Recall is a standalone-only saved option. When enabled, PHI restores the previous hosted session at startup. When disabled, PHI keeps its ordinary audio, MIDI and interface settings but starts with a blank Untitled preset.\n\n"
+            "Single Instance is a standalone-only saved option. When enabled, launching PHI again activates the existing window. When disabled, separate PHI processes may run at the same time.\n\n"
             "Options > Plugin Repairs configures plugin scan folders and whether repaired presets are saved automatically. Use File > Locate Missing Plugins to perform the actual missing-plugin repair.\n\n"
             "Options > Debug contains debug logging controls. Debug logging can be useful when diagnosing plugin loading, preset restore, pointer-map matching, MIDI routing, or UI behaviour.\n\n"
             "Enable Advanced Debug Logging adds more detailed messages and is available only while normal debug logging is enabled. Clear Debug Log Now clears the current debug log. Clear Debug Log On Startup resets it automatically when PHI starts." ) });

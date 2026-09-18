@@ -17,6 +17,7 @@ public:
 
     void resizeToFitContent(int contentWidth, int contentHeight);
     void resizeToRoutingView();
+    void resizeToMacroMappingsView();
 
 private:
 
@@ -31,4 +32,6 @@ private:
 
     PolyHostPluginProcessor& audioProcessor;
     MainView mainView;
+    int macroMappingsViewHeight = 587;
+    bool applyingMacroMappingsViewSize = false;
 };

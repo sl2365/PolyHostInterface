@@ -157,6 +157,19 @@ public:
         bool valid = false;
     };
 
+    struct HostedParameterChoice
+    {
+        int tabIndex = -1;
+        juce::String tabName;
+        juce::String pluginName;
+        int parameterIndex = -1;
+        juce::String parameterName;
+        int macroIndex = -1;
+        bool mappingEnabled = false;
+        bool targetA = false;
+        bool targetB = false;
+    };
+
     bool hasLastTouchedParameter() const;
     LastTouchedParameter getLastTouchedParameter() const;
     juce::String getLastTouchedParameterDescription() const;
@@ -173,6 +186,41 @@ public:
     bool moveMacroMapping(int fromMacroIndex, int toMacroIndex);
     bool undoLastMacroMappingsEdit();
     bool hasMacroMappingsUndoState() const;
+    juce::Array<HostedParameterChoice> getHostedParameterChoices() const;
+    bool mapHostedParameterToMacro(int macroIndex,
+                                   int tabIndex,
+                                   int parameterIndex,
+                                   juce::String* errorMessage = nullptr);
+    bool setHostedParameterMacroEnabled(
+        int tabIndex,
+        int parameterIndex,
+        bool enabled,
+        juce::String* errorMessage = nullptr);
+    bool setSeqwencerTargetAssignment(int tabIndex,
+                                      int parameterIndex,
+                                      int lane,
+                                      bool assigned,
+                                      bool serialMode,
+                                      juce::String* errorMessage = nullptr);
+    bool deleteSeqwencerTargetMacro(int tabIndex,
+                                    int parameterIndex,
+                                    juce::String* errorMessage = nullptr);
+    bool hasLoadedSeqwencer() const noexcept;
+    bool getSeqwencerSerialMode() const noexcept
+    {
+        return seqwencerSerialMode.load(std::memory_order_acquire);
+    }
+    bool consumeSeqwencerTargetBrowserRequest(bool& serialMode) noexcept
+    {
+        const auto requestedMode =
+            seqwencerTargetBrowserRequestPending.exchange(
+                -1, std::memory_order_acq_rel);
+        if (requestedMode < 0)
+            return false;
+
+        serialMode = requestedMode != 0;
+        return true;
+    }
 
     float getMacroCurrentValue(int macroIndex) const;
     void setMacroValueFromHost(int macroIndex, float normalizedValue);
@@ -201,9 +249,12 @@ private:
         std::unique_ptr<SlotModel> slot;
         std::unique_ptr<juce::AudioPluginInstance> pluginInstance;
         PluginSlotType pluginType = PluginSlotType::Empty;
+        bool isSeqwencer = false;
         juce::MidiBuffer midiScratchBuffer;
         juce::MidiBuffer midiInputScratchBuffer;
         bool hasProducedGeneratedMidi = false;
+        bool midiRouteReadyThisBlock = false;
+        bool midiPreprocessedThisBlock = false;
         std::atomic<bool> processingQuarantined { false };
 
         std::atomic<juce::uint32> diagnosticProcessCallsStarted { 0 };
@@ -296,6 +347,12 @@ private:
     void captureLastTouchedParameter(juce::AudioProcessor* processor,
                                      int parameterIndex,
                                      float newValue);
+    void setMacroValueFromSeqwencerBridge(int macroIndex,
+                                          float normalizedValue);
+    void applySeqwencerLaneValue(int sourceLane,
+                                 bool bipolar,
+                                 bool active,
+                                 float normalizedValue);
     int findHostedTabIndexForProcessor(const juce::AudioProcessor* processor) const;
     juce::String getHostedPluginDisplayName(int tabIndex) const;
     int findMacroMappingIndexByMacroSlot(int macroIndex) const;
@@ -393,6 +450,18 @@ private:
     PointerAutomationCallback pointerAutomationCallback;
     std::atomic<juce::uint32> pointerAutomationCaptureExpiryMs { 0 };
     std::atomic<bool> applyingMacroValueFromHost { false };
+    std::atomic<bool> applyingSeqwencerBridgeValue { false };
+    std::atomic<juce::uint32> seqwencerBridgeMessageCount { 0 };
+    std::atomic<int> seqwencerTargetBrowserRequestPending { -1 };
+    std::atomic<bool> seqwencerSerialMode { false };
+    struct SeqwencerLaneState
+    {
+        float normalizedValue = 0.0f;
+        bool bipolar = false;
+        bool active = false;
+        bool received = false;
+    };
+    std::array<SeqwencerLaneState, 2> seqwencerLaneStates {};
 
     juce::uint32 dirtyMarkingResumeTimeMs = 0;
 

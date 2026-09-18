@@ -4,8 +4,10 @@
 #include "PluginEditor.h"
 #include "PointerSettingsDialogue.h"
 #include "Instructions.h"
+#include <algorithm>
 #include <functional>
 #include <limits>
+#include <utility>
 
 #if JUCE_WINDOWS
 extern "C" __declspec(dllimport) short __stdcall GetAsyncKeyState(int virtualKeyCode);
@@ -155,6 +157,565 @@ namespace
         juce::Label titleLabel;
         juce::Label versionLabel;
         juce::Label infoLabel;
+        juce::TextButton closeButton;
+    };
+
+    class SeqwencerTargetBrowserContent final : public juce::Component,
+                                                 private juce::TableListBoxModel
+    {
+    public:
+        using Choice = PluginCore::HostedParameterChoice;
+        using RefreshCallback = std::function<juce::Array<Choice>()>;
+        using TargetCallback =
+            std::function<bool(const Choice&, int, bool, juce::String&)>;
+        using DeleteCallback =
+            std::function<bool(const Choice&, juce::String&)>;
+
+        SeqwencerTargetBrowserContent(
+            juce::Array<Choice> choicesIn,
+            bool serialModeIn,
+            RefreshCallback refreshCallbackIn,
+            TargetCallback targetCallbackIn,
+            DeleteCallback deleteCallbackIn)
+            : choices(std::move(choicesIn)),
+              serialMode(serialModeIn),
+              refreshCallback(std::move(refreshCallbackIn)),
+              targetCallback(std::move(targetCallbackIn)),
+              deleteCallback(std::move(deleteCallbackIn))
+        {
+            titleLabel.setText("Seqwencer Targets", juce::dontSendNotification);
+            titleLabel.setFont(
+                juce::Font(juce::FontOptions(20.0f, juce::Font::bold)));
+            titleLabel.setColour(juce::Label::textColourId,
+                                 juce::Colours::white);
+            addAndMakeVisible(titleLabel);
+
+            helpLabel.setText(
+                serialMode
+                    ? "SERIAL shares one 64-step target list. A and B mirror; "
+                      "your separate B assignments remain saved for Parallel."
+                    : "Tick A or B independently. Header clicks sort only; "
+                      "click the X beside a Macro to delete it.",
+                juce::dontSendNotification);
+            helpLabel.setColour(juce::Label::textColourId,
+                                juce::Colours::lightgrey);
+            addAndMakeVisible(helpLabel);
+
+            searchEditor.setTextToShowWhenEmpty(
+                "Search tabs, plug-ins or parameters...",
+                juce::Colours::grey);
+            searchEditor.setColour(juce::TextEditor::backgroundColourId,
+                                   juce::Colour(0xFF151A23));
+            searchEditor.setColour(juce::TextEditor::textColourId,
+                                   juce::Colours::white);
+            searchEditor.setColour(juce::TextEditor::outlineColourId,
+                                   juce::Colours::white.withAlpha(0.25f));
+            searchEditor.onTextChange = [this] { rebuildFilter(); };
+            addAndMakeVisible(searchEditor);
+
+            parameterTable.setModel(this);
+            parameterTable.setRowHeight(28);
+            parameterTable.setHeaderHeight(28);
+            parameterTable.setOutlineThickness(1);
+            parameterTable.setMultipleSelectionEnabled(false);
+            parameterTable.setColour(juce::ListBox::backgroundColourId,
+                                     juce::Colour(0xFF151A23));
+            parameterTable.setColour(juce::ListBox::outlineColourId,
+                                     juce::Colours::white.withAlpha(0.18f));
+            auto& header = parameterTable.getHeader();
+            header.addColumn("Tab", tabColumn, 58, 48, 90);
+            header.addColumn("Plugin", pluginColumn, 235, 120, 420);
+            header.addColumn("Parameter", parameterColumn, 365, 150, 600);
+            header.addColumn("Targets", targetsColumn, 130, 110, 170);
+            header.addColumn("Macro", macroColumn, 104, 92, 130);
+            header.setSortColumnId(tabColumn, true);
+            addAndMakeVisible(parameterTable);
+
+            countLabel.setColour(juce::Label::textColourId,
+                                 juce::Colours::lightgrey);
+            addAndMakeVisible(countLabel);
+
+            closeButton.setButtonText("Close");
+            closeButton.onClick = [this] { closeDialog(); };
+            addAndMakeVisible(closeButton);
+
+            rebuildFilter();
+            setSize(940, 520);
+        }
+
+        void paint(juce::Graphics& g) override
+        {
+            g.fillAll(juce::Colour(0xFF1D2230));
+
+            if (filteredChoiceIndices.isEmpty())
+            {
+                g.setColour(juce::Colours::lightgrey);
+                g.setFont(juce::Font(juce::FontOptions(14.0f)));
+                g.drawFittedText(
+                    choices.isEmpty()
+                        ? "No automatable parameters are available. Load a "
+                          "synth or effect into PHI first."
+                        : "No parameters match this search.",
+                    parameterTable.getBounds().reduced(20),
+                    juce::Justification::centred,
+                    3);
+            }
+        }
+
+        void resized() override
+        {
+            auto area = getLocalBounds().reduced(16);
+            titleLabel.setBounds(area.removeFromTop(30));
+            helpLabel.setBounds(area.removeFromTop(24));
+            area.removeFromTop(8);
+            searchEditor.setBounds(area.removeFromTop(32));
+            area.removeFromTop(10);
+
+            auto footer = area.removeFromBottom(30);
+            closeButton.setBounds(footer.removeFromRight(90));
+            countLabel.setBounds(footer);
+            area.removeFromBottom(10);
+            parameterTable.setBounds(area);
+        }
+
+    private:
+        enum ColumnIds
+        {
+            tabColumn = 1,
+            pluginColumn,
+            parameterColumn,
+            targetsColumn,
+            macroColumn
+        };
+
+        class TargetsCell final : public juce::Component
+        {
+        public:
+            explicit TargetsCell(SeqwencerTargetBrowserContent& ownerIn)
+                : owner(ownerIn)
+            {
+                configureButton(buttonA, "A", juce::Colour(0xFF57D6D0));
+                configureButton(buttonB, "B", juce::Colour(0xFFFFA24C));
+                buttonA.onClick = [this]
+                {
+                    owner.changeTarget(choice, 0, buttonA.getToggleState());
+                };
+                buttonB.onClick = [this]
+                {
+                    owner.changeTarget(choice, 1, buttonB.getToggleState());
+                };
+                addAndMakeVisible(buttonA);
+                addAndMakeVisible(buttonB);
+            }
+
+            void paint(juce::Graphics& g) override
+            {
+                g.setColour(juce::Colours::white.withAlpha(0.16f));
+                g.drawVerticalLine(getWidth() - 1,
+                                   2.0f,
+                                   (float) getHeight() - 2.0f);
+            }
+
+            void setChoice(const Choice& newChoice, bool isSerial)
+            {
+                choice = newChoice;
+                const auto stateA = choice.targetA;
+                const auto stateB = isSerial ? stateA : choice.targetB;
+                buttonA.setToggleState(stateA, juce::dontSendNotification);
+                buttonB.setToggleState(stateB, juce::dontSendNotification);
+                buttonA.setTooltip(isSerial
+                    ? "Shared Seqwencer SERIAL target" : "Seqwencer A target");
+                buttonB.setTooltip(isSerial
+                    ? "Shared Seqwencer SERIAL target" : "Seqwencer B target");
+            }
+
+            void resized() override
+            {
+                auto area = getLocalBounds().reduced(6, 1);
+                const auto half = area.getWidth() / 2;
+                buttonA.setBounds(area.removeFromLeft(half));
+                buttonB.setBounds(area);
+            }
+
+        private:
+            static void configureButton(juce::ToggleButton& button,
+                                        const juce::String& text,
+                                        juce::Colour accent)
+            {
+                button.setButtonText(text);
+                button.setClickingTogglesState(true);
+                button.setColour(juce::ToggleButton::textColourId,
+                                 juce::Colours::white);
+                button.setColour(juce::ToggleButton::tickColourId, accent);
+                button.setColour(juce::ToggleButton::tickDisabledColourId,
+                                 accent.withAlpha(0.35f));
+            }
+
+            SeqwencerTargetBrowserContent& owner;
+            Choice choice;
+            juce::ToggleButton buttonA;
+            juce::ToggleButton buttonB;
+        };
+
+        class MacroCell final : public juce::Component
+        {
+        public:
+            explicit MacroCell(SeqwencerTargetBrowserContent& ownerIn)
+                : owner(ownerIn)
+            {
+                deleteButton.setTooltip("Delete this PHI macro mapping");
+                deleteButton.onClick = [this]
+                {
+                    if (choice.macroIndex >= 0)
+                        owner.confirmDelete(choice);
+                };
+                addAndMakeVisible(deleteButton);
+            }
+
+            void setChoice(const Choice& newChoice)
+            {
+                choice = newChoice;
+                const auto mapped = choice.macroIndex >= 0;
+                deleteButton.setVisible(mapped);
+                deleteButton.setTooltip(mapped
+                    ? "Delete Macro "
+                        + juce::String(choice.macroIndex + 1)
+                              .paddedLeft('0', 3)
+                        + " mapping"
+                    : juce::String());
+                repaint();
+            }
+
+            void paint(juce::Graphics& g) override
+            {
+                if (choice.macroIndex >= 0)
+                {
+                    g.setColour(juce::Colour(0xFF61D9C7));
+                    g.setFont(juce::Font(juce::FontOptions(
+                        12.5f, juce::Font::bold)));
+                    g.drawFittedText(
+                        juce::String(choice.macroIndex + 1)
+                            .paddedLeft('0', 3),
+                        getLocalBounds().withTrimmedRight(27).reduced(5, 1),
+                        juce::Justification::centred,
+                        1);
+                }
+
+                g.setColour(juce::Colours::white.withAlpha(0.10f));
+                g.drawVerticalLine(getWidth() - 1,
+                                   2.0f,
+                                   (float) getHeight() - 2.0f);
+            }
+
+            void resized() override
+            {
+                deleteButton.setBounds(getWidth() - 27, 3, 23,
+                                       juce::jmax(0, getHeight() - 6));
+            }
+
+        private:
+            class DeleteButton final : public juce::Button
+            {
+            public:
+                DeleteButton() : juce::Button("Delete Macro")
+                {
+                    setMouseCursor(juce::MouseCursor::PointingHandCursor);
+                }
+
+                void paintButton(juce::Graphics& g,
+                                 bool highlighted,
+                                 bool down) override
+                {
+                    auto colour = juce::Colour(0xFFE8A0A0);
+                    if (highlighted || down)
+                        colour = colour.brighter(0.25f);
+
+                    const auto centre = getLocalBounds().toFloat().getCentre();
+                    const auto radius = down ? 3.2f : 3.7f;
+                    g.setColour(colour);
+                    g.drawLine(centre.x - radius, centre.y - radius,
+                               centre.x + radius, centre.y + radius, 1.5f);
+                    g.drawLine(centre.x + radius, centre.y - radius,
+                               centre.x - radius, centre.y + radius, 1.5f);
+                }
+            };
+
+            SeqwencerTargetBrowserContent& owner;
+            Choice choice;
+            DeleteButton deleteButton;
+        };
+
+        int getNumRows() override
+        {
+            return filteredChoiceIndices.size();
+        }
+
+        const Choice* getChoiceForRow(int rowNumber) const
+        {
+            if (! juce::isPositiveAndBelow(
+                    rowNumber, filteredChoiceIndices.size()))
+            {
+                return nullptr;
+            }
+
+            const auto choiceIndex = filteredChoiceIndices[rowNumber];
+            return juce::isPositiveAndBelow(choiceIndex, choices.size())
+                ? &choices.getReference(choiceIndex) : nullptr;
+        }
+
+        void paintRowBackground(juce::Graphics& g,
+                                int rowNumber,
+                                int width,
+                                int height,
+                                bool rowIsSelected) override
+        {
+            juce::ignoreUnused(width);
+            if (rowIsSelected)
+                g.fillAll(juce::Colour(0xFF385A72));
+            else if ((rowNumber & 1) != 0)
+                g.fillAll(juce::Colours::white.withAlpha(0.025f));
+
+            g.setColour(juce::Colours::white.withAlpha(0.08f));
+            g.drawHorizontalLine(height - 1, 0.0f, (float) width);
+        }
+
+        void paintCell(juce::Graphics& g,
+                       int rowNumber,
+                       int columnId,
+                       int width,
+                       int height,
+                       bool) override
+        {
+            const auto* choice = getChoiceForRow(rowNumber);
+            if (choice == nullptr || columnId == targetsColumn
+                || columnId == macroColumn)
+                return;
+
+            juce::String text;
+            auto justification = juce::Justification::centredLeft;
+            if (columnId == tabColumn)
+            {
+                text = juce::String(choice->tabIndex + 1);
+                justification = juce::Justification::centred;
+            }
+            else if (columnId == pluginColumn)
+            {
+                text = choice->pluginName;
+            }
+            else if (columnId == parameterColumn)
+            {
+                text = choice->parameterName;
+            }
+            g.setColour(juce::Colours::white);
+            g.setFont(juce::Font(juce::FontOptions(
+                12.5f, juce::Font::plain)));
+            g.drawFittedText(text,
+                             juce::Rectangle<int>(0, 0, width, height)
+                                 .reduced(8, 1),
+                             justification,
+                             1);
+
+            g.setColour(juce::Colours::white.withAlpha(0.06f));
+            g.drawVerticalLine(width - 1, 2.0f, (float) height - 2.0f);
+        }
+
+        juce::Component* refreshComponentForCell(
+            int rowNumber,
+            int columnId,
+            bool,
+            juce::Component* existingComponentToUpdate) override
+        {
+            if (columnId != targetsColumn && columnId != macroColumn)
+                return nullptr;
+
+            if (columnId == targetsColumn)
+            {
+                auto* cell = dynamic_cast<TargetsCell*>(existingComponentToUpdate);
+                if (cell == nullptr)
+                {
+                    delete existingComponentToUpdate;
+                    cell = new TargetsCell(*this);
+                }
+
+                if (const auto* choice = getChoiceForRow(rowNumber))
+                    cell->setChoice(*choice, serialMode);
+                return cell;
+            }
+
+            auto* cell = dynamic_cast<MacroCell*>(existingComponentToUpdate);
+            if (cell == nullptr)
+            {
+                delete existingComponentToUpdate;
+                cell = new MacroCell(*this);
+            }
+
+            if (const auto* choice = getChoiceForRow(rowNumber))
+                cell->setChoice(*choice);
+            return cell;
+        }
+
+        void sortOrderChanged(int newSortColumnId,
+                              bool isForwards) override
+        {
+            sortColumn = juce::jlimit(static_cast<int>(tabColumn),
+                                      static_cast<int>(macroColumn),
+                                      newSortColumnId);
+            sortForwards = isForwards;
+            rebuildFilter();
+        }
+
+        int compareChoices(const Choice& first,
+                           const Choice& second) const
+        {
+            auto result = 0;
+            if (sortColumn == tabColumn)
+                result = first.tabIndex - second.tabIndex;
+            else if (sortColumn == pluginColumn)
+                result = first.pluginName.compareNatural(second.pluginName);
+            else if (sortColumn == parameterColumn)
+                result = first.parameterName.compareNatural(second.parameterName);
+            else if (sortColumn == targetsColumn)
+            {
+                const auto firstMask = (first.targetA ? 1 : 0)
+                    | ((serialMode ? first.targetA : first.targetB) ? 2 : 0);
+                const auto secondMask = (second.targetA ? 1 : 0)
+                    | ((serialMode ? second.targetA : second.targetB) ? 2 : 0);
+                result = firstMask - secondMask;
+            }
+            else if (sortColumn == macroColumn)
+            {
+                const auto firstMacro = first.macroIndex >= 0
+                    ? first.macroIndex : 1000;
+                const auto secondMacro = second.macroIndex >= 0
+                    ? second.macroIndex : 1000;
+                result = firstMacro - secondMacro;
+            }
+
+            if (result == 0)
+                result = first.pluginName.compareNatural(second.pluginName);
+            if (result == 0)
+                result = first.parameterName.compareNatural(second.parameterName);
+            if (result == 0)
+                result = first.parameterIndex - second.parameterIndex;
+            return sortForwards ? result : -result;
+        }
+
+        void rebuildFilter()
+        {
+            filteredChoiceIndices.clearQuick();
+            const auto query = searchEditor.getText().trim().toLowerCase();
+
+            for (int choiceIndex = 0; choiceIndex < choices.size(); ++choiceIndex)
+            {
+                const auto& choice = choices.getReference(choiceIndex);
+                const auto searchable =
+                    (juce::String(choice.tabIndex + 1) + " "
+                     + choice.tabName + " " + choice.pluginName + " "
+                     + choice.parameterName).toLowerCase();
+                if (query.isEmpty() || searchable.contains(query))
+                    filteredChoiceIndices.add(choiceIndex);
+            }
+
+            std::sort(filteredChoiceIndices.begin(),
+                      filteredChoiceIndices.end(),
+                      [this](int firstIndex, int secondIndex)
+                      {
+                          return compareChoices(
+                                     choices.getReference(firstIndex),
+                                     choices.getReference(secondIndex)) < 0;
+                      });
+
+            countLabel.setText(
+                juce::String(filteredChoiceIndices.size())
+                    + (filteredChoiceIndices.size() == 1
+                           ? " parameter" : " parameters"),
+                juce::dontSendNotification);
+            parameterTable.updateContent();
+            repaint();
+        }
+
+        void refreshChoices()
+        {
+            if (refreshCallback)
+                choices = refreshCallback();
+            rebuildFilter();
+        }
+
+        void changeTarget(const Choice& choice, int lane, bool assigned)
+        {
+            if (! targetCallback)
+                return;
+
+            juce::String errorMessage;
+            if (! targetCallback(choice, lane, assigned, errorMessage))
+            {
+                showError(errorMessage.isNotEmpty()
+                    ? errorMessage
+                    : "PHI could not change that Seqwencer target.");
+            }
+            refreshChoices();
+        }
+
+        void confirmDelete(const Choice& choice)
+        {
+            juce::Component::SafePointer<SeqwencerTargetBrowserContent>
+                safeThis(this);
+            juce::AlertWindow::showOkCancelBox(
+                juce::MessageBoxIconType::WarningIcon,
+                "Delete Macro Mapping",
+                "Delete Macro "
+                    + juce::String(choice.macroIndex + 1).paddedLeft('0', 3)
+                    + " from " + choice.pluginName + " / "
+                    + choice.parameterName + "?\n\nThis also removes its "
+                      "Seqwencer A and B assignments.",
+                "Delete",
+                "Cancel",
+                nullptr,
+                juce::ModalCallbackFunction::create(
+                    [safeThis, choice](int result)
+                    {
+                        if (safeThis == nullptr || result == 0)
+                            return;
+
+                        juce::String errorMessage;
+                        if (! safeThis->deleteCallback
+                            || ! safeThis->deleteCallback(choice, errorMessage))
+                        {
+                            safeThis->showError(errorMessage.isNotEmpty()
+                                ? errorMessage
+                                : "PHI could not delete that macro mapping.");
+                        }
+                        safeThis->refreshChoices();
+                    }));
+        }
+
+        void showError(const juce::String& message)
+        {
+            juce::AlertWindow::showMessageBoxAsync(
+                juce::MessageBoxIconType::WarningIcon,
+                "Seqwencer Targets",
+                message);
+        }
+
+        void closeDialog()
+        {
+            if (auto* parent = findParentComponentOfClass<juce::DialogWindow>())
+                parent->exitModalState(0);
+        }
+
+        juce::Array<Choice> choices;
+        juce::Array<int> filteredChoiceIndices;
+        bool serialMode = false;
+        int sortColumn = tabColumn;
+        bool sortForwards = true;
+        RefreshCallback refreshCallback;
+        TargetCallback targetCallback;
+        DeleteCallback deleteCallback;
+        juce::Label titleLabel;
+        juce::Label helpLabel;
+        juce::TextEditor searchEditor;
+        juce::TableListBox parameterTable;
+        juce::Label countLabel;
         juce::TextButton closeButton;
     };
 
@@ -1950,6 +2511,8 @@ MainView::MainView(PolyHostPluginProcessor& processorIn,
     recordingView.onStatusChanged = [this] { repaint(); };
 
     midiKeyboardPanel.setWidthMode(appSettings.getMidiKeyboardWidthMode());
+    midiKeyboardPanel.setNoteNamesVisible(
+        appSettings.getMidiKeyboardNoteNamesVisible());
     processor.setMidiKeyboardPitchBendRangeOctaves(
         appSettings.getMidiKeyboardBendRangeOctaves());
     midiKeyboardPanel.onPitchBendChanged = [this](int value)
@@ -2102,6 +2665,63 @@ MainView::MainView(PolyHostPluginProcessor& processorIn,
         processor.getCore().setTabOutputGainDb(tabIndex, gainDb);
     };
 
+    macroMappingsView.onSetMappingEnabled =
+        [this](const MacroMappingsView::ParameterEntry& entry,
+               bool enabled,
+               juce::String& errorMessage)
+    {
+        auto& core = processor.getCore();
+        if (! core.setHostedParameterMacroEnabled(
+                entry.tabIndex,
+                entry.parameterIndex,
+                enabled,
+                &errorMessage))
+        {
+            return false;
+        }
+
+        showTemporaryStatusMessage(
+            enabled
+                ? (entry.macroIndex < 0
+                       ? "Assigned next free Macro: "
+                       : "Resumed Macro mapping: ")
+                    + entry.pluginName + " / " + entry.parameterName
+                : "Paused Macro mapping: "
+                    + entry.pluginName + " / " + entry.parameterName);
+        refreshMacroMappingsView();
+        refreshDirtyUiOnly();
+        macroMappingsView.repaint();
+        return true;
+    };
+
+    macroMappingsView.onSetSeqwencerTarget =
+        [this](const MacroMappingsView::ParameterEntry& entry,
+               int lane,
+               bool assigned,
+               juce::String& errorMessage)
+    {
+        auto& core = processor.getCore();
+        if (! core.setSeqwencerTargetAssignment(
+                entry.tabIndex,
+                entry.parameterIndex,
+                lane,
+                assigned,
+                core.getSeqwencerSerialMode(),
+                &errorMessage))
+        {
+            return false;
+        }
+
+        showTemporaryStatusMessage(
+            juce::String(assigned ? "Seqwencer target enabled: "
+                                  : "Seqwencer target paused: ")
+            + entry.pluginName + " / " + entry.parameterName);
+        refreshMacroMappingsView();
+        refreshDirtyUiOnly();
+        macroMappingsView.repaint();
+        return true;
+    };
+
     macroMappingsView.onDeleteMapping = [this](int macroIndex)
     {
         auto& core = processor.getCore();
@@ -2110,23 +2730,9 @@ MainView::MainView(PolyHostPluginProcessor& processorIn,
         {
             showTemporaryStatusMessage("Deleted Macro "
                                        + juce::String(macroIndex + 1).paddedLeft('0', 3));
-            refreshFromCore();
-            repaint();
-        }
-    };
-
-    macroMappingsView.onMoveMapping = [this](int fromMacroIndex,
-                                             int toMacroIndex)
-    {
-        auto& core = processor.getCore();
-
-        if (core.moveMacroMapping(fromMacroIndex, toMacroIndex))
-        {
-            showTemporaryStatusMessage(
-                "Moved mapping to Macro "
-                + juce::String(toMacroIndex + 1).paddedLeft('0', 3));
-            refreshFromCore();
-            repaint();
+            refreshMacroMappingsView();
+            refreshDirtyUiOnly();
+            macroMappingsView.repaint();
         }
     };
 
@@ -2150,8 +2756,9 @@ MainView::MainView(PolyHostPluginProcessor& processorIn,
                                        + juce::String(macroIndex + 1).paddedLeft('0', 3)
                                        + " with "
                                        + description);
-            refreshFromCore();
-            repaint();
+            refreshMacroMappingsView();
+            refreshDirtyUiOnly();
+            macroMappingsView.repaint();
             return;
         }
 
@@ -2167,8 +2774,9 @@ MainView::MainView(PolyHostPluginProcessor& processorIn,
         if (core.undoLastMacroMappingsEdit())
         {
             showTemporaryStatusMessage("Restored previous macro mappings");
-            refreshFromCore();
-            repaint();
+            refreshMacroMappingsView();
+            refreshDirtyUiOnly();
+            macroMappingsView.repaint();
         }
     };
 
@@ -2192,8 +2800,9 @@ MainView::MainView(PolyHostPluginProcessor& processorIn,
 
         core.clearAllMacroMappings();
         showTemporaryStatusMessage("Cleared all macro mappings");
-        refreshFromCore();
-        repaint();
+        refreshMacroMappingsView();
+        refreshDirtyUiOnly();
+        macroMappingsView.repaint();
     };
 
     lastKnownDirtyState = processor.getCore().isDirty();
@@ -2384,6 +2993,10 @@ juce::PopupMenu MainView::getMenuForIndex(int topLevelMenuIndex,
                              "Show",
                              true,
                              appSettings.getMidiKeyboardVisible());
+        keyboardMenu.addItem(commandMidiKeyboardNoteNames,
+                             "Notes",
+                             true,
+                             appSettings.getMidiKeyboardNoteNamesVisible());
         keyboardMenu.addSubMenu("Width", keyboardWidthMenu);
 
         juce::PopupMenu keyboardBendRangeMenu;
@@ -2611,6 +3224,15 @@ void MainView::menuItemSelected(int menuItemID,
             break;
         }
 
+        case commandMidiKeyboardNoteNames:
+        {
+            const bool shouldShow =
+                ! appSettings.getMidiKeyboardNoteNamesVisible();
+            appSettings.setMidiKeyboardNoteNamesVisible(shouldShow);
+            midiKeyboardPanel.setNoteNamesVisible(shouldShow);
+            break;
+        }
+
         case commandMidiKeyboardFixedKeyWidth:
             setMidiKeyboardWidthMode(MidiKeyboardPanel::fixedKeyWidthMode);
             break;
@@ -2719,17 +3341,47 @@ void MainView::timerCallback()
 {
     processor.sampleSuspensionDiagnostics();
 
-    const int currentCpuPercent =
-        juce::jlimit(
-            0,
-            100,
-            juce::roundToInt(
-                processor.getAudioCpuUsagePercent()));
-
-    if (currentCpuPercent != lastDisplayedCpuPercent)
+    auto controllerDisplayValue = 0;
+    if (processor.consumeMidiKeyboardPitchBendDisplay(
+            controllerDisplayValue))
     {
-        lastDisplayedCpuPercent = currentCpuPercent;
-        repaint();
+        midiKeyboardPanel.displayExternalPitchBend(
+            controllerDisplayValue);
+    }
+    if (processor.consumeMidiKeyboardModulationDisplay(
+            controllerDisplayValue))
+    {
+        midiKeyboardPanel.displayExternalModulation(
+            controllerDisplayValue);
+    }
+
+    auto seqwencerSerialMode = false;
+    if (processor.getCore().consumeSeqwencerTargetBrowserRequest(
+            seqwencerSerialMode))
+    {
+        showSeqwencerTargetBrowser(seqwencerSerialMode);
+    }
+
+    const auto currentTimeMs =
+        juce::Time::getMillisecondCounter();
+
+    if (lastCpuDisplayUpdateMs == 0
+        || currentTimeMs - lastCpuDisplayUpdateMs >= 1000u)
+    {
+        lastCpuDisplayUpdateMs = currentTimeMs;
+
+        const int currentCpuPercent =
+            juce::jlimit(
+                0,
+                100,
+                juce::roundToInt(
+                    processor.getAudioCpuUsagePercent()));
+
+        if (currentCpuPercent != lastDisplayedCpuPercent)
+        {
+            lastDisplayedCpuPercent = currentCpuPercent;
+            repaint();
+        }
     }
 
     processPendingPointerMidi();
@@ -4147,7 +4799,7 @@ void MainView::showMacroMappingsView()
     repaint();
 
     if (auto* parentEditor = findParentComponentOfClass<PolyHostPluginEditor>())
-        parentEditor->resizeToRoutingView();
+        parentEditor->resizeToMacroMappingsView();
 
     updatePointerEditOverlay();
 }
@@ -5807,6 +6459,33 @@ void MainView::refreshHostedEditorForWindowReopen()
     });
 }
 
+void MainView::refreshMacroMappingsView()
+{
+    auto& core = processor.getCore();
+    juce::Array<MacroMappingsView::ParameterEntry> parameterEntries;
+
+    for (const auto& choice : core.getHostedParameterChoices())
+    {
+        MacroMappingsView::ParameterEntry entry;
+        entry.tabIndex = choice.tabIndex;
+        entry.tabName = choice.tabName;
+        entry.pluginName = choice.pluginName;
+        entry.parameterIndex = choice.parameterIndex;
+        entry.parameterName = choice.parameterName;
+        entry.macroIndex = choice.macroIndex;
+        entry.mappingEnabled = choice.mappingEnabled;
+        entry.targetA = choice.targetA;
+        entry.targetB = choice.targetB;
+        parameterEntries.add(std::move(entry));
+    }
+
+    macroMappingsView.setParameters(
+        parameterEntries,
+        core.hasLoadedSeqwencer(),
+        core.getSeqwencerSerialMode());
+    macroMappingsView.setUndoAvailable(core.hasMacroMappingsUndoState());
+}
+
 void MainView::refreshFromCore()
 {
     DebugLog::writeAdvanced("[MainView] refreshFromCore | showingRoutingView="
@@ -5826,22 +6505,7 @@ void MainView::refreshFromCore()
     rebuildRoutingView();
     rebuildPointerMapDropdown();
 
-    juce::Array<MacroMappingsView::MappingEntry> mappingEntries;
-    for (auto& mapping : core.getMacroMappings())
-    {
-        MacroMappingsView::MappingEntry entry;
-        entry.macroIndex = mapping.macroIndex;
-        entry.label = mapping.label;
-        entry.tabIndex = mapping.tabIndex;
-        entry.pluginName = mapping.pluginName;
-        entry.parameterIndex = mapping.parameterIndex;
-        entry.parameterName = mapping.parameterName;
-        entry.enabled = mapping.enabled;
-        mappingEntries.add(entry);
-    }
-
-    macroMappingsView.setMappings(mappingEntries);
-    macroMappingsView.setUndoAvailable(core.hasMacroMappingsUndoState());
+    refreshMacroMappingsView();
 
     while (manualBypassStates.size() < core.getNumTabs())
         manualBypassStates.add(false);
@@ -6122,7 +6786,7 @@ void MainView::resized()
     auto tabBarArea = contentOuter.removeFromTop(30);
 
     const int buttonHeight = 24;
-    const int buttonY = tabBarArea.getY() - 2;
+    const int buttonY = tabBarArea.getY() - 1;
     const int arrowButtonWidth = 24;
     const int plusButtonWidth = 24;
     const int controlsGap = 2;
@@ -6151,6 +6815,7 @@ void MainView::resized()
     addTabButton.setBounds(addButtonBounds);
 
     auto viewportBounds = tabBarArea.reduced(4, 0);
+    viewportBounds.translate(0, -1);
     tabButtonsViewport.setBounds(viewportBounds);
 
     int x = 0;
@@ -6621,6 +7286,26 @@ void MainView::showPluginDiagnosticsDialog(int tabIndex)
             dialogWidth,
             dialogHeight);
     }
+}
+
+void MainView::showSeqwencerTargetBrowser(bool serialMode)
+{
+    juce::ignoreUnused(serialMode);
+
+    // Seqwencer's TARGET request now opens the same integrated parameter
+    // table as PHI's Macro Mappings toolbar button. The bridge packet has
+    // already updated the core's current Parallel/SERIAL state.
+    dismissMidiAssignmentsPopup();
+    recordingView.setVisible(false);
+    showingRoutingView = false;
+    showingMacroMappingsView = true;
+    refreshFromCore();
+    repaint();
+
+    if (auto* parentEditor = findParentComponentOfClass<PolyHostPluginEditor>())
+        parentEditor->resizeToMacroMappingsView();
+
+    updatePointerEditOverlay();
 }
 
 void MainView::showAboutDialog()

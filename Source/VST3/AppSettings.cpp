@@ -65,12 +65,15 @@ static constexpr const char* kStandaloneMidiOutputDeviceIdentifier = "standalone
 static constexpr const char* kStandaloneSendGeneratedMidiToOutput = "standaloneSendGeneratedMidiToOutput";
 static constexpr const char* kStandaloneMidiThruEnabled = "standaloneMidiThruEnabled";
 static constexpr const char* kMidiKeyboardVisible        = "midiKeyboardVisible";
+static constexpr const char* kMidiKeyboardNoteNamesVisible = "midiKeyboardNoteNamesVisible";
 static constexpr const char* kMidiKeyboardWidthMode      = "midiKeyboardWidthMode";
 static constexpr const char* kMidiKeyboardBendRangeOctaves = "midiKeyboardBendRangeOctaves";
 static constexpr const char* kNameAttribute                 = "name";
 static constexpr const char* kDebugLoggingEnabled           = "debugLoggingEnabled";
 static constexpr const char* kAdvancedDebugLoggingEnabled   = "advancedDebugLoggingEnabled";
 static constexpr const char* kClearDebugLogOnStartup        = "clearDebugLogOnStartup";
+static constexpr const char* kSessionRecallEnabled          = "sessionRecallEnabled";
+static constexpr const char* kSingleInstanceEnabled         = "singleInstanceEnabled";
 #if defined(POLYHOST_32BIT_EDITION) && POLYHOST_32BIT_EDITION
 static constexpr auto kPresetsDirectoryName = "Presets32";
 static constexpr auto kAudioDeviceState      = "audioDeviceState32";
@@ -86,6 +89,7 @@ static constexpr auto kWindowX              = "windowX";
 static constexpr auto kWindowY              = "windowY";
 static constexpr auto kRoutingWindowWidth   = "routingWindowWidth";
 static constexpr auto kRoutingWindowHeight  = "routingWindowHeight";
+static constexpr auto kMacroMappingsViewHeight = "macroMappingsViewHeight";
 static constexpr auto kPointerControlXccNumber              = "pointerControlXccNumber";
 static constexpr auto kPointerControlYccNumber              = "pointerControlYccNumber";
 static constexpr auto kPointerControlAdjustCcNumberNew      = "pointerControlAdjustCcNumberNew";
@@ -176,6 +180,28 @@ void AppSettings::setAdvancedDebugLoggingEnabled(bool shouldEnable)
 void AppSettings::setClearDebugLogOnStartup(bool shouldClear)
 {
     xml->setAttribute(kClearDebugLogOnStartup, shouldClear);
+    save();
+}
+
+bool AppSettings::getSessionRecallEnabled() const
+{
+    return xml->getBoolAttribute(kSessionRecallEnabled, true);
+}
+
+void AppSettings::setSessionRecallEnabled(bool shouldEnable)
+{
+    xml->setAttribute(kSessionRecallEnabled, shouldEnable);
+    save();
+}
+
+bool AppSettings::getSingleInstanceEnabled() const
+{
+    return xml->getBoolAttribute(kSingleInstanceEnabled, true);
+}
+
+void AppSettings::setSingleInstanceEnabled(bool shouldEnable)
+{
+    xml->setAttribute(kSingleInstanceEnabled, shouldEnable);
     save();
 }
 
@@ -717,6 +743,17 @@ void AppSettings::setMidiKeyboardVisible(bool shouldShow)
     save();
 }
 
+bool AppSettings::getMidiKeyboardNoteNamesVisible() const
+{
+    return xml->getBoolAttribute(kMidiKeyboardNoteNamesVisible, true);
+}
+
+void AppSettings::setMidiKeyboardNoteNamesVisible(bool shouldShow)
+{
+    xml->setAttribute(kMidiKeyboardNoteNamesVisible, shouldShow);
+    save();
+}
+
 int AppSettings::getMidiKeyboardWidthMode() const
 {
     const int storedMode = xml->getIntAttribute(kMidiKeyboardWidthMode, 5);
@@ -945,6 +982,21 @@ void AppSettings::clearRoutingWindowSize()
 {
     xml->removeAttribute(kRoutingWindowWidth);
     xml->removeAttribute(kRoutingWindowHeight);
+    save();
+}
+
+int AppSettings::getMacroMappingsViewHeight() const
+{
+    // 587 pixels leaves room for the table header plus ten 28-pixel rows
+    // even with the standalone build's slightly taller tempo/menu strip.
+    return juce::jlimit(
+        300, 1120, xml->getIntAttribute(kMacroMappingsViewHeight, 587));
+}
+
+void AppSettings::setMacroMappingsViewHeight(int height)
+{
+    xml->setAttribute(kMacroMappingsViewHeight,
+                      juce::jlimit(300, 1120, height));
     save();
 }
 

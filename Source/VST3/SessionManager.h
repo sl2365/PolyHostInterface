@@ -62,6 +62,7 @@ struct SessionData
         int parameterIndex = -1;
         juce::String parameterName;
         bool enabled = true;
+        int seqwencerTargetMask = 0;
     };
 
     juce::String name;
@@ -103,7 +104,7 @@ public:
 
     void clear()
     {
-        currentPresetFile = {};
+        currentPresetFile = juce::File(juce::String());
         dirty = false;
     }
 

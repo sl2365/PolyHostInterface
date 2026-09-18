@@ -91,6 +91,8 @@ public:
     void queueMidiKeyboardPitchBend(int value) noexcept;
     void setMidiKeyboardPitchBendRangeOctaves(int octaves) noexcept;
     void queueMidiKeyboardModulation(int value) noexcept;
+    bool consumeMidiKeyboardPitchBendDisplay(int& value) noexcept;
+    bool consumeMidiKeyboardModulationDisplay(int& value) noexcept;
     double getAudioCpuUsagePercent() const noexcept;
     void sampleSuspensionDiagnostics();
     juce::String buildProcessorDiagnosticsText() const;
@@ -125,6 +127,59 @@ public:
         StandaloneAudioExtension* extension);
 
 private:
+    class HostedPlayHeadProxy final : public juce::AudioPlayHead
+    {
+    public:
+        void prepareToPlay(double newSampleRate) noexcept;
+        void updateFrom(juce::AudioPlayHead* outerPlayHead) noexcept;
+        juce::Optional<PositionInfo> getPosition() const override;
+
+        bool hasOuterPlayHead() const noexcept
+        {
+            return outerPlayHeadAvailable.load(std::memory_order_relaxed);
+        }
+        bool hasOuterPosition() const noexcept
+        {
+            return outerPositionAvailable.load(std::memory_order_relaxed);
+        }
+        bool hasBpm() const noexcept
+        {
+            return bpmAvailable.load(std::memory_order_relaxed);
+        }
+        bool hasPpq() const noexcept
+        {
+            return ppqAvailable.load(std::memory_order_relaxed);
+        }
+        bool hasSampleTime() const noexcept
+        {
+            return sampleTimeAvailable.load(std::memory_order_relaxed);
+        }
+        bool reportsPlaying() const noexcept
+        {
+            return playingReported.load(std::memory_order_relaxed);
+        }
+        bool motionDetected() const noexcept
+        {
+            return timelineMotionDetected.load(std::memory_order_relaxed);
+        }
+
+    private:
+        double sampleRate = 44100.0;
+        double lastKnownBpm = 120.0;
+        double previousPpq = 0.0;
+        juce::int64 previousSampleTime = 0;
+        bool previousPpqValid = false;
+        bool previousSampleTimeValid = false;
+        juce::Optional<PositionInfo> currentPosition;
+        std::atomic<bool> outerPlayHeadAvailable { false };
+        std::atomic<bool> outerPositionAvailable { false };
+        std::atomic<bool> bpmAvailable { false };
+        std::atomic<bool> ppqAvailable { false };
+        std::atomic<bool> sampleTimeAvailable { false };
+        std::atomic<bool> playingReported { false };
+        std::atomic<bool> timelineMotionDetected { false };
+    };
+
     void initialiseMacroParameters();
 
     void setMacroParameterValue(int macroIndex,
@@ -146,6 +201,7 @@ private:
     StandaloneAudioExtension* standaloneAudioExtension = nullptr;
     AudioRecordingController audioRecordingController;
     MidiRecordingController midiRecordingController;
+    HostedPlayHeadProxy hostedPlayHeadProxy;
     PluginCore core;
     juce::MidiKeyboardState midiKeyboardState;
     std::vector<MacroParameter*> macroParameters;
@@ -157,6 +213,8 @@ private:
     std::atomic<int> lastQueuedMidiKeyboardPitchBend { 8192 };
     std::atomic<bool> pendingMidiKeyboardPitchBendRange { false };
     std::atomic<int> pendingMidiKeyboardModulation { -1 };
+    std::atomic<int> pendingMidiKeyboardPitchBendDisplay { -1 };
+    std::atomic<int> pendingMidiKeyboardModulationDisplay { -1 };
     std::atomic<bool> sendGeneratedMidiToHost { true };
     std::atomic<bool> midiThruEnabled { false };
     std::atomic<bool> pendingMidiOutputReset { false };

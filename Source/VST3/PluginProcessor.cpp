@@ -1,6 +1,136 @@
 #include "PluginProcessor.h"
 #include "PluginEditor.h"
+#include <cmath>
 #include <cstring>
+
+void PolyHostPluginProcessor::HostedPlayHeadProxy::prepareToPlay(
+    double newSampleRate) noexcept
+{
+    sampleRate = newSampleRate > 0.0 ? newSampleRate : 44100.0;
+    lastKnownBpm = 120.0;
+    previousPpq = 0.0;
+    previousSampleTime = 0;
+    previousPpqValid = false;
+    previousSampleTimeValid = false;
+    currentPosition.reset();
+    outerPlayHeadAvailable.store(false, std::memory_order_relaxed);
+    outerPositionAvailable.store(false, std::memory_order_relaxed);
+    bpmAvailable.store(false, std::memory_order_relaxed);
+    ppqAvailable.store(false, std::memory_order_relaxed);
+    sampleTimeAvailable.store(false, std::memory_order_relaxed);
+    playingReported.store(false, std::memory_order_relaxed);
+    timelineMotionDetected.store(false, std::memory_order_relaxed);
+}
+
+void PolyHostPluginProcessor::HostedPlayHeadProxy::updateFrom(
+    juce::AudioPlayHead* outerPlayHead) noexcept
+{
+    outerPlayHeadAvailable.store(outerPlayHead != nullptr,
+                                 std::memory_order_relaxed);
+
+    if (outerPlayHead == nullptr)
+    {
+        currentPosition.reset();
+        outerPositionAvailable.store(false, std::memory_order_relaxed);
+        bpmAvailable.store(false, std::memory_order_relaxed);
+        ppqAvailable.store(false, std::memory_order_relaxed);
+        sampleTimeAvailable.store(false, std::memory_order_relaxed);
+        playingReported.store(false, std::memory_order_relaxed);
+        timelineMotionDetected.store(false, std::memory_order_relaxed);
+        previousPpqValid = false;
+        previousSampleTimeValid = false;
+        return;
+    }
+
+    const auto outerPosition = outerPlayHead->getPosition();
+    if (! outerPosition)
+    {
+        currentPosition.reset();
+        outerPositionAvailable.store(false, std::memory_order_relaxed);
+        bpmAvailable.store(false, std::memory_order_relaxed);
+        ppqAvailable.store(false, std::memory_order_relaxed);
+        sampleTimeAvailable.store(false, std::memory_order_relaxed);
+        playingReported.store(false, std::memory_order_relaxed);
+        timelineMotionDetected.store(false, std::memory_order_relaxed);
+        previousPpqValid = false;
+        previousSampleTimeValid = false;
+        return;
+    }
+
+    auto proxyPosition = *outerPosition;
+    const auto outerBpm = proxyPosition.getBpm();
+    const auto validOuterBpm = outerBpm
+        && std::isfinite(*outerBpm) && *outerBpm > 0.0;
+    if (validOuterBpm)
+        lastKnownBpm = *outerBpm;
+    proxyPosition.setBpm(lastKnownBpm);
+
+    auto sampleTime = proxyPosition.getTimeInSamples();
+    const auto timeInSeconds = proxyPosition.getTimeInSeconds();
+    if (! sampleTime && timeInSeconds
+        && std::isfinite(*timeInSeconds))
+    {
+        const auto derivedSampleTime = static_cast<juce::int64>(
+            std::llround(*timeInSeconds * sampleRate));
+        proxyPosition.setTimeInSamples(derivedSampleTime);
+        sampleTime = derivedSampleTime;
+    }
+
+    auto ppq = proxyPosition.getPpqPosition();
+    if (! ppq)
+    {
+        if (sampleTime)
+        {
+            const auto derivedPpq =
+                (static_cast<double>(*sampleTime) / sampleRate)
+                * (lastKnownBpm / 60.0);
+            proxyPosition.setPpqPosition(derivedPpq);
+            ppq = derivedPpq;
+        }
+        else if (timeInSeconds && std::isfinite(*timeInSeconds))
+        {
+            const auto derivedPpq =
+                *timeInSeconds * (lastKnownBpm / 60.0);
+            proxyPosition.setPpqPosition(derivedPpq);
+            ppq = derivedPpq;
+        }
+    }
+
+    const auto ppqMoved = ppq && previousPpqValid
+        && std::abs(*ppq - previousPpq) > 1.0e-9;
+    const auto sampleTimeMoved = sampleTime && previousSampleTimeValid
+        && *sampleTime != previousSampleTime;
+    const auto motionDetected = ppqMoved || sampleTimeMoved;
+    const auto reportsTransportPlaying = proxyPosition.getIsPlaying();
+
+    // A few nested hosts provide a moving timeline but leave isPlaying false.
+    // Hosted plug-ins receive the observed motion as the authoritative state.
+    proxyPosition.setIsPlaying(reportsTransportPlaying || motionDetected);
+
+    previousPpqValid = ppq.hasValue();
+    if (ppq)
+        previousPpq = *ppq;
+    previousSampleTimeValid = sampleTime.hasValue();
+    if (sampleTime)
+        previousSampleTime = *sampleTime;
+
+    currentPosition = proxyPosition;
+    outerPositionAvailable.store(true, std::memory_order_relaxed);
+    bpmAvailable.store(validOuterBpm, std::memory_order_relaxed);
+    ppqAvailable.store(ppq.hasValue(), std::memory_order_relaxed);
+    sampleTimeAvailable.store(sampleTime.hasValue(),
+                              std::memory_order_relaxed);
+    playingReported.store(reportsTransportPlaying,
+                          std::memory_order_relaxed);
+    timelineMotionDetected.store(motionDetected,
+                                 std::memory_order_relaxed);
+}
+
+juce::Optional<juce::AudioPlayHead::PositionInfo>
+PolyHostPluginProcessor::HostedPlayHeadProxy::getPosition() const
+{
+    return currentPosition;
+}
 
 PolyHostPluginProcessor::MacroParameter::MacroParameter(PolyHostPluginProcessor& ownerIn, int macroIndexIn)
     : owner(ownerIn),
@@ -196,7 +326,10 @@ void PolyHostPluginProcessor::prepareToPlay(double sampleRate,
     lastQueuedMidiKeyboardPitchBend.store(8192, std::memory_order_relaxed);
     pendingMidiKeyboardPitchBendRange.store(false, std::memory_order_relaxed);
     pendingMidiKeyboardModulation.store(-1, std::memory_order_relaxed);
+    pendingMidiKeyboardPitchBendDisplay.store(-1, std::memory_order_relaxed);
+    pendingMidiKeyboardModulationDisplay.store(-1, std::memory_order_relaxed);
     audioProcessLoadMeasurer.reset(sampleRate, samplesPerBlock);
+    hostedPlayHeadProxy.prepareToPlay(sampleRate);
 
     core.prepareToPlay(sampleRate, samplesPerBlock);
 
@@ -284,6 +417,24 @@ void PolyHostPluginProcessor::processBlock(
 
     if (buffer.getNumSamples() > 0)
     {
+        for (const auto metadata : midiMessages)
+        {
+            const auto& message = metadata.getMessage();
+            if (message.isPitchWheel())
+            {
+                pendingMidiKeyboardPitchBendDisplay.store(
+                    message.getPitchWheelValue(),
+                    std::memory_order_release);
+            }
+            else if (message.isController()
+                     && message.getControllerNumber() == 1)
+            {
+                pendingMidiKeyboardModulationDisplay.store(
+                    message.getControllerValue(),
+                    std::memory_order_release);
+            }
+        }
+
         midiKeyboardState.processNextMidiBuffer(
             midiMessages,
             0,
@@ -399,10 +550,12 @@ void PolyHostPluginProcessor::processBlock(
     const auto coreStartTicks =
         juce::Time::getHighResolutionTicks();
 
+    hostedPlayHeadProxy.updateFrom(getPlayHead());
+
     core.processBlock(
         buffer,
         midiMessages,
-        getPlayHead());
+        &hostedPlayHeadProxy);
 
     const auto coreEndTicks =
         juce::Time::getHighResolutionTicks();
@@ -965,6 +1118,30 @@ void PolyHostPluginProcessor::queueMidiKeyboardModulation(int value) noexcept
         std::memory_order_release);
 }
 
+bool PolyHostPluginProcessor::consumeMidiKeyboardPitchBendDisplay(
+    int& value) noexcept
+{
+    const auto pending = pendingMidiKeyboardPitchBendDisplay.exchange(
+        -1, std::memory_order_acq_rel);
+    if (pending < 0)
+        return false;
+
+    value = pending;
+    return true;
+}
+
+bool PolyHostPluginProcessor::consumeMidiKeyboardModulationDisplay(
+    int& value) noexcept
+{
+    const auto pending = pendingMidiKeyboardModulationDisplay.exchange(
+        -1, std::memory_order_acq_rel);
+    if (pending < 0)
+        return false;
+
+    value = pending;
+    return true;
+}
+
 double PolyHostPluginProcessor::getAudioCpuUsagePercent() const noexcept
 {
     const auto lastProcessActivityMs =
@@ -1150,6 +1327,34 @@ PolyHostPluginProcessor::
         "Current Block Size",
         juce::String(
             getBlockSize()));
+
+    addLine(
+        "Outer Host PlayHead Available",
+        hostedPlayHeadProxy.hasOuterPlayHead() ? "Yes" : "No");
+
+    addLine(
+        "Outer Host Position Available",
+        hostedPlayHeadProxy.hasOuterPosition() ? "Yes" : "No");
+
+    addLine(
+        "Outer Host BPM Available",
+        hostedPlayHeadProxy.hasBpm() ? "Yes" : "No");
+
+    addLine(
+        "Forwarded PPQ Available",
+        hostedPlayHeadProxy.hasPpq() ? "Yes" : "No");
+
+    addLine(
+        "Forwarded Sample Time Available",
+        hostedPlayHeadProxy.hasSampleTime() ? "Yes" : "No");
+
+    addLine(
+        "Outer Host Reports Playing",
+        hostedPlayHeadProxy.reportsPlaying() ? "Yes" : "No");
+
+    addLine(
+        "Outer Timeline Motion Detected",
+        hostedPlayHeadProxy.motionDetected() ? "Yes" : "No");
 
     addLine(
         "Prepare Calls",

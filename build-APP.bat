@@ -19,7 +19,53 @@
 :: JUCE is loaded from the shared tools folder by CMake.
 :: ============================================================
 
-setlocal
+setlocal EnableExtensions
+
+if /i "%~1"=="--run-build" goto :run_build
+
+set "RESULTS_LOG=%~dp0Results.log"
+set "PHI_BUILD_SCRIPT=%~f0"
+set "PHI_BUILD_CAPTURE=1"
+
+echo Starting PHI standalone build...
+echo Progress and warnings will appear below and be saved to Results.log.
+echo.
+
+where powershell.exe >nul 2>nul
+if errorlevel 1 (
+    echo BUILD FAILED
+    echo   - Windows PowerShell was not found
+    echo.
+    pause
+    exit /b 1
+)
+
+powershell.exe -NoProfile -ExecutionPolicy Bypass -Command ^
+  "$writer = [System.IO.StreamWriter]::new($env:RESULTS_LOG, $false, [System.Text.UTF8Encoding]::new($false));" ^
+  "$exitCode = 1;" ^
+  "try {" ^
+  "  & $env:PHI_BUILD_SCRIPT --run-build 2>&1 | ForEach-Object {" ^
+  "    $line = $_.ToString();" ^
+  "    [Console]::WriteLine($line);" ^
+  "    $writer.WriteLine($line);" ^
+  "    $writer.Flush();" ^
+  "  };" ^
+  "  $exitCode = $LASTEXITCODE;" ^
+  "} finally { $writer.Dispose(); };" ^
+  "exit $exitCode"
+set "BUILD_EXIT_CODE=%ERRORLEVEL%"
+
+echo.
+echo Results saved:
+echo   %RESULTS_LOG%
+echo.
+pause
+exit /b %BUILD_EXIT_CODE%
+
+:run_build
+set "CMAKE_GENERATOR="
+set "CMAKE_GENERATOR_PLATFORM="
+set "CMAKE_GENERATOR_TOOLSET="
 
 set "ROOT=%~dp0"
 for %%I in ("%ROOT%..") do set "PROJECTS_ROOT=%%~fI"
@@ -46,7 +92,7 @@ if not exist "%CMAKE%" (
     echo Extract it so this file exists:
     echo ..\_Tools\cmake\_4.4.2\bin\cmake.exe
     echo.
-    pause
+    if not defined PHI_BUILD_CAPTURE pause
     exit /b 1
 )
 
@@ -56,7 +102,7 @@ if not exist "%VSWHERE%" (
     echo Install Visual Studio 2022 Community or Build Tools.
     echo Make sure Desktop development with C++ is installed.
     echo.
-    pause
+    if not defined PHI_BUILD_CAPTURE pause
     exit /b 1
 )
 
@@ -83,7 +129,7 @@ echo Configuring project...
 if errorlevel 1 (
     echo.
     echo Configure step FAILED.
-    pause
+    if not defined PHI_BUILD_CAPTURE pause
     exit /b 1
 )
 
@@ -93,7 +139,7 @@ echo Building Release...
 if errorlevel 1 (
     echo.
     echo Build FAILED.
-    pause
+    if not defined PHI_BUILD_CAPTURE pause
     exit /b 1
 )
 
@@ -107,13 +153,13 @@ if exist "%BUILD_DIR%\PolyHost_artefacts\Release\Standalone\%EXENAME%" (
     if errorlevel 1 (
         echo ERROR: Failed to copy standalone EXE to:
         echo %FINAL_EXE%
-        pause
+        if not defined PHI_BUILD_CAPTURE pause
         exit /b 1
     )
     copy /Y "%ROOT%Source\FluentSystemIcons-LICENSE.txt" "%DIST_DIR%\FluentSystemIcons-LICENSE.txt" >nul
     if errorlevel 1 (
         echo ERROR: Failed to copy the Fluent System Icons licence to dist.
-        pause
+        if not defined PHI_BUILD_CAPTURE pause
         exit /b 1
     )
     echo Copied EXE to:
@@ -123,7 +169,7 @@ if exist "%BUILD_DIR%\PolyHost_artefacts\Release\Standalone\%EXENAME%" (
     echo %BUILD_DIR%\PolyHost_artefacts\Release\Standalone\%EXENAME%
     echo.
     echo Build may have succeeded with a different output path.
-    pause
+    if not defined PHI_BUILD_CAPTURE pause
     exit /b 1
 )
 
