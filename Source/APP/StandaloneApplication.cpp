@@ -3131,7 +3131,8 @@ public:
         setResizable(editor->isResizable(), false);
 
         constexpr int minimumStandaloneWidth = 530;
-        constexpr int minimumStandaloneHeight = 300;
+        constexpr int minimumStandaloneHeight =
+            300 + MidiKeyboardPanel::preferredHeight + 8;
 
         setResizeLimits(
             minimumStandaloneWidth,

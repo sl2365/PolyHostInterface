@@ -7,19 +7,19 @@ PolyHostPluginEditor::PolyHostPluginEditor(PolyHostPluginProcessor& p,
       mainView(p, menuExtension)
 {
     addAndMakeVisible(mainView);
+    routingViewHeight =
+        mainView.getAppSettings().getRoutingWindowHeight();
     macroMappingsViewHeight =
         mainView.getAppSettings().getMacroMappingsViewHeight();
     setResizable(true, false);
-    setResizeLimits(minWidth, minHeight, maxWidth, maxHeight);
-    const int keyboardExtraHeight =
-        mainView.getAppSettings().getMidiKeyboardVisible()
-            ? MidiKeyboardPanel::preferredHeight + 8
-            : 0;
-    setSize(defaultWidth, defaultHeight + keyboardExtraHeight);
+    updateResizeLimits();
+    setSize(defaultWidth, defaultHeight + getMidiKeyboardExtraHeight());
 }
 
 PolyHostPluginEditor::~PolyHostPluginEditor()
 {
+    mainView.getAppSettings().setRoutingWindowSize(
+        routingWidth, routingViewHeight);
     mainView.getAppSettings().setMacroMappingsViewHeight(
         macroMappingsViewHeight);
 }
@@ -31,11 +31,24 @@ void PolyHostPluginEditor::paint(juce::Graphics& g)
 
 void PolyHostPluginEditor::resized()
 {
+    const int contentHeight = getHeight() - getMidiKeyboardExtraHeight();
+
+    if (mainView.isShowingRoutingView()
+        && ! applyingRoutingViewSize)
+    {
+        routingViewHeight = juce::jlimit(
+            minHeight,
+            maxHeight - getMidiKeyboardExtraHeight(),
+            contentHeight);
+    }
+
     if (mainView.isShowingMacroMappingsView()
         && ! applyingMacroMappingsViewSize)
     {
         macroMappingsViewHeight = juce::jlimit(
-            minHeight, maxHeight, getHeight());
+            minHeight,
+            maxHeight - getMidiKeyboardExtraHeight(),
+            contentHeight);
     }
 
     mainView.setBounds(getLocalBounds());
@@ -90,7 +103,13 @@ void PolyHostPluginEditor::resizeToFitContent(int contentWidth, int contentHeigh
 
 void PolyHostPluginEditor::resizeToRoutingView()
 {
-    setSize(routingWidth, routingHeight);
+    const juce::ScopedValueSetter<bool> applyingSize(
+        applyingRoutingViewSize, true);
+    updateResizeLimits();
+    setSize(routingWidth,
+            juce::jlimit(minHeight + getMidiKeyboardExtraHeight(),
+                         maxHeight,
+                         routingViewHeight + getMidiKeyboardExtraHeight()));
     resized();
     repaint();
 }
@@ -99,8 +118,37 @@ void PolyHostPluginEditor::resizeToMacroMappingsView()
 {
     const juce::ScopedValueSetter<bool> applyingSize(
         applyingMacroMappingsViewSize, true);
+    updateResizeLimits();
     setSize(routingWidth,
-            juce::jlimit(minHeight, maxHeight, macroMappingsViewHeight));
+            juce::jlimit(minHeight + getMidiKeyboardExtraHeight(),
+                         maxHeight,
+                         macroMappingsViewHeight
+                             + getMidiKeyboardExtraHeight()));
     resized();
     repaint();
+}
+
+void PolyHostPluginEditor::updateMidiKeyboardVisibility()
+{
+    updateResizeLimits();
+
+    if (mainView.isShowingRoutingView())
+        resizeToRoutingView();
+    else if (mainView.isShowingMacroMappingsView())
+        resizeToMacroMappingsView();
+}
+
+int PolyHostPluginEditor::getMidiKeyboardExtraHeight() const
+{
+    return mainView.getAppSettings().getMidiKeyboardVisible()
+        ? MidiKeyboardPanel::preferredHeight + 8
+        : 0;
+}
+
+void PolyHostPluginEditor::updateResizeLimits()
+{
+    setResizeLimits(minWidth,
+                    minHeight + getMidiKeyboardExtraHeight(),
+                    maxWidth,
+                    maxHeight);
 }

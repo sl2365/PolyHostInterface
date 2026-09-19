@@ -968,7 +968,8 @@ int AppSettings::getRoutingWindowWidth() const
 
 int AppSettings::getRoutingWindowHeight() const
 {
-    return xml->getIntAttribute(kRoutingWindowHeight, 600);
+    return juce::jlimit(
+        300, 1120, xml->getIntAttribute(kRoutingWindowHeight, 500));
 }
 
 void AppSettings::setRoutingWindowSize(int width, int height)

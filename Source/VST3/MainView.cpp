@@ -3212,11 +3212,17 @@ void MainView::menuItemSelected(int menuItemID,
 
             appSettings.setMidiKeyboardVisible(shouldShow);
 
-            if (! showingRoutingView
-                && ! showingMacroMappingsView
-                && ! recordingView.isVisible())
+            if (auto* parentEditor =
+                    findParentComponentOfClass<PolyHostPluginEditor>())
             {
-                resizeParentEditorToFitHostedPlugin();
+                parentEditor->updateMidiKeyboardVisibility();
+
+                if (! showingRoutingView
+                    && ! showingMacroMappingsView
+                    && ! recordingView.isVisible())
+                {
+                    resizeParentEditorToFitHostedPlugin();
+                }
             }
 
             resized();
@@ -4947,20 +4953,13 @@ void MainView::toggleRoutingView()
     DebugLog::write("[Routing] toggleRoutingView new state="
                     + juce::String(showingRoutingView ? "true" : "false"));
 
-    auto& core = processor.getCore();
-
     refreshFromCore();
     repaint();
 
     if (auto* parentEditor = findParentComponentOfClass<PolyHostPluginEditor>())
     {
         if (showingRoutingView)
-        {
-            if (core.hasRoutingViewSize())
-                parentEditor->setSize(core.getRoutingViewWidth(), core.getRoutingViewHeight());
-            else
-                parentEditor->resizeToRoutingView();
-        }
+            parentEditor->resizeToRoutingView();
         else
         {
             resizeParentEditorToFitHostedPlugin();
@@ -5929,7 +5928,15 @@ bool MainView::saveSessionToFile(const juce::File& file)
     if (showingRoutingView)
     {
         if (auto* parentEditor = findParentComponentOfClass<PolyHostPluginEditor>())
-            core.setRoutingViewSize(parentEditor->getWidth(), parentEditor->getHeight());
+        {
+            const int keyboardExtraHeight =
+                appSettings.getMidiKeyboardVisible()
+                    ? MidiKeyboardPanel::preferredHeight + 8
+                    : 0;
+            core.setRoutingViewSize(
+                parentEditor->getWidth(),
+                parentEditor->getHeight() - keyboardExtraHeight);
+        }
     }
 
     SessionData sessionData;
@@ -6834,8 +6841,6 @@ void MainView::resized()
 
     const bool shouldDisplayMidiKeyboard =
         appSettings.getMidiKeyboardVisible()
-        && ! showingRoutingView
-        && ! showingMacroMappingsView
         && ! recordingView.isVisible();
 
     if (! shouldDisplayMidiKeyboard && midiKeyboardPanel.isVisible())
@@ -6849,6 +6854,7 @@ void MainView::resized()
             contentOuter.removeFromBottom(MidiKeyboardPanel::preferredHeight);
         contentOuter.removeFromBottom(8);
         midiKeyboardPanel.setBounds(keyboardBounds.reduced(8, 0));
+        midiKeyboardPanel.toFront(false);
     }
     else
     {

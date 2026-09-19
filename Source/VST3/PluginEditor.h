@@ -18,6 +18,7 @@ public:
     void resizeToFitContent(int contentWidth, int contentHeight);
     void resizeToRoutingView();
     void resizeToMacroMappingsView();
+    void updateMidiKeyboardVisibility();
 
 private:
 
@@ -30,8 +31,13 @@ private:
     static constexpr int maxWidth = 1600;
     static constexpr int maxHeight = 1120;
 
+    int getMidiKeyboardExtraHeight() const;
+    void updateResizeLimits();
+
     PolyHostPluginProcessor& audioProcessor;
     MainView mainView;
+    int routingViewHeight = routingHeight;
     int macroMappingsViewHeight = 587;
+    bool applyingRoutingViewSize = false;
     bool applyingMacroMappingsViewSize = false;
 };

@@ -68,10 +68,15 @@ public:
     ~MainView() override;
 
     AppSettings& getAppSettings() { return appSettings; }
+    const AppSettings& getAppSettings() const { return appSettings; }
     PolyHostPluginProcessor& getProcessor() { return processor; }
     bool isShowingMacroMappingsView() const noexcept
     {
         return showingMacroMappingsView;
+    }
+    bool isShowingRoutingView() const noexcept
+    {
+        return showingRoutingView;
     }
     juce::Point<int> getHostedEditorLocalPointFromScreen(juce::Point<int> screenPoint) const;
     juce::Point<int> getHostedEditorScreenPointFromLocal(juce::Point<int> localPoint) const;

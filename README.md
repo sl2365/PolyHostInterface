@@ -52,6 +52,8 @@ PolyHostInterface hosts multiple plugins in a tabbed workflow, allowing quick sw
 
 ### Routing View
 The Routing View provides a structured overview of all tabs in the current preset, including:
+
+- A fixed graphical MIDI keyboard at the bottom of the window when **Options > Keyboard > Show** is enabled, so notes can be played while adjusting routing controls.
 - tab order
 - synth / FX type
 - bypass state
@@ -100,6 +102,8 @@ Macro features include:
 - toggle Assigned Only to retain mapped and paused rows while hiding unmapped rows
 - sort any column without changing a macro assignment
 - identify each plug-in quickly using fixed text colours in the first three columns
+- keep the graphical MIDI keyboard fixed at the bottom while the parameter
+  table scrolls only in the area above it
 
 Each mapping stores:
 - macro slot number
@@ -132,8 +136,11 @@ is loaded again. The Macro-column X or Clear All are the explicit deletion paths
 
 Macro Mappings opens tall enough for ten parameter rows by default. PHI
 remembers only the height subsequently chosen by dragging; the view returns to
-its standard width whenever it is opened. The standalone window also enforces a
-300-pixel minimum height so its interface cannot collapse into the title bar.
+its standard width whenever it is opened. Routing View remembers its height
+independently. When the keyboard is shown, PHI adds its height at the bottom of
+either view; hiding it removes only that extra height, preserving the chosen
+space for rows. Plug-in and standalone windows reserve the keyboard strip in
+their minimum height, preventing collapsed or crowded views.
 
 Assigned Only switches between the complete parameter list and parameters that
 already have a Macro number. Paused mappings remain visible. A fixed palette
