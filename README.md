@@ -409,7 +409,7 @@ MIDI Device(s)    Audio In from DAW/Host
                     |
               [Audio Out]  ->  Output meter
 ```
-Incoming host or hardware MIDI is wired in parallel and filtered by each tab's MIDI-channel assignment. Dedicated zero-audio arpeggiators, sequencers and MIDI effects additionally route their generated MIDI forwards through the tab order. Place the MIDI effect before the synth it should control; generated MIDI never travels backwards to an earlier tab. Internal arp-to-synth routing does not depend on the Send generated MIDI output option.
+Incoming host or hardware MIDI is wired in parallel and filtered by each tab's MIDI-channel assignment. Dedicated zero-audio arpeggiators, sequencers and MIDI effects additionally route their generated MIDI forwards through the tab order. Place the MIDI effect before the synth it should control; generated MIDI never travels backwards to an earlier tab. Internal arp-to-synth routing does not depend on the Send generated MIDI output option. When an instrument is the nearest MIDI source, later tabs receive the preserved MIDI that entered it rather than the buffer returned after processing, because instruments are allowed to consume or replace that buffer.
 
 Synth and FX audio routing is partially flexible, where plugins are in series and routing can be modified by entering the Routing page. Click the Routing toolbar button and a list of all tabs appears to manage the processing order.
 

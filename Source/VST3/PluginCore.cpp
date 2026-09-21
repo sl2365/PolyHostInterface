@@ -1571,7 +1571,18 @@ void PluginCore::processBlock(juce::AudioBuffer<float>& buffer,
                     });
 
             if (sourceIndex >= 0)
-                return hostedTabs[sourceIndex]->midiScratchBuffer;
+            {
+                auto* sourceTab = hostedTabs[sourceIndex];
+
+                // Instruments are allowed to consume or replace the MIDI
+                // buffer they receive. Route their preserved input to later
+                // tabs so that behaviour does not depend on the instrument.
+                return phi_midi_routing::selectDownstreamMidiBuffer(
+                    getHostedTabType(sourceIndex)
+                        == PluginSlotType::Synth,
+                    sourceTab->midiScratchBuffer,
+                    sourceTab->midiInputScratchBuffer);
+            }
 
             return hostMidiInputScratchBuffer;
         };

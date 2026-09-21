@@ -21,6 +21,21 @@ int main()
 {
     using phi_midi_routing::findLatestReadySourceBefore;
     using phi_midi_routing::isMidiOnlyEffect;
+    using phi_midi_routing::selectDownstreamMidiBuffer;
+
+    const int consumedSynthOutput = 0;
+    const int preservedSynthInput = 2;
+    expect(selectDownstreamMidiBuffer(true,
+                                      consumedSynthOutput,
+                                      preservedSynthInput) == 2,
+           "a synth that consumes MIDI still routes its preserved input downstream");
+
+    const int processedMidiEffectOutput = 3;
+    const int midiEffectInput = 1;
+    expect(selectDownstreamMidiBuffer(false,
+                                      processedMidiEffectOutput,
+                                      midiEffectInput) == 3,
+           "a MIDI processor routes its processed output downstream");
 
     expect(isMidiOnlyEffect(true, false, false, true, 0, 0),
            "a zero-audio MIDI-generating FX is preprocessed as an arp");

@@ -81,7 +81,7 @@ set "PLUGIN_NAME=PolyHostInterface.vst3"
 set "BUILT_BUNDLE=%BUILD_DIR%\PolyHostPlugin_artefacts\Release\VST3\%PLUGIN_NAME%"
 set "BUILT_BINARY=%BUILT_BUNDLE%\Contents\x86_64-win\%PLUGIN_NAME%"
 set "FINAL_PLUGIN=%DIST_DIR%\%PLUGIN_NAME%"
-set "APP_NAME=savihost3x64.exe"
+set "APP_NAME=savihost.exe"
 set "MIDI_ROUTING_TEST=%BUILD_DIR%\Release\PhiHostedMidiRoutingTests.exe"
 
 echo.
