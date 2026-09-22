@@ -250,6 +250,7 @@ private:
         std::unique_ptr<juce::AudioPluginInstance> pluginInstance;
         PluginSlotType pluginType = PluginSlotType::Empty;
         bool isSeqwencer = false;
+        bool needsLegacyThornVst3Compatibility = false;
         juce::MidiBuffer midiScratchBuffer;
         juce::MidiBuffer midiInputScratchBuffer;
         bool hasProducedGeneratedMidi = false;

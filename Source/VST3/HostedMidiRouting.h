@@ -2,14 +2,10 @@
 
 namespace phi_midi_routing
 {
-    template <typename MidiBuffer>
-    const MidiBuffer& selectDownstreamMidiBuffer(
-        bool sourceIsSynth,
-        const MidiBuffer& processedOutput,
-        const MidiBuffer& preservedInput) noexcept
+    inline bool shouldUsePreservedInputForDownstream(
+        bool sourceIsSynth) noexcept
     {
-        return sourceIsSynth ? preservedInput
-                             : processedOutput;
+        return sourceIsSynth;
     }
 
     inline bool isMidiOnlyEffect(bool isEffect,

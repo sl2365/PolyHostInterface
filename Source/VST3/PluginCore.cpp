@@ -6,6 +6,10 @@
 #include <cmath>
 #include <cstring>
 
+#if JUCE_PLUGINHOST_VST3
+#include <pluginterfaces/vst/ivstcomponent.h>
+#endif
+
 namespace
 {
     using juce::int64;
@@ -75,6 +79,106 @@ namespace
             || compactPluginIdentity(
                    pluginFile.getFileNameWithoutExtension())
                    == "polyhostinterface";
+    }
+
+    bool needsLegacyThornVst3Compatibility(
+        const juce::PluginDescription& description)
+    {
+        const juce::File pluginFile(
+            description.fileOrIdentifier);
+
+        const bool isVst3 =
+            description.pluginFormatName
+                .containsIgnoreCase("VST3")
+            || pluginFile.hasFileExtension(".vst3");
+
+        if (! isVst3)
+            return false;
+
+        return compactPluginIdentity(description.name)
+                   == "thornbeat"
+            || compactPluginIdentity(
+                   description.descriptiveName)
+                   == "thornbeat"
+            || compactPluginIdentity(
+                   pluginFile.getFileNameWithoutExtension())
+                   == "thornbeat";
+    }
+
+    bool reactivateLegacyThornVst3MidiInputBus(
+        juce::AudioPluginInstance& instance)
+    {
+       #if JUCE_PLUGINHOST_VST3
+        auto* vst3Client = instance.getVST3Client();
+        auto* component = vst3Client != nullptr
+            ? vst3Client->getIComponentPtr() : nullptr;
+
+        if (component == nullptr)
+            return false;
+
+        const juce::MessageManagerLock messageManagerLock;
+        if (! messageManagerLock.lockWasGained())
+            return false;
+
+        const auto result = component->activateBus(
+            Steinberg::Vst::kEvent,
+            Steinberg::Vst::kInput,
+            0,
+            1);
+
+        return result == Steinberg::kResultTrue;
+       #else
+        juce::ignoreUnused(instance);
+        return false;
+       #endif
+    }
+
+    void prepareHostedPluginInstance(
+        juce::AudioPluginInstance& instance,
+        bool useLegacyThornVst3Compatibility,
+        double sampleRate,
+        int samplesPerBlock)
+    {
+        if (! useLegacyThornVst3Compatibility)
+        {
+            instance.prepareToPlay(
+                sampleRate,
+                samplesPerBlock);
+            return;
+        }
+
+        // Thorn BEAT's 2018 JUCE VST3 wrapper predates several VST3 bus fixes.
+        // Use the normal public JUCE bus layout first, then address its known
+        // event input both before and after the old wrapper's prepare cycle.
+        instance.releaseResources();
+
+        const bool audioBusesEnabled =
+            instance.enableAllBuses();
+
+        const bool midiEnabledBeforePrepare =
+            reactivateLegacyThornVst3MidiInputBus(instance);
+
+        instance.prepareToPlay(
+            sampleRate,
+            samplesPerBlock);
+
+        const bool midiEnabledAfterPrepare =
+            reactivateLegacyThornVst3MidiInputBus(instance);
+
+        DebugLog::write(
+            "[LegacyThornVST3] compatibility prepare"
+            " | audioBusesEnabled="
+            + juce::String(audioBusesEnabled ? "true" : "false")
+            + " | midiBefore="
+            + juce::String(midiEnabledBeforePrepare ? "true" : "false")
+            + " | midiAfter="
+            + juce::String(midiEnabledAfterPrepare ? "true" : "false")
+            + " | acceptsMidi="
+            + juce::String(instance.acceptsMidi() ? "true" : "false")
+            + " | audioInputs="
+            + juce::String(instance.getTotalNumInputChannels())
+            + " | audioOutputs="
+            + juce::String(instance.getTotalNumOutputChannels()));
     }
 
     juce::String makePluginQuarantineDisplayNameFromData(const SessionPluginData& pluginData)
@@ -1003,7 +1107,9 @@ void PluginCore::prepareToPlay(double sampleRate, int samplesPerBlock)
 
         if (pluginCanBeCalled)
         {
-            tab->pluginInstance->prepareToPlay(
+            prepareHostedPluginInstance(
+                *tab->pluginInstance,
+                tab->needsLegacyThornVst3Compatibility,
                 sampleRate,
                 samplesPerBlock);
         }
@@ -1574,14 +1680,14 @@ void PluginCore::processBlock(juce::AudioBuffer<float>& buffer,
             {
                 auto* sourceTab = hostedTabs[sourceIndex];
 
-                // Instruments are allowed to consume or replace the MIDI
-                // buffer they receive. Route their preserved input to later
-                // tabs so that behaviour does not depend on the instrument.
-                return phi_midi_routing::selectDownstreamMidiBuffer(
-                    getHostedTabType(sourceIndex)
-                        == PluginSlotType::Synth,
-                    sourceTab->midiScratchBuffer,
-                    sourceTab->midiInputScratchBuffer);
+                if (phi_midi_routing::shouldUsePreservedInputForDownstream(
+                        getHostedTabType(sourceIndex)
+                            == PluginSlotType::Synth))
+                {
+                    return sourceTab->midiInputScratchBuffer;
+                }
+
+                return sourceTab->midiScratchBuffer;
             }
 
             return hostMidiInputScratchBuffer;
@@ -4371,6 +4477,7 @@ void PluginCore::disposeHostedPluginInstance(
     bool releaseHealthyPluginResources)
 {
     tab.isSeqwencer = false;
+    tab.needsLegacyThornVst3Compatibility = false;
 
     if (tab.pluginInstance == nullptr)
     {
@@ -4730,6 +4837,9 @@ bool PluginCore::loadMainSlotPluginFromDescription(const juce::PluginDescription
 
     const bool isVST3 = descriptionFormatIsVST3 || pluginFile.hasFileExtension(".vst3");
     const bool isVST2 = descriptionFormatIsVST2 || pluginFile.hasFileExtension(".dll");
+    const bool useLegacyThornVst3Compatibility =
+        needsLegacyThornVst3Compatibility(
+            description);
 
     ensurePluginFormatsInitialised();
 
@@ -4790,7 +4900,11 @@ bool PluginCore::loadMainSlotPluginFromDescription(const juce::PluginDescription
     if (playbackPrepared.load())
     {
         DebugLog::write("[PluginLoadDiagnostic] 30 prepareToPlay call begin");
-        instance->prepareToPlay(currentSampleRate, currentBlockSize);
+        prepareHostedPluginInstance(
+            *instance,
+            useLegacyThornVst3Compatibility,
+            currentSampleRate,
+            currentBlockSize);
         DebugLog::write("[PluginLoadDiagnostic] 31 prepareToPlay call returned");
     }
     else
@@ -4802,6 +4916,8 @@ bool PluginCore::loadMainSlotPluginFromDescription(const juce::PluginDescription
         slotTypeFromDescription(description);
     selectedTab->isSeqwencer =
         description.name.equalsIgnoreCase("Seqwencer");
+    selectedTab->needsLegacyThornVst3Compatibility =
+        useLegacyThornVst3Compatibility;
 
     DebugLog::write("[PluginLoadDiagnostic] 40 channel query begin");
 

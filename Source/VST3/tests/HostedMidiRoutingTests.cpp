@@ -21,20 +21,11 @@ int main()
 {
     using phi_midi_routing::findLatestReadySourceBefore;
     using phi_midi_routing::isMidiOnlyEffect;
-    using phi_midi_routing::selectDownstreamMidiBuffer;
+    using phi_midi_routing::shouldUsePreservedInputForDownstream;
 
-    const int consumedSynthOutput = 0;
-    const int preservedSynthInput = 2;
-    expect(selectDownstreamMidiBuffer(true,
-                                      consumedSynthOutput,
-                                      preservedSynthInput) == 2,
-           "a synth that consumes MIDI still routes its preserved input downstream");
-
-    const int processedMidiEffectOutput = 3;
-    const int midiEffectInput = 1;
-    expect(selectDownstreamMidiBuffer(false,
-                                      processedMidiEffectOutput,
-                                      midiEffectInput) == 3,
+    expect(shouldUsePreservedInputForDownstream(true),
+           "a synth routes its preserved input MIDI downstream");
+    expect(! shouldUsePreservedInputForDownstream(false),
            "a MIDI processor routes its processed output downstream");
 
     expect(isMidiOnlyEffect(true, false, false, true, 0, 0),

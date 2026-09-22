@@ -57,7 +57,7 @@ for %%I in ("%ROOT%..") do set "PROJECTS_ROOT=%%~fI"
 set "TOOLS=%PROJECTS_ROOT%\_Tools"
 set "CMAKE=%TOOLS%\cmake\_4.4.2\bin\cmake.exe"
 set "BUILD_DIR=%ROOT%build-APP-32"
-set "DIST_DIR=%ROOT%dist-32"
+set "DIST_DIR=%ROOT%dist"
 set "EXENAME=PolyHostInterface32.exe"
 set "FINAL_EXE=%DIST_DIR%\%EXENAME%"
 set "VST2_SDK=%TOOLS%\vstsdk2.4"
@@ -133,7 +133,7 @@ if errorlevel 1 (
 )
 
 echo.
-echo Copying PHI32 standalone EXE to dist-32...
+echo Copying PHI32 standalone EXE to dist...
 if not exist "%DIST_DIR%" mkdir "%DIST_DIR%"
 
 if exist "%BUILD_DIR%\PolyHost32_artefacts\Release\Standalone\%EXENAME%" (
@@ -147,7 +147,7 @@ if exist "%BUILD_DIR%\PolyHost32_artefacts\Release\Standalone\%EXENAME%" (
     )
     copy /Y "%ROOT%Source\FluentSystemIcons-LICENSE.txt" "%DIST_DIR%\FluentSystemIcons-LICENSE.txt" >nul
     if errorlevel 1 (
-        echo ERROR: Failed to copy the Fluent System Icons licence to dist-32.
+        echo ERROR: Failed to copy the Fluent System Icons licence to dist.
         if not defined PHI_BUILD_CAPTURE pause
         exit /b 1
     )
