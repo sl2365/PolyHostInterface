@@ -62,6 +62,8 @@ void PolyHostPluginEditor::visibilityChanged()
 
 void PolyHostPluginEditor::resizeToFitContent(int contentWidth, int contentHeight)
 {
+    updateResizeLimits();
+
     constexpr int topMenuHeight = 28;
     constexpr int topRowHeight = 32;
     constexpr int tabBarHeight = 34;
@@ -90,8 +92,11 @@ void PolyHostPluginEditor::resizeToFitContent(int contentWidth, int contentHeigh
         fixedChromeHeight
         + contentHeight;
 
-    const int clampedWidth = juce::jlimit(minWidth, maxWidth, desiredWidth);
-    const int clampedHeight = juce::jlimit(minHeight, maxHeight, desiredHeight);
+    const auto maximumSize = getMaximumEditorSizeForCurrentDisplay();
+    const int clampedWidth = juce::jlimit(
+        minWidth, maximumSize.x, desiredWidth);
+    const int clampedHeight = juce::jlimit(
+        minHeight, maximumSize.y, desiredHeight);
 
     if (getWidth() != clampedWidth || getHeight() != clampedHeight)
     {
@@ -145,10 +150,41 @@ int PolyHostPluginEditor::getMidiKeyboardExtraHeight() const
         : 0;
 }
 
+juce::Point<int>
+PolyHostPluginEditor::getMaximumEditorSizeForCurrentDisplay() const
+{
+    auto maximumWidth = maxWidth;
+    auto maximumHeight = maxHeight;
+
+    const auto& displays = juce::Desktop::getInstance().getDisplays();
+    const auto* display = displays.getDisplayForRect(getScreenBounds());
+
+    if (display != nullptr)
+    {
+        auto usableBounds =
+            display->userBounds.getLargestIntegerWithin();
+
+        if (auto* peer = getPeer())
+        {
+            if (const auto frameSize = peer->getFrameSizeIfPresent())
+                frameSize->subtractFrom(usableBounds);
+        }
+
+        maximumWidth = juce::jmax(maximumWidth,
+                                  usableBounds.getWidth());
+        maximumHeight = juce::jmax(maximumHeight,
+                                   usableBounds.getHeight());
+    }
+
+    return { maximumWidth, maximumHeight };
+}
+
 void PolyHostPluginEditor::updateResizeLimits()
 {
+    const auto maximumSize = getMaximumEditorSizeForCurrentDisplay();
+
     setResizeLimits(minWidth,
                     minHeight + getMidiKeyboardExtraHeight(),
-                    maxWidth,
-                    maxHeight);
+                    maximumSize.x,
+                    maximumSize.y);
 }

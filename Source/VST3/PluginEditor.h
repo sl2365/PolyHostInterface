@@ -33,6 +33,7 @@ private:
     static constexpr int maxHeight = 1120;
 
     int getMidiKeyboardExtraHeight() const;
+    juce::Point<int> getMaximumEditorSizeForCurrentDisplay() const;
     void updateResizeLimits();
 
     PolyHostPluginProcessor& audioProcessor;
