@@ -2,6 +2,8 @@
 
 #include <JuceHeader.h>
 
+#include <array>
+
 #include "ButtonStyling.h"
 
 class MacroMappingsView final : public juce::Component,
@@ -17,15 +19,14 @@ public:
         juce::String parameterName;
         int macroIndex = -1;
         bool mappingEnabled = false;
-        bool targetA = false;
-        bool targetB = false;
+        std::array<bool, 8> targets {};
     };
 
     MacroMappingsView();
 
     void setParameters(const juce::Array<ParameterEntry>& newParameters,
                        bool shouldShowSeqwencerTargets,
-                       bool isSerialMode);
+                       int serialPairMask);
     void setFilterText(const juce::String& newFilterText);
     void setUndoAvailable(bool shouldBeAvailable);
 
@@ -102,7 +103,7 @@ private:
     juce::String filterText;
     bool assignedOnly = false;
     bool showSeqwencerTargets = false;
-    bool serialMode = false;
+    int serialPairMask = 0;
     int sortColumn = tabColumn;
     bool sortForwards = true;
 

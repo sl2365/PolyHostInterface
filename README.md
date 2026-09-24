@@ -124,15 +124,16 @@ to resume. Replace keeps the Macro number and changes its destination to the
 last touched parameter; X permanently deletes the mapping. Undo and Clear All
 remain available.
 
-Seqwencer Stage 3.0.1 adds the Targets column to this same view while Seqwencer is
-loaded. Click Seqwencer's **PHI** selector and then **TARGET**, or open Macro
-Mappings from PHI's toolbar. Tick A, B or both beside any automatable
-parameter. PHI automatically assigns the next free macro when needed. Clicking
-any column header only sorts the display and never changes a Macro assignment.
-The Targets column is completely removed whenever Seqwencer is not loaded.
-Removing Seqwencer does not delete the Macro mappings or their saved A/B target
-bits. PHI keeps them in the preset and hides the Targets column until Seqwencer
-is loaded again. The Macro-column X or Clear All are the explicit deletion paths.
+Seqwencer v1.3.24.0 adds four PHI pairs and expands this view's Targets column
+to A-H while Seqwencer is loaded. Click Seqwencer's **PHI** selector and then
+**TARGETS**, or open Macro Mappings from PHI's toolbar. Tick any required lanes
+beside an automatable parameter. PHI automatically assigns the next free macro
+when needed. Clicking any column header only sorts the display and never
+changes a Macro assignment. The Targets column is completely removed whenever
+Seqwencer is not loaded. Removing Seqwencer does not delete the Macro mappings
+or their saved A-H target bits. PHI keeps them in the preset and hides the
+Targets column until Seqwencer is loaded again. The Macro-column X or Clear All
+are the explicit deletion paths.
 
 Macro Mappings opens tall enough for ten parameter rows by default. PHI
 remembers only the height subsequently chosen by dragging; the view returns to
@@ -148,15 +149,16 @@ colours only the text in the Tab, Plugin and Parameter cells for the first 25
 tabs, then repeats; row backgrounds remain dark and the Mapped, Targets and
 Macro cells keep their functional colours.
 
-In Parallel, A and B are independent. When both address one parameter, the
-current value furthest from zero wins and an exact magnitude tie uses A. In
-SERIAL the A/B boxes mirror one shared 64-step target; the separate saved B
-Parallel assignment is retained. Unticking both stops Seqwencer control without
-deleting the macro. Click the cross beside an assigned Macro number to delete
-that macro after confirmation, which also clears both Seqwencer assignments.
-Targets and Macro have a clearly drawn divider. Unmapped Macro cells remain
-blank, and assignment changes refresh only the target table rather than
-rebuilding the full PHI interface.
+In Parallel, lanes A-H are independent. When multiple lanes address one
+parameter, the current value furthest from zero wins; an exact magnitude tie
+uses the earliest lane. SERIAL is independent for each A/B, C/D, E/F and G/H
+pair. The two boxes in a SERIAL pair mirror one shared 64-step target while the
+second lane's saved Parallel assignment is retained. Unticking the pair stops
+its control without deleting the macro. Click the cross beside an assigned
+Macro number to delete that macro after confirmation, which also clears all
+eight Seqwencer assignments. Targets and Macro have a clearly drawn divider.
+Unmapped Macro cells remain blank, and assignment changes refresh only the
+target table rather than rebuilding the full PHI interface.
 
 Every PHI build entry point streams its normal console output to the window and
 simultaneously writes it to `Results.log` in the project root. Each new build

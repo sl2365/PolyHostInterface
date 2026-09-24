@@ -1,4 +1,5 @@
 #include "../HostedMidiRouting.h"
+#include "../SeqwencerBridgeProtocol.h"
 #include <array>
 #include <cstdlib>
 #include <iostream>
@@ -55,6 +56,41 @@ int main()
         [&routeReady] (int index) { return routeReady[(std::size_t) index]; });
     expect(sourceForFifthTab == 3,
            "chained MIDI processors use the latest upstream output");
+
+    const auto lanePacket = seqwencer_bridge::encodeLaneValue (
+        seqwencer_bridge::sequencerHLane, true, true, 0.25f, 0x0a);
+    auto sourceLane = -1;
+    auto bipolar = false;
+    auto active = false;
+    auto value = 0.0f;
+    auto serialPairMask = 0;
+    expect(seqwencer_bridge::decodeLaneValue (
+               lanePacket.data(), lanePacket.size(), sourceLane, bipolar,
+               active, value, serialPairMask),
+           "the eight-lane Seqwencer bridge packet decodes");
+    expect(sourceLane == seqwencer_bridge::sequencerHLane,
+           "the Seqwencer bridge preserves lane H");
+    expect(bipolar && active && serialPairMask == 0x0a,
+           "the Seqwencer bridge preserves lane and pair state");
+
+    auto legacySerialPacket = lanePacket;
+    legacySerialPacket[4] = seqwencer_bridge::legacyProtocolVersion;
+    legacySerialPacket[6] = 2;
+    legacySerialPacket[7] = 2;
+    expect(seqwencer_bridge::decodeLaneValue (
+               legacySerialPacket.data(), legacySerialPacket.size(),
+               sourceLane, bipolar, active, value, serialPairMask)
+               && sourceLane == seqwencer_bridge::serialLane
+               && serialPairMask == 1,
+           "the original A/B SERIAL bridge remains compatible");
+
+    const auto targetRequest =
+        seqwencer_bridge::encodeTargetBrowserRequest (0x0d);
+    auto requestPairMask = 0;
+    expect(seqwencer_bridge::decodeTargetBrowserRequest (
+               targetRequest.data(), targetRequest.size(), requestPairMask)
+               && requestPairMask == 0x0d,
+           "the target browser preserves all four SERIAL pair states");
 
     std::cout << "All PHI hosted MIDI routing tests passed\n";
     return 0;

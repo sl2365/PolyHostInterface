@@ -166,8 +166,7 @@ public:
         juce::String parameterName;
         int macroIndex = -1;
         bool mappingEnabled = false;
-        bool targetA = false;
-        bool targetB = false;
+        std::array<bool, 8> targets {};
     };
 
     bool hasLastTouchedParameter() const;
@@ -200,17 +199,17 @@ public:
                                       int parameterIndex,
                                       int lane,
                                       bool assigned,
-                                      bool serialMode,
+                                      int serialPairMask,
                                       juce::String* errorMessage = nullptr);
     bool deleteSeqwencerTargetMacro(int tabIndex,
                                     int parameterIndex,
                                     juce::String* errorMessage = nullptr);
     bool hasLoadedSeqwencer() const noexcept;
-    bool getSeqwencerSerialMode() const noexcept
+    int getSeqwencerSerialPairMask() const noexcept
     {
-        return seqwencerSerialMode.load(std::memory_order_acquire);
+        return seqwencerSerialPairMask.load(std::memory_order_acquire);
     }
-    bool consumeSeqwencerTargetBrowserRequest(bool& serialMode) noexcept
+    bool consumeSeqwencerTargetBrowserRequest(int& serialPairMask) noexcept
     {
         const auto requestedMode =
             seqwencerTargetBrowserRequestPending.exchange(
@@ -218,7 +217,7 @@ public:
         if (requestedMode < 0)
             return false;
 
-        serialMode = requestedMode != 0;
+        serialPairMask = requestedMode;
         return true;
     }
 
@@ -454,7 +453,7 @@ private:
     std::atomic<bool> applyingSeqwencerBridgeValue { false };
     std::atomic<juce::uint32> seqwencerBridgeMessageCount { 0 };
     std::atomic<int> seqwencerTargetBrowserRequestPending { -1 };
-    std::atomic<bool> seqwencerSerialMode { false };
+    std::atomic<int> seqwencerSerialPairMask { 0 };
     struct SeqwencerLaneState
     {
         float normalizedValue = 0.0f;
@@ -462,7 +461,7 @@ private:
         bool active = false;
         bool received = false;
     };
-    std::array<SeqwencerLaneState, 2> seqwencerLaneStates {};
+    std::array<SeqwencerLaneState, 8> seqwencerLaneStates {};
 
     juce::uint32 dirtyMarkingResumeTimeMs = 0;
 

@@ -1,4 +1,5 @@
 #include "SessionManager.h"
+#include "SeqwencerBridgeProtocol.h"
 
 namespace
 {
@@ -209,7 +210,7 @@ bool SessionManager::restoreSessionDataFromXml(const juce::XmlElement& xml,
             mapping.enabled = mappingXml->getBoolAttribute("enabled", true);
             mapping.seqwencerTargetMask = juce::jlimit(
                 0,
-                3,
+                seqwencer_bridge::allTargetMasks,
                 mappingXml->getIntAttribute("seqwencerTargetMask", 0));
 
             if (mapping.macroIndex >= 0)

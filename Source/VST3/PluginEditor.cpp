@@ -119,7 +119,7 @@ void PolyHostPluginEditor::resizeToMacroMappingsView()
     const juce::ScopedValueSetter<bool> applyingSize(
         applyingMacroMappingsViewSize, true);
     updateResizeLimits();
-    setSize(routingWidth,
+    setSize(macroMappingsWidth,
             juce::jlimit(minHeight + getMidiKeyboardExtraHeight(),
                          maxHeight,
                          macroMappingsViewHeight

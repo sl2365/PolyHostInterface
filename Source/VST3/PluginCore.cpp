@@ -1524,20 +1524,20 @@ void PluginCore::processBlock(juce::AudioBuffer<float>& buffer,
                 const auto& message =
                     processedMetadata.getMessage();
 
-                auto browserSerialMode = false;
+                auto browserSerialPairMask = 0;
                 if (message.isSysEx()
                     && seqwencer_bridge::decodeTargetBrowserRequest(
                         reinterpret_cast<const std::uint8_t*>(
                             message.getSysExData()),
                         static_cast<std::size_t>(
                             message.getSysExDataSize()),
-                        browserSerialMode))
+                        browserSerialPairMask))
                 {
-                    seqwencerSerialMode.store(
-                        browserSerialMode,
+                    seqwencerSerialPairMask.store(
+                        browserSerialPairMask,
                         std::memory_order_release);
                     seqwencerTargetBrowserRequestPending.store(
-                        browserSerialMode ? 1 : 0,
+                        browserSerialPairMask,
                         std::memory_order_release);
                     seqwencerBridgeMessageCount.fetch_add(
                         1,
@@ -1551,6 +1551,7 @@ void PluginCore::processBlock(juce::AudioBuffer<float>& buffer,
                 float bridgeValue = 0.0f;
                 bool bridgeBipolar = false;
                 bool bridgeActive = false;
+                int bridgeSerialPairMask = 0;
 
                 if (message.isSysEx()
                     && seqwencer_bridge::decodeLaneValue(
@@ -1561,10 +1562,11 @@ void PluginCore::processBlock(juce::AudioBuffer<float>& buffer,
                         bridgeSourceLane,
                         bridgeBipolar,
                         bridgeActive,
-                        bridgeValue))
+                        bridgeValue,
+                        bridgeSerialPairMask))
                 {
-                    seqwencerSerialMode.store(
-                        bridgeSourceLane == seqwencer_bridge::serialLane,
+                    seqwencerSerialPairMask.store(
+                        bridgeSerialPairMask,
                         std::memory_order_release);
                     applySeqwencerLaneValue(
                         bridgeSourceLane,
@@ -5128,7 +5130,9 @@ void PluginCore::resetForNewPreset()
     seqwencerTargetBrowserRequestPending.store(
         -1,
         std::memory_order_release);
-    seqwencerSerialMode.store(false, std::memory_order_release);
+    seqwencerSerialPairMask.store(0, std::memory_order_release);
+    for (auto& state : seqwencerLaneStates)
+        state = {};
     dirtyMarkingResumeTimeMs = 0;
     routingViewWidth = 800;
     routingViewHeight = 500;
@@ -5962,10 +5966,12 @@ PluginCore::getHostedParameterChoices() const
                     macroMappings.getReference(mappingIndex);
                 choice.macroIndex = mapping.macroIndex;
                 choice.mappingEnabled = mapping.enabled;
-                choice.targetA = (mapping.seqwencerTargetMask
-                                  & seqwencer_bridge::targetMaskA) != 0;
-                choice.targetB = (mapping.seqwencerTargetMask
-                                  & seqwencer_bridge::targetMaskB) != 0;
+                for (int lane = 0;
+                     lane < seqwencer_bridge::sequencerLaneCount; ++lane)
+                {
+                    choice.targets[static_cast<std::size_t> (lane)] =
+                        (mapping.seqwencerTargetMask & (1 << lane)) != 0;
+                }
             }
 
             choices.add(std::move(choice));
@@ -6124,7 +6130,7 @@ bool PluginCore::setSeqwencerTargetAssignment(
     int parameterIndex,
     int lane,
     bool assigned,
-    bool serialMode,
+    int serialPairMask,
     juce::String* errorMessage)
 {
     const auto fail = [errorMessage](const juce::String& message)
@@ -6134,7 +6140,7 @@ bool PluginCore::setSeqwencerTargetAssignment(
         return false;
     };
 
-    if (lane < 0 || lane > 1)
+    if (lane < 0 || lane >= seqwencer_bridge::sequencerLaneCount)
         return fail("The requested Seqwencer lane is invalid.");
 
     auto mappingIndex = findMacroMappingIndexByTarget(
@@ -6177,13 +6183,14 @@ bool PluginCore::setSeqwencerTargetAssignment(
         mapping.seqwencerTargetMask,
         lane,
         assigned,
-        serialMode);
+        (serialPairMask & (1 << (lane / 2))) != 0);
 
     if (newMask != mapping.seqwencerTargetMask || (assigned && ! mapping.enabled))
     {
         if (! createdMapping)
             storeMacroMappingsUndoState();
-        mapping.seqwencerTargetMask = juce::jlimit(0, 3, newMask);
+        mapping.seqwencerTargetMask = juce::jlimit(
+            0, seqwencer_bridge::allTargetMasks, newMask);
         if (assigned)
             mapping.enabled = true;
         macroMappings.set(mappingIndex, mapping);
@@ -6519,11 +6526,9 @@ void PluginCore::applySeqwencerLaneValue(
         return;
     }
 
-    if (sourceLane != seqwencer_bridge::sequencerALane
-        && sourceLane != seqwencer_bridge::sequencerBLane)
-    {
+    if (sourceLane < seqwencer_bridge::sequencerALane
+        || sourceLane > seqwencer_bridge::sequencerHLane)
         return;
-    }
 
     auto& laneState = seqwencerLaneStates[static_cast<std::size_t>(sourceLane)];
     laneState.normalizedValue = normalizedValue;
@@ -6531,34 +6536,57 @@ void PluginCore::applySeqwencerLaneValue(
     laneState.active = active;
     laneState.received = true;
 
-    const auto& stateA = seqwencerLaneStates[0];
-    const auto& stateB = seqwencerLaneStates[1];
+    const auto serialPairMask = seqwencerSerialPairMask.load(
+        std::memory_order_acquire);
 
     for (const auto& mapping : macroMappings)
     {
         if (! mapping.enabled)
             continue;
 
-        const auto useA = (mapping.seqwencerTargetMask
-                           & seqwencer_bridge::targetMaskA) != 0
-                       && stateA.received && stateA.active;
-        const auto useB = (mapping.seqwencerTargetMask
-                           & seqwencer_bridge::targetMaskB) != 0
-                       && stateB.received && stateB.active;
-
-        if (! useA && ! useB)
-            continue;
-
-        auto routedValue = useA
-            ? stateA.normalizedValue : stateB.normalizedValue;
-        if (useA && useB)
+        auto hasRoutedValue = false;
+        auto routedValue = 0.0f;
+        auto routedBipolar = false;
+        const auto considerLane = [&] (int lane)
         {
-            routedValue = seqwencer_bridge::selectFurthestFromZero(
-                stateA.normalizedValue,
-                stateA.bipolar,
-                stateB.normalizedValue,
-                stateB.bipolar);
+            const auto& state = seqwencerLaneStates[
+                static_cast<std::size_t>(lane)];
+            if (! state.received || ! state.active)
+                return;
+            if (! hasRoutedValue
+                || seqwencer_bridge::distanceFromZero(
+                       state.normalizedValue, state.bipolar)
+                   > seqwencer_bridge::distanceFromZero(
+                       routedValue, routedBipolar))
+            {
+                routedValue = state.normalizedValue;
+                routedBipolar = state.bipolar;
+                hasRoutedValue = true;
+            }
+        };
+
+        for (int pair = 0;
+             pair < seqwencer_bridge::sequencerPairCount; ++pair)
+        {
+            const auto firstLane = pair * 2;
+            if ((serialPairMask & (1 << pair)) != 0)
+            {
+                if ((mapping.seqwencerTargetMask & (1 << firstLane)) != 0)
+                    considerLane(firstLane);
+            }
+            else
+            {
+                for (int localLane = 0; localLane < 2; ++localLane)
+                {
+                    const auto lane = firstLane + localLane;
+                    if ((mapping.seqwencerTargetMask & (1 << lane)) != 0)
+                        considerLane(lane);
+                }
+            }
         }
+
+        if (! hasRoutedValue)
+            continue;
 
         setMacroValueFromSeqwencerBridge(
             mapping.macroIndex,

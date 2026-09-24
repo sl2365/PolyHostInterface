@@ -87,33 +87,49 @@ class MacroMappingsView::TargetsCell final : public juce::Component
 public:
     explicit TargetsCell(MacroMappingsView& ownerIn) : owner(ownerIn)
     {
-        configureButton(buttonA, "A", juce::Colour(accentAColour));
-        configureButton(buttonB, "B", juce::Colour(accentBColour));
-        buttonA.onClick = [this]
+        for (int lane = 0; lane < 8; ++lane)
         {
-            owner.changeTarget(entry, 0, buttonA.getToggleState());
-        };
-        buttonB.onClick = [this]
-        {
-            owner.changeTarget(entry, 1, buttonB.getToggleState());
-        };
-        addAndMakeVisible(buttonA);
-        addAndMakeVisible(buttonB);
+            auto button = std::make_unique<juce::ToggleButton>();
+            configureButton(
+                *button,
+                juce::String::charToString(
+                    static_cast<juce::juce_wchar>('A' + lane)),
+                juce::Colour((lane & 1) == 0
+                                 ? accentAColour : accentBColour));
+            button->onClick = [this, lane]
+            {
+                owner.changeTarget(
+                    entry, lane,
+                    buttons[static_cast<std::size_t>(lane)]->getToggleState());
+            };
+            addAndMakeVisible(*button);
+            buttons[static_cast<std::size_t>(lane)] = std::move(button);
+        }
     }
 
-    void setEntry(const ParameterEntry& newEntry, bool isSerialMode)
+    void setEntry(const ParameterEntry& newEntry, int serialPairMask)
     {
         entry = newEntry;
-        const auto stateA = entry.targetA;
-        const auto stateB = isSerialMode ? stateA : entry.targetB;
-        buttonA.setToggleState(stateA, juce::dontSendNotification);
-        buttonB.setToggleState(stateB, juce::dontSendNotification);
-        buttonA.setTooltip(isSerialMode
-                               ? "Shared Seqwencer SERIAL target"
-                               : "Seqwencer A target");
-        buttonB.setTooltip(isSerialMode
-                               ? "Shared Seqwencer SERIAL target"
-                               : "Seqwencer B target");
+        for (int lane = 0; lane < 8; ++lane)
+        {
+            const auto pair = lane / 2;
+            const auto serial = (serialPairMask & (1 << pair)) != 0;
+            const auto storedLane = serial ? pair * 2 : lane;
+            auto* button = buttons[static_cast<std::size_t>(lane)].get();
+            button->setToggleState(
+                entry.targets[static_cast<std::size_t>(storedLane)],
+                juce::dontSendNotification);
+            const auto laneName = juce::String::charToString(
+                static_cast<juce::juce_wchar>('A' + lane));
+            const auto firstName = juce::String::charToString(
+                static_cast<juce::juce_wchar>('A' + pair * 2));
+            const auto secondName = juce::String::charToString(
+                static_cast<juce::juce_wchar>('A' + pair * 2 + 1));
+            button->setTooltip(serial
+                ? "Shared Seqwencer " + firstName + "/" + secondName
+                    + " SERIAL target"
+                : "Seqwencer " + laneName + " target");
+        }
     }
 
     void paint(juce::Graphics& g) override
@@ -127,10 +143,15 @@ public:
 
     void resized() override
     {
-        auto area = getLocalBounds().reduced(6, 1);
-        const auto half = area.getWidth() / 2;
-        buttonA.setBounds(area.removeFromLeft(half));
-        buttonB.setBounds(area);
+        auto area = getLocalBounds().reduced(4, 1);
+        for (int lane = 0; lane < 8; ++lane)
+        {
+            const auto lanesRemaining = 8 - lane;
+            const auto width = lanesRemaining > 1
+                ? area.getWidth() / lanesRemaining : area.getWidth();
+            buttons[static_cast<std::size_t>(lane)]->setBounds(
+                area.removeFromLeft(width));
+        }
     }
 
 private:
@@ -149,8 +170,7 @@ private:
 
     MacroMappingsView& owner;
     ParameterEntry entry;
-    juce::ToggleButton buttonA;
-    juce::ToggleButton buttonB;
+    std::array<std::unique_ptr<juce::ToggleButton>, 8> buttons;
 };
 
 class MacroMappingsView::MacroCell final : public juce::Component
@@ -305,10 +325,10 @@ MacroMappingsView::MacroMappingsView()
 
     auto& header = parameterTable.getHeader();
     header.addColumn("Tab", tabColumn, 58, 48, 90);
-    header.addColumn("Plugin", pluginColumn, 220, 120, 420);
-    header.addColumn("Parameter", parameterColumn, 350, 150, 620);
+    header.addColumn("Plugin", pluginColumn, 120, 120, 420);
+    header.addColumn("Parameter", parameterColumn, 190, 150, 620);
     header.addColumn("Mapped", mappedColumn, 84, 72, 110);
-    header.addColumn("Targets", targetsColumn, 128, 110, 170);
+    header.addColumn("Targets", targetsColumn, 304, 272, 360);
     header.addColumn("Macro", macroColumn, 134, 118, 170);
     header.setPopupMenuActive(false);
     header.setStretchToFitActive(true);
@@ -320,16 +340,16 @@ MacroMappingsView::MacroMappingsView()
     countLabel.setJustificationType(juce::Justification::centredLeft);
     addAndMakeVisible(countLabel);
 
-    setParameters({}, false, false);
+    setParameters({}, false, 0);
 }
 
 void MacroMappingsView::setParameters(
     const juce::Array<ParameterEntry>& newParameters,
     bool shouldShowSeqwencerTargets,
-    bool isSerialMode)
+    int newSerialPairMask)
 {
     allParameters = newParameters;
-    serialMode = isSerialMode;
+    serialPairMask = juce::jlimit(0, 15, newSerialPairMask);
 
     showSeqwencerTargets = shouldShowSeqwencerTargets;
     auto& header = parameterTable.getHeader();
@@ -344,9 +364,9 @@ void MacroMappingsView::setParameters(
 
     helpLabel.setText(
         showSeqwencerTargets
-            ? (serialMode
-                   ? "Mapped pauses or resumes a Macro. SERIAL mirrors A/B as one 64-step target; Replace keeps the Macro number and X deletes it."
-                   : "Mapped pauses or resumes a Macro. A/B are independent Seqwencer targets; Replace keeps the Macro number and X deletes it.")
+            ? (serialPairMask != 0
+                   ? "Mapped pauses or resumes a Macro. A-H are arranged as four pairs; each pair in SERIAL mirrors its two target buttons. Replace keeps the Macro number and X deletes it."
+                   : "Mapped pauses or resumes a Macro. A-H are independent Seqwencer targets arranged as four pairs. Replace keeps the Macro number and X deletes it.")
             : "Mapped assigns the next free Macro or pauses/resumes it. Replace keeps the Macro number; X permanently deletes the assignment.",
         juce::dontSendNotification);
 
@@ -485,7 +505,7 @@ juce::Component* MacroMappingsView::refreshComponentForCell(
             delete existingComponentToUpdate;
             cell = new TargetsCell(*this);
         }
-        cell->setEntry(*entry, serialMode);
+        cell->setEntry(*entry, serialPairMask);
         return cell;
     }
 
@@ -561,10 +581,21 @@ int MacroMappingsView::compareEntries(const ParameterEntry& first,
     }
     else if (sortColumn == targetsColumn)
     {
-        const auto firstMask = (first.targetA ? 1 : 0)
-            | ((serialMode ? first.targetA : first.targetB) ? 2 : 0);
-        const auto secondMask = (second.targetA ? 1 : 0)
-            | ((serialMode ? second.targetA : second.targetB) ? 2 : 0);
+        const auto visibleMask = [this](const ParameterEntry& entry)
+        {
+            auto mask = 0;
+            for (int lane = 0; lane < 8; ++lane)
+            {
+                const auto pair = lane / 2;
+                const auto storedLane = (serialPairMask & (1 << pair)) != 0
+                    ? pair * 2 : lane;
+                if (entry.targets[static_cast<std::size_t>(storedLane)])
+                    mask |= 1 << lane;
+            }
+            return mask;
+        };
+        const auto firstMask = visibleMask(first);
+        const auto secondMask = visibleMask(second);
         result = firstMask - secondMask;
     }
     else if (sortColumn == macroColumn)

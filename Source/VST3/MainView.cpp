@@ -173,12 +173,12 @@ namespace
 
         SeqwencerTargetBrowserContent(
             juce::Array<Choice> choicesIn,
-            bool serialModeIn,
+            int serialPairMaskIn,
             RefreshCallback refreshCallbackIn,
             TargetCallback targetCallbackIn,
             DeleteCallback deleteCallbackIn)
             : choices(std::move(choicesIn)),
-              serialMode(serialModeIn),
+              serialPairMask(juce::jlimit(0, 15, serialPairMaskIn)),
               refreshCallback(std::move(refreshCallbackIn)),
               targetCallback(std::move(targetCallbackIn)),
               deleteCallback(std::move(deleteCallbackIn))
@@ -191,11 +191,11 @@ namespace
             addAndMakeVisible(titleLabel);
 
             helpLabel.setText(
-                serialMode
-                    ? "SERIAL shares one 64-step target list. A and B mirror; "
-                      "your separate B assignments remain saved for Parallel."
-                    : "Tick A or B independently. Header clicks sort only; "
-                      "click the X beside a Macro to delete it.",
+                serialPairMask != 0
+                    ? "A-H form four pairs. Each SERIAL pair mirrors its two "
+                      "buttons; Parallel assignments remain saved."
+                    : "Tick A-H independently. Header clicks sort only; click "
+                      "the X beside a Macro to delete it.",
                 juce::dontSendNotification);
             helpLabel.setColour(juce::Label::textColourId,
                                 juce::Colours::lightgrey);
@@ -226,7 +226,7 @@ namespace
             header.addColumn("Tab", tabColumn, 58, 48, 90);
             header.addColumn("Plugin", pluginColumn, 235, 120, 420);
             header.addColumn("Parameter", parameterColumn, 365, 150, 600);
-            header.addColumn("Targets", targetsColumn, 130, 110, 170);
+            header.addColumn("Targets", targetsColumn, 304, 272, 360);
             header.addColumn("Macro", macroColumn, 104, 92, 130);
             header.setSortColumnId(tabColumn, true);
             addAndMakeVisible(parameterTable);
@@ -240,7 +240,7 @@ namespace
             addAndMakeVisible(closeButton);
 
             rebuildFilter();
-            setSize(940, 520);
+            setSize(1120, 520);
         }
 
         void paint(juce::Graphics& g) override
@@ -294,18 +294,26 @@ namespace
             explicit TargetsCell(SeqwencerTargetBrowserContent& ownerIn)
                 : owner(ownerIn)
             {
-                configureButton(buttonA, "A", juce::Colour(0xFF57D6D0));
-                configureButton(buttonB, "B", juce::Colour(0xFFFFA24C));
-                buttonA.onClick = [this]
+                for (int lane = 0; lane < 8; ++lane)
                 {
-                    owner.changeTarget(choice, 0, buttonA.getToggleState());
-                };
-                buttonB.onClick = [this]
-                {
-                    owner.changeTarget(choice, 1, buttonB.getToggleState());
-                };
-                addAndMakeVisible(buttonA);
-                addAndMakeVisible(buttonB);
+                    auto button = std::make_unique<juce::ToggleButton>();
+                    configureButton(
+                        *button,
+                        juce::String::charToString(
+                            static_cast<juce::juce_wchar>('A' + lane)),
+                        juce::Colour((lane & 1) == 0
+                                         ? 0xFF57D6D0 : 0xFFFFA24C));
+                    button->onClick = [this, lane]
+                    {
+                        owner.changeTarget(
+                            choice, lane,
+                            buttons[static_cast<std::size_t>(lane)]
+                                ->getToggleState());
+                    };
+                    addAndMakeVisible(*button);
+                    buttons[static_cast<std::size_t>(lane)] =
+                        std::move(button);
+                }
             }
 
             void paint(juce::Graphics& g) override
@@ -316,25 +324,37 @@ namespace
                                    (float) getHeight() - 2.0f);
             }
 
-            void setChoice(const Choice& newChoice, bool isSerial)
+            void setChoice(const Choice& newChoice, int serialPairMask)
             {
                 choice = newChoice;
-                const auto stateA = choice.targetA;
-                const auto stateB = isSerial ? stateA : choice.targetB;
-                buttonA.setToggleState(stateA, juce::dontSendNotification);
-                buttonB.setToggleState(stateB, juce::dontSendNotification);
-                buttonA.setTooltip(isSerial
-                    ? "Shared Seqwencer SERIAL target" : "Seqwencer A target");
-                buttonB.setTooltip(isSerial
-                    ? "Shared Seqwencer SERIAL target" : "Seqwencer B target");
+                for (int lane = 0; lane < 8; ++lane)
+                {
+                    const auto pair = lane / 2;
+                    const auto serial = (serialPairMask & (1 << pair)) != 0;
+                    const auto storedLane = serial ? pair * 2 : lane;
+                    auto* button = buttons[static_cast<std::size_t>(lane)].get();
+                    button->setToggleState(
+                        choice.targets[static_cast<std::size_t>(storedLane)],
+                        juce::dontSendNotification);
+                    const auto laneName = juce::String::charToString(
+                        static_cast<juce::juce_wchar>('A' + lane));
+                    button->setTooltip(serial
+                        ? "Shared Seqwencer SERIAL pair target"
+                        : "Seqwencer " + laneName + " target");
+                }
             }
 
             void resized() override
             {
-                auto area = getLocalBounds().reduced(6, 1);
-                const auto half = area.getWidth() / 2;
-                buttonA.setBounds(area.removeFromLeft(half));
-                buttonB.setBounds(area);
+                auto area = getLocalBounds().reduced(4, 1);
+                for (int lane = 0; lane < 8; ++lane)
+                {
+                    const auto remaining = 8 - lane;
+                    const auto width = remaining > 1
+                        ? area.getWidth() / remaining : area.getWidth();
+                    buttons[static_cast<std::size_t>(lane)]->setBounds(
+                        area.removeFromLeft(width));
+                }
             }
 
         private:
@@ -353,8 +373,7 @@ namespace
 
             SeqwencerTargetBrowserContent& owner;
             Choice choice;
-            juce::ToggleButton buttonA;
-            juce::ToggleButton buttonB;
+            std::array<std::unique_ptr<juce::ToggleButton>, 8> buttons;
         };
 
         class MacroCell final : public juce::Component
@@ -538,7 +557,7 @@ namespace
                 }
 
                 if (const auto* choice = getChoiceForRow(rowNumber))
-                    cell->setChoice(*choice, serialMode);
+                    cell->setChoice(*choice, serialPairMask);
                 return cell;
             }
 
@@ -576,10 +595,22 @@ namespace
                 result = first.parameterName.compareNatural(second.parameterName);
             else if (sortColumn == targetsColumn)
             {
-                const auto firstMask = (first.targetA ? 1 : 0)
-                    | ((serialMode ? first.targetA : first.targetB) ? 2 : 0);
-                const auto secondMask = (second.targetA ? 1 : 0)
-                    | ((serialMode ? second.targetA : second.targetB) ? 2 : 0);
+                const auto visibleMask = [this](const Choice& choice)
+                {
+                    auto mask = 0;
+                    for (int lane = 0; lane < 8; ++lane)
+                    {
+                        const auto pair = lane / 2;
+                        const auto storedLane =
+                            (serialPairMask & (1 << pair)) != 0
+                                ? pair * 2 : lane;
+                        if (choice.targets[static_cast<std::size_t>(storedLane)])
+                            mask |= 1 << lane;
+                    }
+                    return mask;
+                };
+                const auto firstMask = visibleMask(first);
+                const auto secondMask = visibleMask(second);
                 result = firstMask - secondMask;
             }
             else if (sortColumn == macroColumn)
@@ -705,7 +736,7 @@ namespace
 
         juce::Array<Choice> choices;
         juce::Array<int> filteredChoiceIndices;
-        bool serialMode = false;
+        int serialPairMask = 0;
         int sortColumn = tabColumn;
         bool sortForwards = true;
         RefreshCallback refreshCallback;
@@ -2706,7 +2737,7 @@ MainView::MainView(PolyHostPluginProcessor& processorIn,
                 entry.parameterIndex,
                 lane,
                 assigned,
-                core.getSeqwencerSerialMode(),
+                core.getSeqwencerSerialPairMask(),
                 &errorMessage))
         {
             return false;
@@ -3361,11 +3392,11 @@ void MainView::timerCallback()
             controllerDisplayValue);
     }
 
-    auto seqwencerSerialMode = false;
+    auto seqwencerSerialPairMask = 0;
     if (processor.getCore().consumeSeqwencerTargetBrowserRequest(
-            seqwencerSerialMode))
+            seqwencerSerialPairMask))
     {
-        showSeqwencerTargetBrowser(seqwencerSerialMode);
+        showSeqwencerTargetBrowser(seqwencerSerialPairMask);
     }
 
     const auto currentTimeMs =
@@ -6481,15 +6512,14 @@ void MainView::refreshMacroMappingsView()
         entry.parameterName = choice.parameterName;
         entry.macroIndex = choice.macroIndex;
         entry.mappingEnabled = choice.mappingEnabled;
-        entry.targetA = choice.targetA;
-        entry.targetB = choice.targetB;
+        entry.targets = choice.targets;
         parameterEntries.add(std::move(entry));
     }
 
     macroMappingsView.setParameters(
         parameterEntries,
         core.hasLoadedSeqwencer(),
-        core.getSeqwencerSerialMode());
+        core.getSeqwencerSerialPairMask());
     macroMappingsView.setUndoAvailable(core.hasMacroMappingsUndoState());
 }
 
@@ -7294,9 +7324,9 @@ void MainView::showPluginDiagnosticsDialog(int tabIndex)
     }
 }
 
-void MainView::showSeqwencerTargetBrowser(bool serialMode)
+void MainView::showSeqwencerTargetBrowser(int serialPairMask)
 {
-    juce::ignoreUnused(serialMode);
+    juce::ignoreUnused(serialPairMask);
 
     // Seqwencer's TARGET request now opens the same integrated parameter
     // table as PHI's Macro Mappings toolbar button. The bridge packet has

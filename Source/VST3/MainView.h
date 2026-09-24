@@ -615,7 +615,7 @@ private:
     void refreshPointerControlTarget();
     void showPointerControlSettingsDialog();
     void showMidiOutputSettingsDialog();
-    void showSeqwencerTargetBrowser(bool serialMode);
+    void showSeqwencerTargetBrowser(int serialPairMask);
     void showAboutDialog();
     void buildAndStorePresetLoadReport(const juce::File& file,
                                        const SessionData& sessionData,
