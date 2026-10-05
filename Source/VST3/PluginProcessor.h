@@ -127,6 +127,8 @@ public:
         StandaloneAudioExtension* extension);
 
 private:
+    static BusesProperties createBusesProperties();
+
     class HostedPlayHeadProxy final : public juce::AudioPlayHead
     {
     public:
@@ -207,6 +209,7 @@ private:
     std::vector<MacroParameter*> macroParameters;
     juce::MidiBuffer processorMidiInputScratchBuffer;
     juce::MidiBuffer midiOutputResetScratchBuffer;
+    juce::AudioBuffer<float> processorMainAudioScratchBuffer;
     juce::AudioProcessLoadMeasurer audioProcessLoadMeasurer;
     std::atomic<int> pendingMidiKeyboardPitchBend { -1 };
     std::atomic<int> midiKeyboardPitchBendRangeSemitones { 12 };

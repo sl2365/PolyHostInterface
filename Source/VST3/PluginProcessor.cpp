@@ -228,10 +228,28 @@ void PolyHostPluginProcessor::initialiseMacroParameters()
     }
 }
 
+juce::AudioProcessor::BusesProperties
+PolyHostPluginProcessor::createBusesProperties()
+{
+    auto buses = BusesProperties()
+        .withInput("Input", juce::AudioChannelSet::stereo(), true)
+        .withOutput("MAIN", juce::AudioChannelSet::stereo(), true);
+
+    for (int auxIndex = 0;
+         auxIndex < PluginCore::advancedAuxOutputCount;
+         ++auxIndex)
+    {
+        buses = buses.withOutput(
+            "AUX " + juce::String(auxIndex + 1),
+            juce::AudioChannelSet::stereo(),
+            false);
+    }
+
+    return buses;
+}
+
 PolyHostPluginProcessor::PolyHostPluginProcessor()
-    : juce::AudioProcessor(BusesProperties()
-                           .withInput("Input", juce::AudioChannelSet::stereo(), true)
-                           .withOutput("Output", juce::AudioChannelSet::stereo(), true))
+    : juce::AudioProcessor(createBusesProperties())
 {
     initialiseMacroParameters();
 
@@ -330,6 +348,14 @@ void PolyHostPluginProcessor::prepareToPlay(double sampleRate,
     pendingMidiKeyboardModulationDisplay.store(-1, std::memory_order_relaxed);
     audioProcessLoadMeasurer.reset(sampleRate, samplesPerBlock);
     hostedPlayHeadProxy.prepareToPlay(sampleRate);
+
+    processorMainAudioScratchBuffer.setSize(
+        2,
+        juce::jmax(1, samplesPerBlock),
+        false,
+        true,
+        false);
+    processorMainAudioScratchBuffer.clear();
 
     core.prepareToPlay(sampleRate, samplesPerBlock);
 
@@ -508,6 +534,32 @@ void PolyHostPluginProcessor::processBlock(
 
     juce::ScopedNoDenormals noDenormals;
 
+    const int numSamples = buffer.getNumSamples();
+    processorMainAudioScratchBuffer.setSize(
+        2,
+        numSamples,
+        false,
+        false,
+        true);
+    processorMainAudioScratchBuffer.clear();
+
+    auto mainInputBus = getBusBuffer(buffer, true, 0);
+    const int mainInputChannels =
+        juce::jmin(2, mainInputBus.getNumChannels());
+
+    for (int channel = 0;
+         channel < mainInputChannels;
+         ++channel)
+    {
+        processorMainAudioScratchBuffer.copyFrom(
+            channel,
+            0,
+            mainInputBus,
+            channel,
+            0,
+            numSamples);
+    }
+
     for (auto i = getTotalNumInputChannels();
          i < getTotalNumOutputChannels();
          ++i)
@@ -553,9 +605,40 @@ void PolyHostPluginProcessor::processBlock(
     hostedPlayHeadProxy.updateFrom(getPlayHead());
 
     core.processBlock(
-        buffer,
+        processorMainAudioScratchBuffer,
         midiMessages,
         &hostedPlayHeadProxy);
+
+    for (int outputBusIndex = 0;
+         outputBusIndex < getBusCount(false);
+         ++outputBusIndex)
+    {
+        auto outputBus =
+            getBusBuffer(buffer, false, outputBusIndex);
+        outputBus.clear();
+
+        const auto& source =
+            outputBusIndex == 0
+                ? processorMainAudioScratchBuffer
+                : core.getAuxOutputBuffer(
+                    outputBusIndex - 1);
+
+        const int channels =
+            juce::jmin(outputBus.getNumChannels(),
+                       source.getNumChannels());
+
+        for (int channel = 0;
+             channel < channels;
+             ++channel)
+        {
+            outputBus.copyFrom(channel,
+                               0,
+                               source,
+                               channel,
+                               0,
+                               numSamples);
+        }
+    }
 
     const auto coreEndTicks =
         juce::Time::getHighResolutionTicks();
@@ -781,16 +864,29 @@ void PolyHostPluginProcessor::changeProgramName(int index, const juce::String& n
 bool PolyHostPluginProcessor::isBusesLayoutSupported(const BusesLayout& layouts) const
 {
     const auto inputSet = layouts.getMainInputChannelSet();
-    const auto outputSet = layouts.getMainOutputChannelSet();
+    const auto mainOutputSet = layouts.getMainOutputChannelSet();
 
     const bool inputOk =
         inputSet == juce::AudioChannelSet::mono()
         || inputSet == juce::AudioChannelSet::stereo();
 
-    const bool outputOk =
-        outputSet == juce::AudioChannelSet::stereo();
+    if (mainOutputSet != juce::AudioChannelSet::stereo())
+        return false;
 
-    return inputOk && outputOk;
+    for (int busIndex = 1;
+         busIndex < layouts.outputBuses.size();
+         ++busIndex)
+    {
+        const auto& outputSet = layouts.outputBuses.getReference(busIndex);
+
+        if (! outputSet.isDisabled()
+            && outputSet != juce::AudioChannelSet::stereo())
+        {
+            return false;
+        }
+    }
+
+    return inputOk;
 }
 
 void PolyHostPluginProcessor::getStateInformation(juce::MemoryBlock& destData)

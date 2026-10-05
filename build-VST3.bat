@@ -73,6 +73,17 @@ set "CMAKE_GENERATOR_PLATFORM="
 set "CMAKE_GENERATOR_TOOLSET="
 
 set "ROOT=%~dp0"
+set "VERSION_FILE=%ROOT%Source\VST3\CMakeLists.txt"
+set "POLYHOST_VERSION="
+for /f "tokens=2" %%V in ('findstr /C:"set(POLYHOST_VERSION " "%VERSION_FILE%"') do set "POLYHOST_VERSION=%%V"
+set "POLYHOST_VERSION=%POLYHOST_VERSION:"=%"
+set "POLYHOST_VERSION=%POLYHOST_VERSION:)=%"
+if not defined POLYHOST_VERSION (
+    echo ERROR: Could not read POLYHOST_VERSION from:
+    echo %VERSION_FILE%
+    if not defined PHI_BUILD_CAPTURE pause
+    exit /b 1
+)
 set "TOOLS=%ROOT%..\_Tools"
 set "CMAKE=%TOOLS%\cmake\_4.4.2\bin\cmake.exe"
 set "BUILD_DIR=%ROOT%build-VST3"
@@ -84,9 +95,8 @@ set "FINAL_PLUGIN=%DIST_DIR%\%PLUGIN_NAME%"
 set "APP_NAME=savihost.exe"
 set "MIDI_ROUTING_TEST=%BUILD_DIR%\Release\PhiHostedMidiRoutingTests.exe"
 
-echo.
 echo ============================================================
-echo PolyHost - VST3 Plugin Build Script
+echo PolyHost - VST3 Plugin Build Script - Building v%POLYHOST_VERSION%
 echo ============================================================
 echo.
 

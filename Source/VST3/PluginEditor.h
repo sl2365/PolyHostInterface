@@ -24,9 +24,7 @@ private:
 
     static constexpr int defaultWidth = 800;
     static constexpr int defaultHeight = 500;
-    static constexpr int routingWidth = 800;
     static constexpr int macroMappingsWidth = 922;
-    static constexpr int routingHeight = 500;
     static constexpr int minWidth = 500;
     static constexpr int minHeight = 300;
     static constexpr int maxWidth = 1600;
@@ -38,7 +36,10 @@ private:
 
     PolyHostPluginProcessor& audioProcessor;
     MainView mainView;
-    int routingViewHeight = routingHeight;
+    int simpleRoutingViewWidth = 800;
+    int simpleRoutingViewHeight = 500;
+    int advancedRoutingViewWidth = 1100;
+    int advancedRoutingViewHeight = 700;
     int macroMappingsViewHeight = 587;
     bool applyingRoutingViewSize = false;
     bool applyingMacroMappingsViewSize = false;

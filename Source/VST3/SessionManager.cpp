@@ -44,11 +44,30 @@ std::unique_ptr<juce::XmlElement> SessionManager::createXmlFromSessionData(const
     presetXml->setAttribute("name", session.name);
     presetXml->setAttribute("hostTempoBpm", session.hostTempoBpm);
     presetXml->setAttribute("selectedTabIndex", session.selectedTabIndex);
+    presetXml->setAttribute("routingMode",
+                            session.routingMode == RoutingMode::Advanced
+                                ? "Advanced"
+                                : "Simple");
+    presetXml->setAttribute("advancedRoutingInitialised",
+                            session.advancedRoutingInitialised);
+    presetXml->setAttribute("hasSimpleRoutingViewSize",
+                            session.hasSimpleRoutingViewSize);
+    presetXml->setAttribute("simpleRoutingViewWidth",
+                            session.simpleRoutingViewWidth);
+    presetXml->setAttribute("simpleRoutingViewHeight",
+                            session.simpleRoutingViewHeight);
+    presetXml->setAttribute("hasAdvancedRoutingViewSize",
+                            session.hasAdvancedRoutingViewSize);
+    presetXml->setAttribute("advancedRoutingViewWidth",
+                            session.advancedRoutingViewWidth);
+    presetXml->setAttribute("advancedRoutingViewHeight",
+                            session.advancedRoutingViewHeight);
 
     for (auto& tab : session.tabs)
     {
         auto tabXml = std::make_unique<juce::XmlElement>("Tab");
         tabXml->setAttribute("index", tab.index);
+        tabXml->setAttribute("routingId", tab.routingId);
         tabXml->setAttribute("type", slotTypeToString(tab.type));
         tabXml->setAttribute("tabName", tab.tabName);
         tabXml->setAttribute("bypassed", tab.bypassed);
@@ -96,6 +115,32 @@ std::unique_ptr<juce::XmlElement> SessionManager::createXmlFromSessionData(const
         presetXml->addChildElement(tabXml.release());
     }
 
+    if (session.advancedRoutingInitialised)
+    {
+        auto* routingXml =
+            presetXml->createNewChildElement("AdvancedRouting");
+
+        for (const auto& connection :
+             session.advancedRoutingConnections)
+        {
+            auto* connectionXml =
+                routingXml->createNewChildElement("Connection");
+            connectionXml->setAttribute("source",
+                                        connection.sourceNodeId);
+            connectionXml->setAttribute("destination",
+                                        connection.destinationNodeId);
+        }
+
+        for (const auto& position :
+             session.advancedRoutingNodePositions)
+        {
+            auto* nodeXml = routingXml->createNewChildElement("Node");
+            nodeXml->setAttribute("id", position.nodeId);
+            nodeXml->setAttribute("x", position.x);
+            nodeXml->setAttribute("y", position.y);
+        }
+    }
+
     if (! session.macroMappings.isEmpty())
     {
         auto* macroMappingsXml = presetXml->createNewChildElement("MacroMappings");
@@ -131,6 +176,28 @@ bool SessionManager::restoreSessionDataFromXml(const juce::XmlElement& xml,
     session.name = xml.getStringAttribute("name", "Untitled");
     session.hostTempoBpm = xml.getDoubleAttribute("hostTempoBpm", 120.0);
     session.selectedTabIndex = juce::jmax(0, xml.getIntAttribute("selectedTabIndex", 0));
+    session.routingMode =
+        xml.getStringAttribute("routingMode", "Simple") == "Advanced"
+            ? RoutingMode::Advanced
+            : RoutingMode::Simple;
+    session.advancedRoutingInitialised =
+        xml.getBoolAttribute("advancedRoutingInitialised", false);
+    session.hasSimpleRoutingViewSize =
+        xml.getBoolAttribute("hasSimpleRoutingViewSize", false);
+    session.simpleRoutingViewWidth =
+        juce::jmax(500,
+                   xml.getIntAttribute("simpleRoutingViewWidth", 800));
+    session.simpleRoutingViewHeight =
+        juce::jmax(300,
+                   xml.getIntAttribute("simpleRoutingViewHeight", 500));
+    session.hasAdvancedRoutingViewSize =
+        xml.getBoolAttribute("hasAdvancedRoutingViewSize", false);
+    session.advancedRoutingViewWidth =
+        juce::jmax(700,
+                   xml.getIntAttribute("advancedRoutingViewWidth", 1100));
+    session.advancedRoutingViewHeight =
+        juce::jmax(450,
+                   xml.getIntAttribute("advancedRoutingViewHeight", 700));
 
     for (auto* tabXml : xml.getChildIterator())
     {
@@ -139,6 +206,7 @@ bool SessionManager::restoreSessionDataFromXml(const juce::XmlElement& xml,
 
         SessionTabData tab;
         tab.index = tabXml->getIntAttribute("index", session.tabs.size());
+        tab.routingId = tabXml->getStringAttribute("routingId").trim();
         tab.type = slotTypeFromString(tabXml->getStringAttribute("type", "Empty"));
         tab.tabName = tabXml->getStringAttribute("tabName", "Empty");
         tab.bypassed = tabXml->getBoolAttribute("bypassed", false);
@@ -191,6 +259,40 @@ bool SessionManager::restoreSessionDataFromXml(const juce::XmlElement& xml,
                      || tab.plugin.pluginPathDriveFlexible.isNotEmpty();
 
         session.tabs.add(tab);
+    }
+
+    if (auto* routingXml = xml.getChildByName("AdvancedRouting"))
+    {
+        session.advancedRoutingInitialised = true;
+
+        for (auto* childXml : routingXml->getChildIterator())
+        {
+            if (childXml->hasTagName("Connection"))
+            {
+                AdvancedRoutingConnection connection;
+                connection.sourceNodeId =
+                    childXml->getStringAttribute("source").trim();
+                connection.destinationNodeId =
+                    childXml->getStringAttribute("destination").trim();
+
+                if (connection.sourceNodeId.isNotEmpty()
+                    && connection.destinationNodeId.isNotEmpty())
+                {
+                    session.advancedRoutingConnections.add(connection);
+                }
+            }
+            else if (childXml->hasTagName("Node"))
+            {
+                AdvancedRoutingNodePosition position;
+                position.nodeId =
+                    childXml->getStringAttribute("id").trim();
+                position.x = childXml->getIntAttribute("x", 0);
+                position.y = childXml->getIntAttribute("y", 0);
+
+                if (position.nodeId.isNotEmpty())
+                    session.advancedRoutingNodePositions.add(position);
+            }
+        }
     }
 
     if (auto* macroMappingsXml = xml.getChildByName("MacroMappings"))

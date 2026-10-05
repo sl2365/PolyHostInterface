@@ -6,6 +6,7 @@
 #include "SessionManager.h"
 #include "AppSettings.h"
 #include "RoutingView.h"
+#include "AdvancedRoutingView.h"
 #include "MacroMappingsView.h"
 #include "RecordingView.h"
 #include "PointerControl.h"
@@ -78,6 +79,7 @@ public:
     {
         return showingRoutingView;
     }
+    bool isShowingAdvancedRoutingView() const noexcept;
     juce::Point<int> getHostedEditorLocalPointFromScreen(juce::Point<int> screenPoint) const;
     juce::Point<int> getHostedEditorScreenPointFromLocal(juce::Point<int> localPoint) const;
 
@@ -592,6 +594,7 @@ private:
     void pollPointerMapMouseButtonSwitching();
     void rebuildTabButtons();
     void rebuildRoutingView();
+    void rebuildAdvancedRoutingView();
     void updateTabScrollButtonState();
     void selectTab(int tabIndex);
     void clearTab(int tabIndex);
@@ -602,6 +605,7 @@ private:
     void showPluginDiagnosticsDialog(int tabIndex);
     void dismissMidiAssignmentsPopup();
     void toggleRoutingView();
+    void showRoutingMode(RoutingMode mode);
     void handleToggleSolo(int tabIndex);
     void clearAllSolos();
     void mapLastTouchedParameterToMacro();
@@ -709,6 +713,7 @@ private:
     juce::Label contentPlaceholder;
     juce::TextEditor pluginIssueMessageEditor;
     RoutingView routingView;
+    AdvancedRoutingView advancedRoutingView;
     MacroMappingsView macroMappingsView;
     RecordingView recordingView;
     MidiKeyboardPanel midiKeyboardPanel;

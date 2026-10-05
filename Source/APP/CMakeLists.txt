@@ -118,6 +118,8 @@ target_sources(PolyHost PRIVATE
     "${PHI_SHARED_SOURCE_DIR}/PointerSettingsDialogue.h"
     "${PHI_SHARED_SOURCE_DIR}/RoutingView.cpp"
     "${PHI_SHARED_SOURCE_DIR}/RoutingView.h"
+    "${PHI_SHARED_SOURCE_DIR}/AdvancedRoutingView.cpp"
+    "${PHI_SHARED_SOURCE_DIR}/AdvancedRoutingView.h"
     "${PHI_SHARED_SOURCE_DIR}/MacroMappingsView.cpp"
     "${PHI_SHARED_SOURCE_DIR}/MacroMappingsView.h"
     "${PHI_SHARED_SOURCE_DIR}/AudioRecordingController.cpp"

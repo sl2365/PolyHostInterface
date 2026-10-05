@@ -3182,6 +3182,18 @@ public:
             application->systemRequestedQuit();
     }
 
+    void moved() override
+    {
+        juce::DocumentWindow::moved();
+        keepNativeTitleBarOnScreen();
+    }
+
+    void resized() override
+    {
+        juce::DocumentWindow::resized();
+        keepNativeTitleBarOnScreen();
+    }
+
     void savePluginState()
     {
         if (pluginHolder != nullptr)
@@ -3220,6 +3232,48 @@ public:
     }
 
 private:
+    void keepNativeTitleBarOnScreen()
+    {
+        if (adjustingWindowPosition
+            || ! isShowing()
+            || isMinimised()
+            || isFullScreen())
+        {
+            return;
+        }
+
+        const auto windowScreenBounds = getScreenBounds();
+        const auto& displays = juce::Desktop::getInstance().getDisplays();
+        const auto* display =
+            displays.getDisplayForRect(windowScreenBounds);
+
+        if (display == nullptr)
+            return;
+
+        auto nativeFrameTop = 0;
+
+        if (auto* peer = getPeer())
+        {
+            if (const auto frameSize = peer->getFrameSizeIfPresent())
+                nativeFrameTop = frameSize->getTop();
+        }
+
+        const auto usableDisplayBounds =
+            display->userBounds.getLargestIntegerWithin();
+        const auto nativeTitleBarTop =
+            windowScreenBounds.getY() - nativeFrameTop;
+
+        if (nativeTitleBarTop >= usableDisplayBounds.getY())
+            return;
+
+        const auto downwardAdjustment =
+            usableDisplayBounds.getY() - nativeTitleBarTop;
+        const juce::ScopedValueSetter<bool> positionGuard(
+            adjustingWindowPosition, true);
+
+        setTopLeftPosition(getX(), getY() + downwardAdjustment);
+    }
+
     void restoreMidiInputState(const AppSettings& settings)
     {
         if (pluginHolder == nullptr)
@@ -3270,6 +3324,7 @@ private:
     StandaloneMenuExtension menuExtension;
     PolyHostPluginProcessor* processor = nullptr;
     MainView* mainView = nullptr;
+    bool adjustingWindowPosition = false;
 };
 
 class PolyHostStandaloneApplication final : public juce::JUCEApplication

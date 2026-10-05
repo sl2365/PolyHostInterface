@@ -68,6 +68,17 @@ set "CMAKE_GENERATOR_PLATFORM="
 set "CMAKE_GENERATOR_TOOLSET="
 
 set "ROOT=%~dp0"
+set "VERSION_FILE=%ROOT%Source\VST3\CMakeLists.txt"
+set "POLYHOST_VERSION="
+for /f "tokens=2" %%V in ('findstr /C:"set(POLYHOST_VERSION " "%VERSION_FILE%"') do set "POLYHOST_VERSION=%%V"
+set "POLYHOST_VERSION=%POLYHOST_VERSION:"=%"
+set "POLYHOST_VERSION=%POLYHOST_VERSION:)=%"
+if not defined POLYHOST_VERSION (
+    echo ERROR: Could not read POLYHOST_VERSION from:
+    echo %VERSION_FILE%
+    if not defined PHI_BUILD_CAPTURE pause
+    exit /b 1
+)
 for %%I in ("%ROOT%..") do set "PROJECTS_ROOT=%%~fI"
 set "TOOLS=%PROJECTS_ROOT%\_Tools"
 set "CMAKE=%TOOLS%\cmake\_4.4.2\bin\cmake.exe"
@@ -77,9 +88,8 @@ set "EXENAME=PolyHostInterface.exe"
 set "FINAL_EXE=%DIST_DIR%\%EXENAME%"
 set "VST2_SDK=%TOOLS%\vstsdk2.4"
 
-echo.
 echo ============================================================
-echo PolyHost - Standalone App - Build Script
+echo PolyHost - Standalone App - Build Script - Building v%POLYHOST_VERSION%
 echo ============================================================
 echo.
 

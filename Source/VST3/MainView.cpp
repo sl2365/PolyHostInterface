@@ -2533,6 +2533,9 @@ MainView::MainView(PolyHostPluginProcessor& processorIn,
     addAndMakeVisible(routingView);
     routingView.setVisible(false);
 
+    addAndMakeVisible(advancedRoutingView);
+    advancedRoutingView.setVisible(false);
+
     addAndMakeVisible(macroMappingsView);
     macroMappingsView.setVisible(false);
 
@@ -2684,6 +2687,11 @@ MainView::MainView(PolyHostPluginProcessor& processorIn,
         repaint();
     };
 
+    routingView.onShowAdvanced = [this]
+    {
+        showRoutingMode(RoutingMode::Advanced);
+    };
+
     routingView.onSetPointerAdjustMethodOverride = [this](int tabIndex, int methodOverride)
     {
         processor.getCore().setTabPointerAdjustMethodOverride(tabIndex, methodOverride);
@@ -2695,6 +2703,123 @@ MainView::MainView(PolyHostPluginProcessor& processorIn,
     {
         processor.getCore().setTabOutputGainDb(tabIndex, gainDb);
     };
+
+    advancedRoutingView.onShowSimple = [this]
+    {
+        showRoutingMode(RoutingMode::Simple);
+    };
+
+    advancedRoutingView.onAddConnection =
+        [this](const juce::String& sourceNodeId,
+               const juce::String& destinationNodeId,
+               juce::String& errorMessage)
+        {
+            const bool added =
+                processor.getCore().addAdvancedRoutingConnection(
+                    sourceNodeId,
+                    destinationNodeId,
+                    &errorMessage);
+
+            if (added)
+            {
+                rebuildAdvancedRoutingView();
+                repaint();
+            }
+
+            return added;
+        };
+
+    advancedRoutingView.onRemoveConnection =
+        [this](const juce::String& sourceNodeId,
+               const juce::String& destinationNodeId)
+        {
+            if (processor.getCore().removeAdvancedRoutingConnection(
+                    sourceNodeId,
+                    destinationNodeId))
+            {
+                rebuildAdvancedRoutingView();
+                repaint();
+            }
+        };
+
+    advancedRoutingView.onReconnectConnection =
+        [this](const juce::String& oldSourceNodeId,
+               const juce::String& oldDestinationNodeId,
+               const juce::String& newSourceNodeId,
+               const juce::String& newDestinationNodeId,
+               juce::String& errorMessage)
+        {
+            const bool reconnected =
+                processor.getCore().reconnectAdvancedRoutingConnection(
+                    oldSourceNodeId,
+                    oldDestinationNodeId,
+                    newSourceNodeId,
+                    newDestinationNodeId,
+                    &errorMessage);
+
+            if (reconnected)
+            {
+                rebuildAdvancedRoutingView();
+                repaint();
+            }
+
+            return reconnected;
+        };
+
+    advancedRoutingView.onClearConnections = [this]
+    {
+        processor.getCore().clearAdvancedRoutingConnections();
+        rebuildAdvancedRoutingView();
+        showTemporaryStatusMessage(
+            "Advanced routing cables cleared");
+        repaint();
+    };
+
+    advancedRoutingView.onNodeMoved =
+        [this](const juce::String& nodeId,
+               juce::Point<int> position)
+        {
+            processor.getCore().setAdvancedRoutingNodePosition(
+                nodeId,
+                position);
+        };
+
+    advancedRoutingView.onAutoLayout = [this]
+    {
+        auto& core = processor.getCore();
+        core.setAdvancedRoutingNodePosition(
+            PluginCore::advancedAudioInputNodeId,
+            { 40, 80 });
+
+        int pluginRow = 0;
+        for (int i = 0; i < core.getNumTabs(); ++i)
+        {
+            if (core.getTabModel().getTab(i).type
+                == PluginSlotType::Empty)
+            {
+                continue;
+            }
+
+            core.setAdvancedRoutingNodePosition(
+                core.getTabRoutingId(i),
+                { 330, 50 + pluginRow * 90 });
+            ++pluginRow;
+        }
+
+        core.setAdvancedRoutingNodePosition(
+            PluginCore::advancedMainOutputNodeId,
+            { 720, 50 });
+
+        rebuildAdvancedRoutingView();
+        repaint();
+    };
+
+    advancedRoutingView.onStatusMessage =
+        [this](const juce::String& message)
+        {
+            showTemporaryStatusMessage(message);
+            repaint();
+        };
 
     macroMappingsView.onSetMappingEnabled =
         [this](const MacroMappingsView::ParameterEntry& entry,
@@ -4859,6 +4984,7 @@ void MainView::toggleRecordingView()
     showingRoutingView = false;
     showingMacroMappingsView = false;
     routingView.setVisible(false);
+    advancedRoutingView.setVisible(false);
     macroMappingsView.setVisible(false);
     editorHolder.setVisible(false);
 
@@ -4967,6 +5093,68 @@ void MainView::updateTabScrollButtonState()
 
     scrollTabsLeftButton.repaint();
     scrollTabsRightButton.repaint();
+}
+
+bool MainView::isShowingAdvancedRoutingView() const noexcept
+{
+    return showingRoutingView
+        && processor.getCore().getRoutingMode()
+               == RoutingMode::Advanced;
+}
+
+void MainView::showRoutingMode(RoutingMode mode)
+{
+    auto& core = processor.getCore();
+    const auto previousMode = core.getRoutingMode();
+
+    if (previousMode == mode)
+        return;
+
+    if (auto* parentEditor =
+            findParentComponentOfClass<PolyHostPluginEditor>())
+    {
+        const int keyboardExtraHeight =
+            appSettings.getMidiKeyboardVisible()
+                ? MidiKeyboardPanel::preferredHeight + 8
+                : 0;
+        const int contentHeight =
+            parentEditor->getHeight() - keyboardExtraHeight;
+
+        if (previousMode == RoutingMode::Advanced)
+        {
+            appSettings.setAdvancedRoutingWindowSize(
+                parentEditor->getWidth(),
+                contentHeight);
+            core.setAdvancedRoutingViewSize(
+                parentEditor->getWidth(),
+                contentHeight);
+        }
+        else
+        {
+            appSettings.setRoutingWindowSize(
+                parentEditor->getWidth(),
+                contentHeight);
+            core.setRoutingViewSize(
+                parentEditor->getWidth(),
+                contentHeight);
+        }
+    }
+
+    core.setRoutingMode(mode);
+    rebuildAdvancedRoutingView();
+    routingView.setVisible(
+        showingRoutingView
+        && mode == RoutingMode::Simple);
+    advancedRoutingView.setVisible(
+        showingRoutingView
+        && mode == RoutingMode::Advanced);
+    resized();
+    repaint();
+
+    if (showingRoutingView)
+        if (auto* parentEditor =
+                findParentComponentOfClass<PolyHostPluginEditor>())
+            parentEditor->resizeToRoutingView();
 }
 
 void MainView::toggleRoutingView()
@@ -5117,6 +5305,94 @@ void MainView::rebuildRoutingView()
     }
 
     routingView.setModules(modules);
+}
+
+void MainView::rebuildAdvancedRoutingView()
+{
+    auto& core = processor.getCore();
+
+    if (! core.isAdvancedRoutingInitialised())
+    {
+        advancedRoutingView.setModel({}, {});
+        return;
+    }
+
+    juce::Array<AdvancedRoutingView::NodeEntry> nodes;
+
+    AdvancedRoutingView::NodeEntry inputNode;
+    inputNode.id = PluginCore::advancedAudioInputNodeId;
+    inputNode.label = "AUDIO INPUT";
+    inputNode.subtitle = "Standalone / host input";
+    inputNode.kind = AdvancedRoutingView::NodeKind::AudioInput;
+    inputNode.producesOutput = true;
+    inputNode.position = core.getAdvancedRoutingNodePosition(
+        inputNode.id,
+        { 40, 80 });
+    nodes.add(inputNode);
+
+    int visiblePluginRow = 0;
+    auto& tabModel = core.getTabModel();
+
+    for (int tabIndex = 0;
+         tabIndex < tabModel.getNumTabs();
+         ++tabIndex)
+    {
+        const auto& tab = tabModel.getTab(tabIndex);
+        if (tab.type == PluginSlotType::Empty)
+            continue;
+
+        AdvancedRoutingView::NodeEntry pluginNode;
+        pluginNode.id = core.getTabRoutingId(tabIndex);
+        pluginNode.label = tab.name;
+        pluginNode.subtitle =
+            tab.type == PluginSlotType::Synth
+                ? "SYNTH"
+                : "FX";
+        pluginNode.kind =
+            tab.type == PluginSlotType::Synth
+                ? AdvancedRoutingView::NodeKind::Synth
+                : AdvancedRoutingView::NodeKind::Effect;
+        pluginNode.acceptsInput =
+            tab.type == PluginSlotType::FX;
+        pluginNode.producesOutput = true;
+        pluginNode.position = core.getAdvancedRoutingNodePosition(
+            pluginNode.id,
+            { 330, 50 + visiblePluginRow * 90 });
+        nodes.add(pluginNode);
+        ++visiblePluginRow;
+    }
+
+    AdvancedRoutingView::NodeEntry mainNode;
+    mainNode.id = PluginCore::advancedMainOutputNodeId;
+    mainNode.label = "MAIN";
+    mainNode.subtitle = "Primary stereo output";
+    mainNode.kind = AdvancedRoutingView::NodeKind::Output;
+    mainNode.acceptsInput = true;
+    mainNode.outputBusIndex = 0;
+    mainNode.position = core.getAdvancedRoutingNodePosition(
+        mainNode.id,
+        { 720, 50 });
+    nodes.add(mainNode);
+
+    for (int auxIndex = 0;
+         auxIndex < PluginCore::advancedAuxOutputCount;
+         ++auxIndex)
+    {
+        AdvancedRoutingView::NodeEntry auxNode;
+        auxNode.id =
+            PluginCore::getAdvancedAuxOutputNodeId(auxIndex);
+        auxNode.label = "AUX " + juce::String(auxIndex + 1);
+        auxNode.subtitle = "Stereo output bus";
+        auxNode.kind = AdvancedRoutingView::NodeKind::Output;
+        auxNode.acceptsInput = true;
+        auxNode.outputBusIndex = auxIndex + 1;
+        auxNode.position = mainNode.position;
+        nodes.add(auxNode);
+    }
+
+    advancedRoutingView.setModel(
+        nodes,
+        core.getAdvancedRoutingConnections());
 }
 
 void MainView::selectTab(int tabIndex)
@@ -5964,9 +6240,20 @@ bool MainView::saveSessionToFile(const juce::File& file)
                 appSettings.getMidiKeyboardVisible()
                     ? MidiKeyboardPanel::preferredHeight + 8
                     : 0;
-            core.setRoutingViewSize(
-                parentEditor->getWidth(),
-                parentEditor->getHeight() - keyboardExtraHeight);
+            if (core.getRoutingMode() == RoutingMode::Advanced)
+            {
+                core.setAdvancedRoutingViewSize(
+                    parentEditor->getWidth(),
+                    parentEditor->getHeight()
+                        - keyboardExtraHeight);
+            }
+            else
+            {
+                core.setRoutingViewSize(
+                    parentEditor->getWidth(),
+                    parentEditor->getHeight()
+                        - keyboardExtraHeight);
+            }
         }
     }
 
@@ -6051,6 +6338,7 @@ bool MainView::loadSessionFromFile(const juce::File& file)
     contentPlaceholder.setVisible(! keepRecordingViewVisible);
     editorHolder.setVisible(! keepRecordingViewVisible);
     routingView.setVisible(false);
+    advancedRoutingView.setVisible(false);
     macroMappingsView.setVisible(false);
 
     if (keepRecordingViewVisible)
@@ -6540,6 +6828,7 @@ void MainView::refreshFromCore()
     rebuildPresetDropdown();
     rebuildTabButtons();
     rebuildRoutingView();
+    rebuildAdvancedRoutingView();
     rebuildPointerMapDropdown();
 
     refreshMacroMappingsView();
@@ -6623,7 +6912,12 @@ void MainView::refreshFromCore()
     pluginIssueMessageEditor.applyFontToAllText(juce::Font(juce::FontOptions(15.0f, juce::Font::bold)));
     pluginIssueMessageEditor.setVisible(pluginIssueText.isNotEmpty());
 
-    routingView.setVisible(showingRoutingView);
+    const bool showingAdvancedRouting =
+        showingRoutingView
+        && core.getRoutingMode() == RoutingMode::Advanced;
+    routingView.setVisible(
+        showingRoutingView && ! showingAdvancedRouting);
+    advancedRoutingView.setVisible(showingAdvancedRouting);
     macroMappingsView.setVisible(showingMacroMappingsView);
     editorHolder.setVisible(! showingRoutingView
                             && ! showingMacroMappingsView
@@ -6894,6 +7188,7 @@ void MainView::resized()
     auto contentBounds = contentOuter.reduced(8);
     editorHolder.setBounds(contentBounds);
     routingView.setBounds(contentBounds);
+    advancedRoutingView.setBounds(contentBounds);
     macroMappingsView.setBounds(contentBounds);
     recordingView.setBounds(contentBounds);
 

@@ -5,6 +5,7 @@
 #include <algorithm>
 #include <cmath>
 #include <cstring>
+#include <unordered_set>
 
 #if JUCE_PLUGINHOST_VST3
 #include <pluginterfaces/vst/ivstcomponent.h>
@@ -699,12 +700,21 @@ namespace
     }
 }
 
+const juce::String PluginCore::advancedAudioInputNodeId { "AUDIO_INPUT" };
+const juce::String PluginCore::advancedMainOutputNodeId { "MAIN" };
+
 PluginCore::PluginCore()
 {
     macroCurrentValues.fill(0.0f);
 
     sessionDocument.clear();
     statusText = "Ready";
+
+    std::atomic_store_explicit(
+        &resolvedAdvancedGraph,
+        std::shared_ptr<const ResolvedAdvancedGraph>(
+            std::make_shared<ResolvedAdvancedGraph>()),
+        std::memory_order_release);
 
     addTab("Empty");
     setSelectedTabIndex(0);
@@ -992,6 +1002,16 @@ void PluginCore::prepareToPlay(double sampleRate, int samplesPerBlock)
     hostInputScratchBuffer.clear();
     finalOutputScratchBuffer.clear();
 
+    for (auto& auxBuffer : advancedAuxOutputScratchBuffers)
+    {
+        auxBuffer.setSize(hostBufferChannelCapacity,
+                          hostBufferSampleCapacity,
+                          false,
+                          true,
+                          false);
+        auxBuffer.clear();
+    }
+
     hostMidiInputScratchBuffer.clear();
     hostMidiInputScratchBuffer.ensureSize(
         64 * 1024);
@@ -1072,6 +1092,10 @@ void PluginCore::prepareToPlay(double sampleRate, int samplesPerBlock)
     fxIndexScratch.clearQuick();
     fxIndexScratch.ensureStorageAllocated(
         hostedTabs.size());
+    advancedFxOrderScratch.clearQuick();
+    advancedFxOrderScratch.ensureStorageAllocated(hostedTabs.size());
+    advancedFxPendingScratch.clearQuick();
+    advancedFxPendingScratch.ensureStorageAllocated(hostedTabs.size());
 
     for (auto* tab : hostedTabs)
     {
@@ -1759,6 +1783,24 @@ void PluginCore::processBlock(juce::AudioBuffer<float>& buffer,
     hostInput.makeCopyOf(buffer, true);
     finalOutput.clear();
 
+    for (auto& auxBuffer : advancedAuxOutputScratchBuffers)
+    {
+        auxBuffer.setSize(hostChannels,
+                          numSamples,
+                          false,
+                          false,
+                          true);
+        auxBuffer.clear();
+    }
+
+    const bool usingAdvancedRouting =
+        getRoutingMode() == RoutingMode::Advanced;
+
+    const auto advancedGraph =
+        std::atomic_load_explicit(
+            &resolvedAdvancedGraph,
+            std::memory_order_acquire);
+
     auto& fxIndices =
         fxIndexScratch;
 
@@ -1769,9 +1811,10 @@ void PluginCore::processBlock(juce::AudioBuffer<float>& buffer,
         auto* tab = hostedTabs[i];
 
         if (tab == nullptr
-            || tab->bypassed
-            || tab->processingQuarantined.load(
-                std::memory_order_acquire))
+            || (! usingAdvancedRouting
+                && (tab->bypassed
+                    || tab->processingQuarantined.load(
+                        std::memory_order_acquire))))
         {
             continue;
         }
@@ -1830,6 +1873,61 @@ void PluginCore::processBlock(juce::AudioBuffer<float>& buffer,
         fxIndices.add(i);
     }
 
+    if (usingAdvancedRouting
+        && advancedGraph != nullptr
+        && fxIndices.size() > 1)
+    {
+        auto& pendingFx = advancedFxPendingScratch;
+        auto& orderedFx = advancedFxOrderScratch;
+        pendingFx.clearQuick();
+        orderedFx.clearQuick();
+        pendingFx.addArray(fxIndices);
+
+        while (! pendingFx.isEmpty())
+        {
+            int selectedPendingIndex = -1;
+
+            for (int pendingIndex = 0;
+                 pendingIndex < pendingFx.size();
+                 ++pendingIndex)
+            {
+                const int candidateTab = pendingFx[pendingIndex];
+                bool hasUnprocessedInput = false;
+
+                for (const auto& connection :
+                     advancedGraph->connections)
+                {
+                    if (connection.destinationTabIndex
+                            == candidateTab
+                        && connection.sourceTabIndex >= 0
+                        && pendingFx.contains(
+                            connection.sourceTabIndex))
+                    {
+                        hasUnprocessedInput = true;
+                        break;
+                    }
+                }
+
+                if (! hasUnprocessedInput)
+                {
+                    selectedPendingIndex = pendingIndex;
+                    break;
+                }
+            }
+
+            // Restored files are validated on editing, but this fallback also
+            // keeps a manually edited cyclic preset from stalling audio.
+            if (selectedPendingIndex < 0)
+                selectedPendingIndex = 0;
+
+            orderedFx.add(
+                pendingFx.removeAndReturn(
+                    selectedPendingIndex));
+        }
+
+        fxIndices.swapWith(orderedFx);
+    }
+
     auto findNextPreparedFxTab =
         [&fxIndices](int startIndex) -> int
         {
@@ -1847,10 +1945,82 @@ void PluginCore::processBlock(juce::AudioBuffer<float>& buffer,
             return -1;
         };
 
+    auto addAudioToBuffer =
+        [numSamples](juce::AudioBuffer<float>& destination,
+                     const juce::AudioBuffer<float>& source)
+        {
+            const int channels =
+                juce::jmin(destination.getNumChannels(),
+                           source.getNumChannels());
+
+            for (int channel = 0; channel < channels; ++channel)
+            {
+                destination.addFrom(channel,
+                                    0,
+                                    source,
+                                    channel,
+                                    0,
+                                    numSamples);
+            }
+        };
+
+    auto routeAdvancedAudio =
+        [this,
+         &advancedGraph,
+         &finalOutput,
+         &addAudioToBuffer](
+            int sourceTabIndex,
+            const juce::AudioBuffer<float>& sourceBuffer)
+        {
+            if (advancedGraph == nullptr)
+                return;
+
+            for (const auto& connection :
+                 advancedGraph->connections)
+            {
+                if (connection.sourceTabIndex != sourceTabIndex)
+                    continue;
+
+                if (connection.destinationOutputIndex == 0)
+                {
+                    addAudioToBuffer(finalOutput, sourceBuffer);
+                }
+                else if (connection.destinationOutputIndex > 0
+                         && connection.destinationOutputIndex
+                                <= advancedAuxOutputCount)
+                {
+                    addAudioToBuffer(
+                        advancedAuxOutputScratchBuffers[
+                            static_cast<size_t>(
+                                connection.destinationOutputIndex - 1)],
+                        sourceBuffer);
+                }
+                else if (juce::isPositiveAndBelow(
+                             connection.destinationTabIndex,
+                             hostedTabs.size()))
+                {
+                    auto* destinationTab =
+                        hostedTabs[
+                            connection.destinationTabIndex];
+
+                    if (destinationTab != nullptr)
+                    {
+                        addAudioToBuffer(
+                            destinationTab->audioScratchBuffer,
+                            sourceBuffer);
+                    }
+                }
+            }
+        };
+
     const int firstActiveFxTab =
         findNextPreparedFxTab(-1);
 
-    if (firstActiveFxTab >= 0)
+    if (usingAdvancedRouting)
+    {
+        routeAdvancedAudio(-1, hostInput);
+    }
+    else if (firstActiveFxTab >= 0)
     {
         auto* firstFxTab =
             hostedTabs[firstActiveFxTab];
@@ -2251,24 +2421,46 @@ void PluginCore::processBlock(juce::AudioBuffer<float>& buffer,
             }
         }
 
-        const int nextFxTab =
-            findNextPreparedFxTab(i);
-
-        if (nextFxTab >= 0)
+        if (usingAdvancedRouting)
         {
-            auto* targetTab =
-                hostedTabs[nextFxTab];
+            routeAdvancedAudio(i, synthBuffer);
+        }
+        else
+        {
+            const int nextFxTab =
+                findNextPreparedFxTab(i);
 
-            if (targetTab != nullptr)
+            if (nextFxTab >= 0)
             {
-                auto& targetBuffer =
-                    targetTab->audioScratchBuffer;
+                auto* targetTab =
+                    hostedTabs[nextFxTab];
 
+                if (targetTab != nullptr)
+                {
+                    auto& targetBuffer =
+                        targetTab->audioScratchBuffer;
+
+                    for (int ch = 0;
+                         ch < hostChannels;
+                         ++ch)
+                    {
+                        targetBuffer.addFrom(
+                            ch,
+                            0,
+                            synthBuffer,
+                            ch,
+                            0,
+                            numSamples);
+                    }
+                }
+            }
+            else
+            {
                 for (int ch = 0;
                      ch < hostChannels;
                      ++ch)
                 {
-                    targetBuffer.addFrom(
+                    finalOutput.addFrom(
                         ch,
                         0,
                         synthBuffer,
@@ -2278,27 +2470,26 @@ void PluginCore::processBlock(juce::AudioBuffer<float>& buffer,
                 }
             }
         }
-        else
-        {
-            for (int ch = 0;
-                 ch < hostChannels;
-                 ++ch)
-            {
-                finalOutput.addFrom(
-                    ch,
-                    0,
-                    synthBuffer,
-                    ch,
-                    0,
-                    numSamples);
-            }
-        }
     }
 
     auto routeFxAudioOutput =
         [&] (int fxListIndex,
              juce::AudioBuffer<float>& fxBuffer)
         {
+            if (usingAdvancedRouting)
+            {
+                if (juce::isPositiveAndBelow(
+                        fxListIndex,
+                        fxIndices.size()))
+                {
+                    routeAdvancedAudio(
+                        fxIndices[fxListIndex],
+                        fxBuffer);
+                }
+
+                return;
+            }
+
             const int nextFxTab =
                 fxListIndex + 1 < fxIndices.size()
                     ? fxIndices[fxListIndex + 1]
@@ -2355,8 +2546,7 @@ void PluginCore::processBlock(juce::AudioBuffer<float>& buffer,
             hostedTabs[tabIndex];
 
         if (tab == nullptr
-            || tab->pluginInstance == nullptr
-            || tab->bypassed)
+            || tab->pluginInstance == nullptr)
         {
             continue;
         }
@@ -2366,6 +2556,18 @@ void PluginCore::processBlock(juce::AudioBuffer<float>& buffer,
 
         auto& fxBuffer =
             tab->audioScratchBuffer;
+
+        if (usingAdvancedRouting
+            && (tab->bypassed
+                || tab->processingQuarantined.load(
+                    std::memory_order_acquire)))
+        {
+            routeFxAudioOutput(fxListIndex, fxBuffer);
+            continue;
+        }
+
+        if (tab->bypassed)
+            continue;
 
         if (tab->midiPreprocessedThisBlock)
         {
@@ -2946,6 +3148,7 @@ void PluginCore::setSelectedTabIndex(int newIndex)
 bool PluginCore::addTab(const juce::String& tabName)
 {
     auto* tab = new HostedTabState();
+    tab->routingId = juce::Uuid().toString();
     tab->slot = std::make_unique<SlotModel>();
     tab->slot->setSlotName("Main Slot");
     tab->slot->setPluginLoaded(false);
@@ -2981,8 +3184,13 @@ bool PluginCore::addTab(const juce::String& tabName)
 
     fxIndexScratch.ensureStorageAllocated(
         hostedTabs.size() + 1);
+    advancedFxOrderScratch.ensureStorageAllocated(
+        hostedTabs.size() + 1);
+    advancedFxPendingScratch.ensureStorageAllocated(
+        hostedTabs.size() + 1);
 
     hostedTabs.add(tab);
+    publishAdvancedRoutingGraph();
     selectedTabIndex = hostedTabs.size() - 1;
     rebuildTabModelFromHostedTabs();
     markDirty();
@@ -3001,9 +3209,12 @@ bool PluginCore::closeSelectedTab()
     }
 
     auto* tab = hostedTabs[selectedTabIndex];
+    const auto removedRoutingId = tab->routingId;
     detachFromHostedPlugin(tab->pluginInstance.get());
     disposeHostedPluginInstance(*tab, "Close tab", false);
     hostedTabs.remove(selectedTabIndex);
+    removeAdvancedRoutingForNode(removedRoutingId);
+    publishAdvancedRoutingGraph();
 
     ensureValidSelectedTab();
     rebuildTabModelFromHostedTabs();
@@ -3046,6 +3257,8 @@ bool PluginCore::clearTab(int tabIndex)
     clearTabRestoreIssue(*selectedTab);
     selectedTab->midiAssignedDeviceIdentifiers.clear();
     selectedTab->midiAssignedDeviceIdentifiers.addIfNotAlreadyThere("MIDI Ch: All");
+    removeAdvancedRoutingForNode(selectedTab->routingId);
+    publishAdvancedRoutingGraph();
 
     selectedTabIndex = previousSelected;
     rebuildTabModelFromHostedTabs();
@@ -3216,6 +3429,7 @@ void PluginCore::moveHostedTab(int fromIndex, int toIndex)
 
     auto* moved = hostedTabs.removeAndReturn(fromIndex);
     hostedTabs.insert(toIndex, moved);
+    publishAdvancedRoutingGraph();
 
     if (selectedTabIndex == fromIndex)
     {
@@ -4447,6 +4661,530 @@ bool PluginCore::hasRoutingViewSize() const
     return routingViewSizeValid;
 }
 
+const juce::AudioBuffer<float>& PluginCore::getAuxOutputBuffer(
+    int auxIndex) const
+{
+    static const juce::AudioBuffer<float> emptyBuffer;
+
+    if (! juce::isPositiveAndBelow(
+            auxIndex,
+            advancedAuxOutputCount))
+    {
+        return emptyBuffer;
+    }
+
+    return advancedAuxOutputScratchBuffers[
+        static_cast<size_t>(auxIndex)];
+}
+
+juce::String PluginCore::getAdvancedAuxOutputNodeId(int auxIndex)
+{
+    return "AUX_" + juce::String(auxIndex + 1);
+}
+
+RoutingMode PluginCore::getRoutingMode() const noexcept
+{
+    return routingMode.load(std::memory_order_acquire);
+}
+
+void PluginCore::setRoutingMode(RoutingMode mode)
+{
+    if (mode == RoutingMode::Advanced)
+        ensureAdvancedRoutingInitialised();
+
+    if (routingMode.exchange(mode, std::memory_order_acq_rel) != mode)
+        markDirty();
+}
+
+bool PluginCore::isAdvancedRoutingInitialised() const noexcept
+{
+    return advancedRoutingInitialised;
+}
+
+juce::String PluginCore::getTabRoutingId(int tabIndex) const
+{
+    if (! juce::isPositiveAndBelow(tabIndex, hostedTabs.size())
+        || hostedTabs[tabIndex] == nullptr)
+    {
+        return {};
+    }
+
+    return hostedTabs[tabIndex]->routingId;
+}
+
+int PluginCore::findTabIndexForRoutingId(
+    const juce::String& routingIdToFind) const
+{
+    for (int i = 0; i < hostedTabs.size(); ++i)
+    {
+        const auto* tab = hostedTabs[i];
+
+        if (tab != nullptr && tab->routingId == routingIdToFind)
+            return i;
+    }
+
+    return -1;
+}
+
+bool PluginCore::isAdvancedOutputNode(const juce::String& nodeId) const
+{
+    return getAdvancedOutputIndex(nodeId) >= 0;
+}
+
+int PluginCore::getAdvancedOutputIndex(const juce::String& nodeId) const
+{
+    if (nodeId == advancedMainOutputNodeId)
+        return 0;
+
+    for (int auxIndex = 0;
+         auxIndex < advancedAuxOutputCount;
+         ++auxIndex)
+    {
+        if (nodeId == getAdvancedAuxOutputNodeId(auxIndex))
+            return auxIndex + 1;
+    }
+
+    return -1;
+}
+
+bool PluginCore::isAdvancedSourceNode(const juce::String& nodeId) const
+{
+    return nodeId == advancedAudioInputNodeId
+        || findTabIndexForRoutingId(nodeId) >= 0;
+}
+
+bool PluginCore::isAdvancedDestinationNode(const juce::String& nodeId) const
+{
+    if (isAdvancedOutputNode(nodeId))
+        return true;
+
+    const int tabIndex = findTabIndexForRoutingId(nodeId);
+
+    // Stage one routes audio into effect tabs. Instruments remain sources,
+    // matching PHI's established synth/FX distinction.
+    return tabIndex >= 0
+        && getHostedTabType(tabIndex) == PluginSlotType::FX;
+}
+
+juce::Array<AdvancedRoutingConnection>
+PluginCore::getAdvancedRoutingConnections() const
+{
+    return advancedRoutingConnections;
+}
+
+juce::Array<AdvancedRoutingNodePosition>
+PluginCore::getAdvancedRoutingNodePositions() const
+{
+    return advancedRoutingNodePositions;
+}
+
+bool PluginCore::advancedConnectionWouldCreateCycle(
+    const juce::String& sourceNodeId,
+    const juce::String& destinationNodeId) const
+{
+    if (sourceNodeId == advancedAudioInputNodeId
+        || isAdvancedOutputNode(destinationNodeId))
+    {
+        return false;
+    }
+
+    if (sourceNodeId == destinationNodeId)
+        return true;
+
+    std::function<bool(const juce::String&,
+                       std::unordered_set<std::string>&)> canReachSource;
+
+    canReachSource =
+        [this, &sourceNodeId, &canReachSource](
+            const juce::String& current,
+            std::unordered_set<std::string>& visited) -> bool
+        {
+            if (current == sourceNodeId)
+                return true;
+
+            const auto key = current.toStdString();
+            if (! visited.insert(key).second)
+                return false;
+
+            for (const auto& connection :
+                 advancedRoutingConnections)
+            {
+                if (connection.sourceNodeId == current
+                    && ! isAdvancedOutputNode(
+                        connection.destinationNodeId)
+                    && canReachSource(
+                        connection.destinationNodeId,
+                        visited))
+                {
+                    return true;
+                }
+            }
+
+            return false;
+        };
+
+    std::unordered_set<std::string> visited;
+    return canReachSource(destinationNodeId, visited);
+}
+
+void PluginCore::publishAdvancedRoutingGraph()
+{
+    auto graph = std::make_shared<ResolvedAdvancedGraph>();
+    graph->connections.reserve(
+        static_cast<size_t>(advancedRoutingConnections.size()));
+
+    for (const auto& connection : advancedRoutingConnections)
+    {
+        ResolvedAdvancedConnection resolved;
+        resolved.sourceTabIndex =
+            connection.sourceNodeId == advancedAudioInputNodeId
+                ? -1
+                : findTabIndexForRoutingId(connection.sourceNodeId);
+
+        resolved.destinationOutputIndex =
+            getAdvancedOutputIndex(connection.destinationNodeId);
+
+        if (resolved.destinationOutputIndex < 0)
+        {
+            resolved.destinationTabIndex =
+                findTabIndexForRoutingId(
+                    connection.destinationNodeId);
+        }
+
+        const bool sourceValid =
+            connection.sourceNodeId == advancedAudioInputNodeId
+            || resolved.sourceTabIndex >= 0;
+
+        const bool destinationValid =
+            resolved.destinationOutputIndex >= 0
+            || resolved.destinationTabIndex >= 0;
+
+        if (sourceValid && destinationValid)
+            graph->connections.push_back(resolved);
+    }
+
+    std::atomic_store_explicit(
+        &resolvedAdvancedGraph,
+        std::shared_ptr<const ResolvedAdvancedGraph>(graph),
+        std::memory_order_release);
+}
+
+void PluginCore::ensureAdvancedRoutingInitialised()
+{
+    if (advancedRoutingInitialised)
+        return;
+
+    advancedRoutingConnections.clearQuick();
+
+    juce::Array<int> fxTabs;
+    for (int i = 0; i < hostedTabs.size(); ++i)
+    {
+        if (getHostedTabType(i) == PluginSlotType::FX)
+            fxTabs.add(i);
+    }
+
+    auto addDefaultConnection =
+        [this](const juce::String& source,
+               const juce::String& destination)
+        {
+            AdvancedRoutingConnection connection;
+            connection.sourceNodeId = source;
+            connection.destinationNodeId = destination;
+            advancedRoutingConnections.add(connection);
+        };
+
+    auto findNextFx = [&fxTabs](int afterIndex)
+    {
+        for (const auto fxIndex : fxTabs)
+            if (fxIndex > afterIndex)
+                return fxIndex;
+        return -1;
+    };
+
+    const int firstFx = findNextFx(-1);
+    addDefaultConnection(
+        advancedAudioInputNodeId,
+        firstFx >= 0
+            ? getTabRoutingId(firstFx)
+            : advancedMainOutputNodeId);
+
+    for (int tabIndex = 0;
+         tabIndex < hostedTabs.size();
+         ++tabIndex)
+    {
+        const auto type = getHostedTabType(tabIndex);
+
+        if (type == PluginSlotType::Synth)
+        {
+            const int nextFx = findNextFx(tabIndex);
+            addDefaultConnection(
+                getTabRoutingId(tabIndex),
+                nextFx >= 0
+                    ? getTabRoutingId(nextFx)
+                    : advancedMainOutputNodeId);
+        }
+        else if (type == PluginSlotType::FX)
+        {
+            const int nextFx = findNextFx(tabIndex);
+            addDefaultConnection(
+                getTabRoutingId(tabIndex),
+                nextFx >= 0
+                    ? getTabRoutingId(nextFx)
+                    : advancedMainOutputNodeId);
+        }
+    }
+
+    advancedRoutingInitialised = true;
+    publishAdvancedRoutingGraph();
+}
+
+bool PluginCore::addAdvancedRoutingConnection(
+    const juce::String& sourceNodeId,
+    const juce::String& destinationNodeId,
+    juce::String* errorMessage)
+{
+    ensureAdvancedRoutingInitialised();
+
+    if (! isAdvancedSourceNode(sourceNodeId)
+        || ! isAdvancedDestinationNode(destinationNodeId))
+    {
+        if (errorMessage != nullptr)
+            *errorMessage = "That connection is not available.";
+        return false;
+    }
+
+    if (sourceNodeId == destinationNodeId)
+    {
+        if (errorMessage != nullptr)
+            *errorMessage = "A block cannot be connected to itself.";
+        return false;
+    }
+
+    for (const auto& connection : advancedRoutingConnections)
+    {
+        if (connection.sourceNodeId == sourceNodeId
+            && connection.destinationNodeId == destinationNodeId)
+        {
+            return false;
+        }
+    }
+
+    if (advancedConnectionWouldCreateCycle(sourceNodeId,
+                                           destinationNodeId))
+    {
+        if (errorMessage != nullptr)
+            *errorMessage = "That cable would create an audio feedback loop.";
+        return false;
+    }
+
+    AdvancedRoutingConnection connection;
+    connection.sourceNodeId = sourceNodeId;
+    connection.destinationNodeId = destinationNodeId;
+    advancedRoutingConnections.add(connection);
+    publishAdvancedRoutingGraph();
+    markDirty();
+    return true;
+}
+
+bool PluginCore::removeAdvancedRoutingConnection(
+    const juce::String& sourceNodeId,
+    const juce::String& destinationNodeId)
+{
+    for (int i = advancedRoutingConnections.size(); --i >= 0;)
+    {
+        const auto& connection = advancedRoutingConnections.getReference(i);
+
+        if (connection.sourceNodeId == sourceNodeId
+            && connection.destinationNodeId == destinationNodeId)
+        {
+            advancedRoutingConnections.remove(i);
+            publishAdvancedRoutingGraph();
+            markDirty();
+            return true;
+        }
+    }
+
+    return false;
+}
+
+bool PluginCore::reconnectAdvancedRoutingConnection(
+    const juce::String& oldSourceNodeId,
+    const juce::String& oldDestinationNodeId,
+    const juce::String& newSourceNodeId,
+    const juce::String& newDestinationNodeId,
+    juce::String* errorMessage)
+{
+    ensureAdvancedRoutingInitialised();
+
+    int originalIndex = -1;
+    for (int i = 0; i < advancedRoutingConnections.size(); ++i)
+    {
+        const auto& connection =
+            advancedRoutingConnections.getReference(i);
+        if (connection.sourceNodeId == oldSourceNodeId
+            && connection.destinationNodeId == oldDestinationNodeId)
+        {
+            originalIndex = i;
+            break;
+        }
+    }
+
+    if (originalIndex < 0)
+    {
+        if (errorMessage != nullptr)
+            *errorMessage = "The original cable is no longer available.";
+        return false;
+    }
+
+    if (oldSourceNodeId == newSourceNodeId
+        && oldDestinationNodeId == newDestinationNodeId)
+    {
+        return true;
+    }
+
+    if (! isAdvancedSourceNode(newSourceNodeId)
+        || ! isAdvancedDestinationNode(newDestinationNodeId))
+    {
+        if (errorMessage != nullptr)
+            *errorMessage = "That connection is not available.";
+        return false;
+    }
+
+    if (newSourceNodeId == newDestinationNodeId)
+    {
+        if (errorMessage != nullptr)
+            *errorMessage = "A block cannot be connected to itself.";
+        return false;
+    }
+
+    for (int i = 0; i < advancedRoutingConnections.size(); ++i)
+    {
+        if (i == originalIndex)
+            continue;
+
+        const auto& connection =
+            advancedRoutingConnections.getReference(i);
+        if (connection.sourceNodeId == newSourceNodeId
+            && connection.destinationNodeId == newDestinationNodeId)
+        {
+            if (errorMessage != nullptr)
+                *errorMessage = "That cable already exists.";
+            return false;
+        }
+    }
+
+    const auto originalConnection =
+        advancedRoutingConnections.getReference(originalIndex);
+    advancedRoutingConnections.remove(originalIndex);
+
+    if (advancedConnectionWouldCreateCycle(newSourceNodeId,
+                                           newDestinationNodeId))
+    {
+        advancedRoutingConnections.insert(originalIndex,
+                                          originalConnection);
+        if (errorMessage != nullptr)
+            *errorMessage =
+                "That cable would create an audio feedback loop.";
+        return false;
+    }
+
+    AdvancedRoutingConnection replacement;
+    replacement.sourceNodeId = newSourceNodeId;
+    replacement.destinationNodeId = newDestinationNodeId;
+    advancedRoutingConnections.insert(originalIndex, replacement);
+    publishAdvancedRoutingGraph();
+    markDirty();
+    return true;
+}
+
+void PluginCore::clearAdvancedRoutingConnections()
+{
+    ensureAdvancedRoutingInitialised();
+    advancedRoutingConnections.clearQuick();
+    publishAdvancedRoutingGraph();
+    markDirty();
+}
+
+void PluginCore::removeAdvancedRoutingForNode(
+    const juce::String& nodeId)
+{
+    for (int i = advancedRoutingConnections.size(); --i >= 0;)
+    {
+        const auto& connection = advancedRoutingConnections.getReference(i);
+        if (connection.sourceNodeId == nodeId
+            || connection.destinationNodeId == nodeId)
+        {
+            advancedRoutingConnections.remove(i);
+        }
+    }
+
+    for (int i = advancedRoutingNodePositions.size(); --i >= 0;)
+        if (advancedRoutingNodePositions.getReference(i).nodeId == nodeId)
+            advancedRoutingNodePositions.remove(i);
+}
+
+void PluginCore::setAdvancedRoutingNodePosition(
+    const juce::String& nodeId,
+    juce::Point<int> position)
+{
+    for (auto& nodePosition : advancedRoutingNodePositions)
+    {
+        if (nodePosition.nodeId == nodeId)
+        {
+            if (nodePosition.x == position.x
+                && nodePosition.y == position.y)
+            {
+                return;
+            }
+
+            nodePosition.x = position.x;
+            nodePosition.y = position.y;
+            markDirty();
+            return;
+        }
+    }
+
+    AdvancedRoutingNodePosition nodePosition;
+    nodePosition.nodeId = nodeId;
+    nodePosition.x = position.x;
+    nodePosition.y = position.y;
+    advancedRoutingNodePositions.add(nodePosition);
+    markDirty();
+}
+
+juce::Point<int> PluginCore::getAdvancedRoutingNodePosition(
+    const juce::String& nodeId,
+    juce::Point<int> fallback) const
+{
+    for (const auto& nodePosition : advancedRoutingNodePositions)
+        if (nodePosition.nodeId == nodeId)
+            return { nodePosition.x, nodePosition.y };
+
+    return fallback;
+}
+
+void PluginCore::setAdvancedRoutingViewSize(int width, int height)
+{
+    advancedRoutingViewWidth = juce::jmax(700, width);
+    advancedRoutingViewHeight = juce::jmax(450, height);
+    advancedRoutingViewSizeValid = true;
+}
+
+int PluginCore::getAdvancedRoutingViewWidth() const
+{
+    return advancedRoutingViewWidth;
+}
+
+int PluginCore::getAdvancedRoutingViewHeight() const
+{
+    return advancedRoutingViewHeight;
+}
+
+bool PluginCore::hasAdvancedRoutingViewSize() const
+{
+    return advancedRoutingViewSizeValid;
+}
+
 SlotModel& PluginCore::getMainSlot()
 {
     auto* tab = getSelectedHostedTab();
@@ -4996,6 +5734,45 @@ bool PluginCore::loadMainSlotPluginFromDescription(const juce::PluginDescription
 
     clearTabRestoreIssue(*selectedTab);
 
+    if (advancedRoutingInitialised)
+    {
+        if (selectedTab->pluginType == PluginSlotType::Synth)
+        {
+            for (int i = advancedRoutingConnections.size(); --i >= 0;)
+            {
+                if (advancedRoutingConnections
+                        .getReference(i)
+                        .destinationNodeId
+                    == selectedTab->routingId)
+                {
+                    advancedRoutingConnections.remove(i);
+                }
+            }
+        }
+
+        bool hasAudioOutputConnection = false;
+
+        for (const auto& connection : advancedRoutingConnections)
+        {
+            if (connection.sourceNodeId == selectedTab->routingId)
+            {
+                hasAudioOutputConnection = true;
+                break;
+            }
+        }
+
+        if (! hasAudioOutputConnection)
+        {
+            AdvancedRoutingConnection connection;
+            connection.sourceNodeId = selectedTab->routingId;
+            connection.destinationNodeId =
+                advancedMainOutputNodeId;
+            advancedRoutingConnections.add(connection);
+        }
+
+        publishAdvancedRoutingGraph();
+    }
+
     statusText = "Plugin instantiated";
     DebugLog::write("[PluginLoadDiagnostic] 60 core load complete");
     markDirty();
@@ -5137,6 +5914,15 @@ void PluginCore::resetForNewPreset()
     routingViewWidth = 800;
     routingViewHeight = 500;
     routingViewSizeValid = false;
+    advancedRoutingViewWidth = 1100;
+    advancedRoutingViewHeight = 700;
+    advancedRoutingViewSizeValid = false;
+    advancedRoutingConnections.clearQuick();
+    advancedRoutingNodePositions.clearQuick();
+    advancedRoutingInitialised = false;
+    routingMode.store(RoutingMode::Simple,
+                      std::memory_order_release);
+    publishAdvancedRoutingGraph();
 
     addTab("Empty");
     markClean();
@@ -5202,6 +5988,7 @@ SessionTabData PluginCore::buildSessionTabData(int tabIndex) const
         return tabData;
 
     auto* hostedTab = hostedTabs[tabIndex];
+    tabData.routingId = hostedTab->routingId;
     tabData.tabName = hostedTab->tabName;
     tabData.bypassed = hostedTab->bypassed;
     tabData.outputGainDb = hostedTab->outputGainDb.load(
@@ -5277,6 +6064,9 @@ bool PluginCore::restoreTabFromSessionData(int tabIndex,
         selectedTabIndex = previousSelected;
         return false;
     }
+
+    if (tabData.routingId.trim().isNotEmpty())
+        selectedTab->routingId = tabData.routingId.trim();
 
     selectedTab->tabName = tabData.tabName.isNotEmpty() ? tabData.tabName
                                                         : "Empty";
@@ -5561,10 +6351,20 @@ SessionData PluginCore::buildSessionData() const
     sessionData.name = getSessionName();
     sessionData.hostTempoBpm = 120.0;
     sessionData.selectedTabIndex = selectedTabIndex;
+    sessionData.routingMode = getRoutingMode();
+    sessionData.advancedRoutingInitialised = advancedRoutingInitialised;
+    sessionData.hasSimpleRoutingViewSize = routingViewSizeValid;
+    sessionData.simpleRoutingViewWidth = routingViewWidth;
+    sessionData.simpleRoutingViewHeight = routingViewHeight;
+    sessionData.hasAdvancedRoutingViewSize = advancedRoutingViewSizeValid;
+    sessionData.advancedRoutingViewWidth = advancedRoutingViewWidth;
+    sessionData.advancedRoutingViewHeight = advancedRoutingViewHeight;
 
     for (int i = 0; i < hostedTabs.size(); ++i)
         sessionData.tabs.add(buildSessionTabData(i));
 
+    sessionData.advancedRoutingConnections = advancedRoutingConnections;
+    sessionData.advancedRoutingNodePositions = advancedRoutingNodePositions;
     sessionData.macroMappings = macroMappings;
     return sessionData;
 }
@@ -5610,6 +6410,15 @@ bool PluginCore::restoreSessionData(const SessionData& sessionData,
     routingViewWidth = 800;
     routingViewHeight = 500;
     routingViewSizeValid = false;
+    advancedRoutingViewWidth = 1100;
+    advancedRoutingViewHeight = 700;
+    advancedRoutingViewSizeValid = false;
+    advancedRoutingConnections.clearQuick();
+    advancedRoutingNodePositions.clearQuick();
+    advancedRoutingInitialised = false;
+    routingMode.store(RoutingMode::Simple,
+                      std::memory_order_release);
+    publishAdvancedRoutingGraph();
     macroMappings.clear();
     lastTouchedParameter = {};
     macroCurrentValues.fill(0.0f);
@@ -5643,6 +6452,28 @@ bool PluginCore::restoreSessionData(const SessionData& sessionData,
                                     sessionData.selectedTabIndex);
 
     macroMappings = sessionData.macroMappings;
+
+    advancedRoutingConnections = sessionData.advancedRoutingConnections;
+    advancedRoutingNodePositions = sessionData.advancedRoutingNodePositions;
+    advancedRoutingInitialised = sessionData.advancedRoutingInitialised;
+
+    if (sessionData.hasSimpleRoutingViewSize)
+    {
+        routingViewWidth = sessionData.simpleRoutingViewWidth;
+        routingViewHeight = sessionData.simpleRoutingViewHeight;
+        routingViewSizeValid = true;
+    }
+
+    if (sessionData.hasAdvancedRoutingViewSize)
+    {
+        advancedRoutingViewWidth = sessionData.advancedRoutingViewWidth;
+        advancedRoutingViewHeight = sessionData.advancedRoutingViewHeight;
+        advancedRoutingViewSizeValid = true;
+    }
+
+    routingMode.store(sessionData.routingMode,
+                      std::memory_order_release);
+    publishAdvancedRoutingGraph();
 
     rebuildTabModelFromHostedTabs();
     statusText = "Preset loaded";

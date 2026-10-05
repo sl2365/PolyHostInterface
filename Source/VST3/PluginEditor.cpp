@@ -7,8 +7,14 @@ PolyHostPluginEditor::PolyHostPluginEditor(PolyHostPluginProcessor& p,
       mainView(p, menuExtension)
 {
     addAndMakeVisible(mainView);
-    routingViewHeight =
+    simpleRoutingViewWidth =
+        mainView.getAppSettings().getRoutingWindowWidth();
+    simpleRoutingViewHeight =
         mainView.getAppSettings().getRoutingWindowHeight();
+    advancedRoutingViewWidth =
+        mainView.getAppSettings().getAdvancedRoutingWindowWidth();
+    advancedRoutingViewHeight =
+        mainView.getAppSettings().getAdvancedRoutingWindowHeight();
     macroMappingsViewHeight =
         mainView.getAppSettings().getMacroMappingsViewHeight();
     setResizable(true, false);
@@ -19,7 +25,11 @@ PolyHostPluginEditor::PolyHostPluginEditor(PolyHostPluginProcessor& p,
 PolyHostPluginEditor::~PolyHostPluginEditor()
 {
     mainView.getAppSettings().setRoutingWindowSize(
-        routingWidth, routingViewHeight);
+        simpleRoutingViewWidth,
+        simpleRoutingViewHeight);
+    mainView.getAppSettings().setAdvancedRoutingWindowSize(
+        advancedRoutingViewWidth,
+        advancedRoutingViewHeight);
     mainView.getAppSettings().setMacroMappingsViewHeight(
         macroMappingsViewHeight);
 }
@@ -36,10 +46,31 @@ void PolyHostPluginEditor::resized()
     if (mainView.isShowingRoutingView()
         && ! applyingRoutingViewSize)
     {
-        routingViewHeight = juce::jlimit(
+        const int width = juce::jlimit(
+            minWidth,
+            maxWidth,
+            getWidth());
+        const int height = juce::jlimit(
             minHeight,
             maxHeight - getMidiKeyboardExtraHeight(),
             contentHeight);
+
+        if (mainView.isShowingAdvancedRoutingView())
+        {
+            advancedRoutingViewWidth = width;
+            advancedRoutingViewHeight = height;
+            audioProcessor.getCore().setAdvancedRoutingViewSize(
+                width,
+                height);
+        }
+        else
+        {
+            simpleRoutingViewWidth = width;
+            simpleRoutingViewHeight = height;
+            audioProcessor.getCore().setRoutingViewSize(
+                width,
+                height);
+        }
     }
 
     if (mainView.isShowingMacroMappingsView()
@@ -111,10 +142,37 @@ void PolyHostPluginEditor::resizeToRoutingView()
     const juce::ScopedValueSetter<bool> applyingSize(
         applyingRoutingViewSize, true);
     updateResizeLimits();
-    setSize(routingWidth,
+
+    const bool advanced =
+        mainView.isShowingAdvancedRoutingView();
+    const int targetWidth =
+        advanced
+            ? mainView.getAppSettings()
+                  .getAdvancedRoutingWindowWidth()
+            : mainView.getAppSettings()
+                  .getRoutingWindowWidth();
+    const int targetHeight =
+        advanced
+            ? mainView.getAppSettings()
+                  .getAdvancedRoutingWindowHeight()
+            : mainView.getAppSettings()
+                  .getRoutingWindowHeight();
+
+    if (advanced)
+    {
+        advancedRoutingViewWidth = targetWidth;
+        advancedRoutingViewHeight = targetHeight;
+    }
+    else
+    {
+        simpleRoutingViewWidth = targetWidth;
+        simpleRoutingViewHeight = targetHeight;
+    }
+
+    setSize(juce::jlimit(minWidth, maxWidth, targetWidth),
             juce::jlimit(minHeight + getMidiKeyboardExtraHeight(),
                          maxHeight,
-                         routingViewHeight + getMidiKeyboardExtraHeight()));
+                         targetHeight + getMidiKeyboardExtraHeight()));
     resized();
     repaint();
 }

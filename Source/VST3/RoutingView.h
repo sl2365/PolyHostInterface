@@ -38,6 +38,7 @@ public:
     std::function<void(int tabIndex, juce::Component* anchorComponent)> onShowMidiAssignments;
     std::function<void(int tabIndex, juce::Component* anchorComponent)> onShowPluginInfo;
     std::function<void()> onRefreshMidiDevices;
+    std::function<void()> onShowAdvanced;
     std::function<void(int tabIndex, int methodOverride)> onSetPointerAdjustMethodOverride;
 
     void paint(juce::Graphics& g) override;
@@ -152,6 +153,7 @@ private:
     juce::Label titleLabel;
     juce::Label midiHelpLabel;
     juce::TextButton refreshMidiButton { "Refresh MIDI" };
+    juce::TextButton advancedButton { "Advanced" };
     juce::Label emptyLabel;
     juce::Viewport viewport;
     juce::Component contentComponent;

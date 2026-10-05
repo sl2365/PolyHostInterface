@@ -9,6 +9,25 @@ enum class PluginSlotType
     FX
 };
 
+enum class RoutingMode
+{
+    Simple = 0,
+    Advanced = 1
+};
+
+struct AdvancedRoutingConnection
+{
+    juce::String sourceNodeId;
+    juce::String destinationNodeId;
+};
+
+struct AdvancedRoutingNodePosition
+{
+    juce::String nodeId;
+    int x = 0;
+    int y = 0;
+};
+
 struct SessionPluginData
 {
     juce::String pluginName;
@@ -34,6 +53,7 @@ struct SessionTabData
     };
 
     int index = -1;
+    juce::String routingId;
     PluginSlotType type = PluginSlotType::Empty;
     juce::String tabName;
     bool bypassed = false;
@@ -68,7 +88,17 @@ struct SessionData
     juce::String name;
     double hostTempoBpm = 120.0;
     int selectedTabIndex = 0;
+    RoutingMode routingMode = RoutingMode::Simple;
+    bool advancedRoutingInitialised = false;
+    bool hasSimpleRoutingViewSize = false;
+    int simpleRoutingViewWidth = 800;
+    int simpleRoutingViewHeight = 500;
+    bool hasAdvancedRoutingViewSize = false;
+    int advancedRoutingViewWidth = 1100;
+    int advancedRoutingViewHeight = 700;
     juce::Array<SessionTabData> tabs;
+    juce::Array<AdvancedRoutingConnection> advancedRoutingConnections;
+    juce::Array<AdvancedRoutingNodePosition> advancedRoutingNodePositions;
     juce::Array<MacroMapping> macroMappings;
 };
 

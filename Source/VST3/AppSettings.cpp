@@ -89,6 +89,10 @@ static constexpr auto kWindowX              = "windowX";
 static constexpr auto kWindowY              = "windowY";
 static constexpr auto kRoutingWindowWidth   = "routingWindowWidth";
 static constexpr auto kRoutingWindowHeight  = "routingWindowHeight";
+static constexpr auto kAdvancedRoutingWindowWidth =
+    "advancedRoutingWindowWidth";
+static constexpr auto kAdvancedRoutingWindowHeight =
+    "advancedRoutingWindowHeight";
 static constexpr auto kMacroMappingsViewHeight = "macroMappingsViewHeight";
 static constexpr auto kPointerControlXccNumber              = "pointerControlXccNumber";
 static constexpr auto kPointerControlYccNumber              = "pointerControlYccNumber";
@@ -983,6 +987,31 @@ void AppSettings::clearRoutingWindowSize()
 {
     xml->removeAttribute(kRoutingWindowWidth);
     xml->removeAttribute(kRoutingWindowHeight);
+    save();
+}
+
+int AppSettings::getAdvancedRoutingWindowWidth() const
+{
+    return juce::jlimit(
+        700,
+        2400,
+        xml->getIntAttribute(kAdvancedRoutingWindowWidth, 1100));
+}
+
+int AppSettings::getAdvancedRoutingWindowHeight() const
+{
+    return juce::jlimit(
+        450,
+        1600,
+        xml->getIntAttribute(kAdvancedRoutingWindowHeight, 700));
+}
+
+void AppSettings::setAdvancedRoutingWindowSize(int width, int height)
+{
+    xml->setAttribute(kAdvancedRoutingWindowWidth,
+                      juce::jlimit(700, 2400, width));
+    xml->setAttribute(kAdvancedRoutingWindowHeight,
+                      juce::jlimit(450, 1600, height));
     save();
 }
 

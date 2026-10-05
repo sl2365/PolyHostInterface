@@ -549,6 +549,15 @@ RoutingView::RoutingView()
     addAndMakeVisible(refreshMidiButton);
     refreshMidiButton.setTooltip(ButtonStyling::Tooltips::refreshMidi());
 
+    advancedButton.onClick = [this]
+    {
+        if (onShowAdvanced)
+            onShowAdvanced();
+    };
+    advancedButton.setTooltip(
+        "Open the modular Advanced routing graph. Simple routing is kept unchanged.");
+    addAndMakeVisible(advancedButton);
+
     emptyLabel.setText("No loaded plugins.\nLoad a synth or FX in the tab view to see it here.",
                        juce::dontSendNotification);
     emptyLabel.setJustificationType(juce::Justification::centred);
@@ -944,6 +953,8 @@ void RoutingView::resized()
 
     auto headerArea = area.removeFromTop(36);
     refreshMidiButton.setBounds(headerArea.removeFromRight(130));
+    headerArea.removeFromRight(8);
+    advancedButton.setBounds(headerArea.removeFromRight(100));
     headerArea.removeFromRight(8);
     titleLabel.setBounds(headerArea);
 

@@ -52,6 +52,10 @@ public:
     void setRoutingWindowSize(int width, int height);
     void clearRoutingWindowSize();
 
+    int getAdvancedRoutingWindowWidth() const;
+    int getAdvancedRoutingWindowHeight() const;
+    void setAdvancedRoutingWindowSize(int width, int height);
+
     int getMacroMappingsViewHeight() const;
     void setMacroMappingsViewHeight(int height);
 
