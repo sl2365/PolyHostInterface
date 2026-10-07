@@ -3416,6 +3416,45 @@ bool PluginCore::canMoveTabDown(int tabIndex) const
     return juce::isPositiveAndBelow(tabIndex, hostedTabs.size()) && tabIndex < hostedTabs.size() - 1;
 }
 
+void PluginCore::preserveDefaultAdvancedPluginNodePositions()
+{
+    if (! advancedRoutingInitialised)
+        return;
+
+    int visiblePluginRow = 0;
+
+    for (int tabIndex = 0;
+         tabIndex < hostedTabs.size();
+         ++tabIndex)
+    {
+        if (getHostedTabType(tabIndex) == PluginSlotType::Empty)
+            continue;
+
+        const auto routingId = getTabRoutingId(tabIndex);
+        bool hasSavedPosition = false;
+
+        for (const auto& position : advancedRoutingNodePositions)
+        {
+            if (position.nodeId == routingId)
+            {
+                hasSavedPosition = true;
+                break;
+            }
+        }
+
+        if (! hasSavedPosition)
+        {
+            AdvancedRoutingNodePosition position;
+            position.nodeId = routingId;
+            position.x = 330;
+            position.y = 50 + visiblePluginRow * 90;
+            advancedRoutingNodePositions.add(position);
+        }
+
+        ++visiblePluginRow;
+    }
+}
+
 void PluginCore::moveHostedTab(int fromIndex, int toIndex)
 {
     if (! juce::isPositiveAndBelow(fromIndex, hostedTabs.size()))
@@ -3426,6 +3465,10 @@ void PluginCore::moveHostedTab(int fromIndex, int toIndex)
 
     if (fromIndex == toIndex)
         return;
+
+    // Advanced layout is independent of Simple tab order. Preserve any
+    // automatically displayed positions before the tab indices change.
+    preserveDefaultAdvancedPluginNodePositions();
 
     auto* moved = hostedTabs.removeAndReturn(fromIndex);
     hostedTabs.insert(toIndex, moved);

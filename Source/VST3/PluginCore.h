@@ -422,6 +422,7 @@ private:
     void rebuildTabModelFromHostedTabs();
     juce::String createDefaultTabName(int index) const;
     PluginSlotType getHostedTabType(int tabIndex) const;
+    void preserveDefaultAdvancedPluginNodePositions();
     void moveHostedTab(int fromIndex, int toIndex);
     int findNextActiveFxTab(int startIndex) const;
     void buildMidiBufferForTab(

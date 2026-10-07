@@ -93,6 +93,7 @@ set "BUILT_BUNDLE=%BUILD_DIR%\PolyHostPlugin_artefacts\Release\VST3\%PLUGIN_NAME
 set "BUILT_BINARY=%BUILT_BUNDLE%\Contents\x86_64-win\%PLUGIN_NAME%"
 set "FINAL_PLUGIN=%DIST_DIR%\%PLUGIN_NAME%"
 set "APP_NAME=savihost.exe"
+set "SAVIHOST=D:\SyMenu\ProgramFiles\MyApps\MuLab\- VST's\Utilities\savihost\savihost.exe"
 set "MIDI_ROUTING_TEST=%BUILD_DIR%\Release\PhiHostedMidiRoutingTests.exe"
 
 echo ============================================================
@@ -217,11 +218,19 @@ if not exist "%FINAL_PLUGIN%" (
 echo Copied VST3 to:
 echo %FINAL_PLUGIN%
 
-:: Close cmd and launch plugin
+:: Close cmd and launch this VST3 directly in Savihost. Do not use the
+:: system .vst3 association, which belongs to PHI standalone.
 echo.
 echo ======================================================================
 echo VST3 Build complete. Launching %PLUGIN_NAME% in 2 seconds...
 echo ======================================================================
 timeout /t 2 /nobreak >nul
-start "" "%FINAL_PLUGIN%"
+if not exist "%SAVIHOST%" (
+    echo WARNING: Savihost was not found at:
+    echo %SAVIHOST%
+    echo.
+    echo VST3 build completed successfully, but PHI VST3 was not launched.
+    exit /b 0
+)
+start "" "%SAVIHOST%" "%FINAL_PLUGIN%"
 exit /b 0

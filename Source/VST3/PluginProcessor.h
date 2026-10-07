@@ -94,6 +94,9 @@ public:
     bool consumeMidiKeyboardPitchBendDisplay(int& value) noexcept;
     bool consumeMidiKeyboardModulationDisplay(int& value) noexcept;
     double getAudioCpuUsagePercent() const noexcept;
+    void setStandalonePhysicalOutputChannelCount(
+        int channelCount) noexcept;
+    int getStandalonePhysicalOutputPairCount() const noexcept;
     void sampleSuspensionDiagnostics();
     juce::String buildProcessorDiagnosticsText() const;
 
@@ -221,6 +224,7 @@ private:
     std::atomic<bool> sendGeneratedMidiToHost { true };
     std::atomic<bool> midiThruEnabled { false };
     std::atomic<bool> pendingMidiOutputReset { false };
+    std::atomic<int> standalonePhysicalOutputChannelCount { -1 };
 
     std::atomic<juce::uint32> diagnosticPrepareCalls { 0 };
     std::atomic<juce::uint32> diagnosticReleaseCalls { 0 };

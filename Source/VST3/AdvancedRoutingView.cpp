@@ -6,9 +6,12 @@ namespace
     constexpr auto canvasColour = 0xFF172338;
     constexpr auto nodeColour = 0xFF26364D;
     constexpr auto nodeBorderColour = 0xFF6B819E;
+    constexpr auto inputNodeColour = 0xFF284B3A;
+    constexpr auto inputNodeBorderColour = 0xFF4F8B68;
     constexpr auto effectNodeColour = 0xFF4B3726;
     constexpr auto effectNodeBorderColour = 0xFF96704A;
     constexpr auto outputNodeColour = 0xFF4A3040;
+    constexpr auto outputNodeBorderColour = 0xFF98556F;
     constexpr auto portColour = 0xFF4DA3FF;
     constexpr auto cableColour = 0xFF3A7BD5;
 }
@@ -79,6 +82,183 @@ juce::Point<int> AdvancedRoutingView::Canvas::snapPositionToGrid(
         juce::jmax(minimumNodePosition, snapValue(position.x)),
         juce::jmax(minimumNodePosition, snapValue(position.y))
     };
+}
+
+juce::Point<int> AdvancedRoutingView::Canvas::constrainNodePosition(
+    int movingNodeIndex,
+    juce::Point<int> desiredPosition) const
+{
+    if (! juce::isPositiveAndBelow(movingNodeIndex,
+                                   nodeEntries.size()))
+    {
+        return snapPositionToGrid(desiredPosition);
+    }
+
+    const auto& movingNode = nodeEntries.getReference(movingNodeIndex);
+    const auto currentBounds = getNodeBounds(movingNode);
+    const juce::Point<int> movingSize(currentBounds.getWidth(),
+                                      currentBounds.getHeight());
+    juce::Array<juce::Rectangle<int>> obstacles;
+    bool outputModuleAdded = false;
+
+    for (int i = 0; i < nodeEntries.size(); ++i)
+    {
+        const auto& node = nodeEntries.getReference(i);
+
+        if (node.kind == NodeKind::Output)
+        {
+            if (movingNode.kind == NodeKind::Output
+                || outputModuleAdded)
+                continue;
+
+            obstacles.add(getOutputModuleBounds());
+            outputModuleAdded = true;
+            continue;
+        }
+
+        if (i != movingNodeIndex)
+            obstacles.add(getNodeBounds(node));
+    }
+
+    const auto position = snapPositionToGrid(desiredPosition);
+    const juce::Rectangle<int> movingBounds(position, movingSize);
+    auto bestPosition = position;
+    int bestSnapDistance = moduleSnapDistance + 1;
+
+    for (const auto& obstacle : obstacles)
+    {
+        const bool verticallyAligned =
+            movingBounds.getBottom() > obstacle.getY()
+            && movingBounds.getY() < obstacle.getBottom();
+
+        if (verticallyAligned)
+        {
+            const int leftOfObstacle =
+                obstacle.getX() - moduleGap - movingSize.x;
+            const int rightOfObstacle =
+                obstacle.getRight() + moduleGap;
+            const int leftDistance =
+                std::abs(position.x - leftOfObstacle);
+            const int rightDistance =
+                std::abs(position.x - rightOfObstacle);
+
+            if (leftOfObstacle >= minimumNodePosition
+                && leftDistance < bestSnapDistance)
+            {
+                const juce::Point<int> candidate(leftOfObstacle,
+                                                 position.y);
+                if (! isNodePositionOverlapping(movingNodeIndex,
+                                                candidate))
+                {
+                    bestSnapDistance = leftDistance;
+                    bestPosition = candidate;
+                }
+            }
+
+            if (rightDistance < bestSnapDistance)
+            {
+                const juce::Point<int> candidate(rightOfObstacle,
+                                                 position.y);
+                if (! isNodePositionOverlapping(movingNodeIndex,
+                                                candidate))
+                {
+                    bestSnapDistance = rightDistance;
+                    bestPosition = candidate;
+                }
+            }
+        }
+
+        const bool horizontallyAligned =
+            movingBounds.getRight() > obstacle.getX()
+            && movingBounds.getX() < obstacle.getRight();
+
+        if (horizontallyAligned)
+        {
+            const int aboveObstacle =
+                obstacle.getY() - moduleGap - movingSize.y;
+            const int belowObstacle =
+                obstacle.getBottom() + moduleGap;
+            const int aboveDistance =
+                std::abs(position.y - aboveObstacle);
+            const int belowDistance =
+                std::abs(position.y - belowObstacle);
+
+            if (aboveObstacle >= minimumNodePosition
+                && aboveDistance < bestSnapDistance)
+            {
+                const juce::Point<int> candidate(position.x,
+                                                 aboveObstacle);
+                if (! isNodePositionOverlapping(movingNodeIndex,
+                                                candidate))
+                {
+                    bestSnapDistance = aboveDistance;
+                    bestPosition = candidate;
+                }
+            }
+
+            if (belowDistance < bestSnapDistance)
+            {
+                const juce::Point<int> candidate(position.x,
+                                                 belowObstacle);
+                if (! isNodePositionOverlapping(movingNodeIndex,
+                                                candidate))
+                {
+                    bestSnapDistance = belowDistance;
+                    bestPosition = candidate;
+                }
+            }
+        }
+    }
+
+    return bestPosition;
+}
+
+bool AdvancedRoutingView::Canvas::isNodePositionOverlapping(
+    int movingNodeIndex,
+    juce::Point<int> position) const
+{
+    if (! juce::isPositiveAndBelow(movingNodeIndex,
+                                   nodeEntries.size()))
+    {
+        return false;
+    }
+
+    const auto& movingNode = nodeEntries.getReference(movingNodeIndex);
+    const auto currentBounds = getNodeBounds(movingNode);
+    const juce::Rectangle<int> movingBounds(
+        position.x,
+        position.y,
+        currentBounds.getWidth(),
+        currentBounds.getHeight());
+    bool outputModuleChecked = false;
+
+    for (int i = 0; i < nodeEntries.size(); ++i)
+    {
+        const auto& node = nodeEntries.getReference(i);
+
+        if (node.kind == NodeKind::Output)
+        {
+            if (movingNode.kind == NodeKind::Output
+                || outputModuleChecked)
+            {
+                continue;
+            }
+
+            outputModuleChecked = true;
+            if (movingBounds.intersects(getOutputModuleBounds()))
+                return true;
+
+            continue;
+        }
+
+        if (i != movingNodeIndex
+            && movingBounds.intersects(getNodeBounds(node)))
+        {
+            return true;
+        }
+    }
+
+    return false;
 }
 
 juce::Rectangle<int>
@@ -445,7 +625,10 @@ void AdvancedRoutingView::Canvas::paint(juce::Graphics& g)
         juce::Colour border(nodeBorderColour);
 
         if (node.kind == NodeKind::AudioInput)
-            fill = juce::Colour(0xFF284B3A);
+        {
+            fill = juce::Colour(inputNodeColour);
+            border = juce::Colour(inputNodeBorderColour);
+        }
         else if (node.kind == NodeKind::Effect)
         {
             fill = juce::Colour(effectNodeColour);
@@ -499,7 +682,7 @@ void AdvancedRoutingView::Canvas::paint(juce::Graphics& g)
     {
         g.setColour(juce::Colour(outputNodeColour));
         g.fillRoundedRectangle(outputBounds, 8.0f);
-        g.setColour(juce::Colour(nodeBorderColour));
+        g.setColour(juce::Colour(outputNodeBorderColour));
         g.drawRoundedRectangle(outputBounds, 8.0f, 1.5f);
 
         g.setColour(juce::Colours::white);
@@ -514,7 +697,8 @@ void AdvancedRoutingView::Canvas::paint(juce::Graphics& g)
             juce::Justification::centredLeft,
             1);
 
-        g.setColour(juce::Colour(nodeBorderColour).withAlpha(0.45f));
+        g.setColour(
+            juce::Colour(outputNodeBorderColour).withAlpha(0.45f));
         g.drawHorizontalLine(
             juce::roundToInt(outputBounds.getY()
                              + outputHeaderHeight),
@@ -541,15 +725,23 @@ void AdvancedRoutingView::Canvas::paint(juce::Graphics& g)
                 continue;
 
             const auto port = getInputPort(*outputNode);
-            g.setColour(juce::Colour(portColour));
+            g.setColour(
+                outputNode->available
+                    ? juce::Colour(portColour)
+                    : juce::Colour(outputNodeBorderColour)
+                          .withAlpha(0.45f));
             g.fillEllipse(port.x - portRadius,
                           port.y - portRadius,
                           portRadius * 2.0f,
                           portRadius * 2.0f);
 
-            g.setColour(busIndex == 0
-                            ? juce::Colours::white
-                            : juce::Colours::lightgrey);
+            g.setColour(
+                outputNode->available
+                    ? (busIndex == 0
+                           ? juce::Colours::white
+                           : juce::Colours::lightgrey)
+                    : juce::Colour(outputNodeBorderColour)
+                          .withAlpha(0.55f));
             g.setFont(juce::Font(
                 juce::FontOptions(busIndex == 0 ? 11.5f : 10.5f,
                                   busIndex == 0
@@ -569,7 +761,8 @@ void AdvancedRoutingView::Canvas::paint(juce::Graphics& g)
             if (busIndex < outputBusCount - 1)
             {
                 g.setColour(
-                    juce::Colour(nodeBorderColour).withAlpha(0.16f));
+                    juce::Colour(outputNodeBorderColour)
+                        .withAlpha(0.16f));
                 g.drawHorizontalLine(
                     juce::roundToInt(port.y
                                      + outputRowHeight * 0.5f),
@@ -577,6 +770,7 @@ void AdvancedRoutingView::Canvas::paint(juce::Graphics& g)
                     outputBounds.getRight() - 10.0f);
             }
         }
+
     }
 }
 
@@ -682,6 +876,11 @@ void AdvancedRoutingView::Canvas::mouseDown(
         const auto& node = nodeEntries.getReference(draggedNodeIndex);
         dragOffset = position.toInt()
                      - getNodeBounds(node).getPosition();
+        dragStartPosition = node.position;
+        lastValidDragPosition = node.position;
+        hasValidDragPosition = ! isNodePositionOverlapping(
+            draggedNodeIndex,
+            node.position);
     }
     else
     {
@@ -720,8 +919,12 @@ void AdvancedRoutingView::Canvas::mouseDrag(
 
     auto& node = nodeEntries.getReference(draggedNodeIndex);
     hoveredConnectionIndex = -1;
-    const auto newPosition = snapPositionToGrid(
+    const auto newPosition = constrainNodePosition(
+        draggedNodeIndex,
         event.position.toInt() - dragOffset);
+    const bool newPositionIsValid = ! isNodePositionOverlapping(
+        draggedNodeIndex,
+        newPosition);
 
     if (node.kind == NodeKind::Output)
     {
@@ -732,6 +935,12 @@ void AdvancedRoutingView::Canvas::mouseDrag(
     else
     {
         node.position = newPosition;
+    }
+
+    if (newPositionIsValid)
+    {
+        lastValidDragPosition = newPosition;
+        hasValidDragPosition = true;
     }
 
     updateCanvasSizeFromNodes(false);
@@ -822,7 +1031,28 @@ void AdvancedRoutingView::Canvas::mouseUp(
     if (juce::isPositiveAndBelow(draggedNodeIndex,
                                  nodeEntries.size()))
     {
-        const auto& node = nodeEntries.getReference(draggedNodeIndex);
+        auto& node = nodeEntries.getReference(draggedNodeIndex);
+
+        if (isNodePositionOverlapping(draggedNodeIndex,
+                                      node.position))
+        {
+            const auto restoredPosition =
+                hasValidDragPosition
+                    ? lastValidDragPosition
+                    : dragStartPosition;
+
+            if (node.kind == NodeKind::Output)
+            {
+                for (auto& outputNode : nodeEntries)
+                    if (outputNode.kind == NodeKind::Output)
+                        outputNode.position = restoredPosition;
+            }
+            else
+            {
+                node.position = restoredPosition;
+            }
+        }
+
         if (owner.onNodeMoved)
             owner.onNodeMoved(node.id, node.position);
 
@@ -830,6 +1060,7 @@ void AdvancedRoutingView::Canvas::mouseUp(
     }
 
     draggedNodeIndex = -1;
+    hasValidDragPosition = false;
 }
 
 void AdvancedRoutingView::Canvas::removeSelectedConnection()

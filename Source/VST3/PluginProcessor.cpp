@@ -800,6 +800,24 @@ void PolyHostPluginProcessor::processBlock(
         std::memory_order_relaxed);
 }
 
+void PolyHostPluginProcessor::setStandalonePhysicalOutputChannelCount(
+    int channelCount) noexcept
+{
+    standalonePhysicalOutputChannelCount.store(
+        juce::jmax(0, channelCount),
+        std::memory_order_release);
+}
+
+int PolyHostPluginProcessor::getStandalonePhysicalOutputPairCount()
+    const noexcept
+{
+    const int channelCount =
+        standalonePhysicalOutputChannelCount.load(
+            std::memory_order_acquire);
+
+    return channelCount < 0 ? -1 : channelCount / 2;
+}
+
 juce::AudioProcessorEditor* PolyHostPluginProcessor::createEditor()
 {
     return new PolyHostPluginEditor(*this);

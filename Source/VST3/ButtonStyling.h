@@ -230,6 +230,22 @@ namespace ButtonStyling
         int iconYOffset = 1;
     };
 
+    class MidiConnectorIconButton final : public juce::Button
+    {
+    public:
+        explicit MidiConnectorIconButton(
+            juce::Colour baseColourIn = defaultBackground(),
+            float cornerRadiusIn = defaultCornerRadius());
+
+        void paintButton(juce::Graphics& g,
+                         bool isMouseOverButton,
+                         bool isButtonDown) override;
+
+    private:
+        juce::Colour baseColour;
+        float cornerRadius = defaultCornerRadius();
+    };
+
     class RoundedTextButtonLookAndFeel final : public juce::LookAndFeel_V4
     {
     public:

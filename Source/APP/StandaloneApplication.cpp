@@ -2117,6 +2117,115 @@ public:
     }
 };
 
+class StandaloneAuxOutputRouter final
+    : public juce::AudioIODeviceCallback
+{
+public:
+    explicit StandaloneAuxOutputRouter(
+        PolyHostPluginProcessor& processorIn)
+        : processor(processorIn)
+    {
+    }
+
+    void setEnabled(bool shouldBeEnabled) noexcept
+    {
+        enabled.store(shouldBeEnabled,
+                      std::memory_order_release);
+    }
+
+    void audioDeviceIOCallbackWithContext(
+        const float* const* inputChannelData,
+        int numInputChannels,
+        float* const* outputChannelData,
+        int numOutputChannels,
+        int numSamples,
+        const juce::AudioIODeviceCallbackContext& context) override
+    {
+        juce::ignoreUnused(inputChannelData,
+                           numInputChannels,
+                           context);
+
+        for (int channel = 0;
+             channel < numOutputChannels;
+             ++channel)
+        {
+            if (outputChannelData[channel] != nullptr)
+            {
+                juce::FloatVectorOperations::clear(
+                    outputChannelData[channel],
+                    numSamples);
+            }
+        }
+
+        if (! enabled.load(std::memory_order_acquire)
+            || processor.isSuspended())
+            return;
+
+        for (int auxIndex = 0;
+             auxIndex < PluginCore::advancedAuxOutputCount;
+             ++auxIndex)
+        {
+            const int firstDeviceChannel =
+                2 + auxIndex * 2;
+
+            if (firstDeviceChannel >= numOutputChannels)
+                break;
+
+            const auto& source =
+                processor.getCore().getAuxOutputBuffer(auxIndex);
+            const int samplesToCopy =
+                juce::jmin(numSamples,
+                           source.getNumSamples());
+            const int channelsToCopy =
+                juce::jmin(
+                    2,
+                    juce::jmin(
+                        source.getNumChannels(),
+                        numOutputChannels - firstDeviceChannel));
+
+            for (int pairChannel = 0;
+                 pairChannel < channelsToCopy;
+                 ++pairChannel)
+            {
+                auto* destination =
+                    outputChannelData[
+                        firstDeviceChannel + pairChannel];
+
+                if (destination != nullptr
+                    && samplesToCopy > 0)
+                {
+                    juce::FloatVectorOperations::copy(
+                        destination,
+                        source.getReadPointer(pairChannel),
+                        samplesToCopy);
+                }
+            }
+        }
+    }
+
+    void audioDeviceAboutToStart(
+        juce::AudioIODevice* device) override
+    {
+        processor.setStandalonePhysicalOutputChannelCount(
+            device != nullptr
+                ? device->getActiveOutputChannels()
+                      .countNumberOfSetBits()
+                : 0);
+    }
+
+    void audioDeviceStopped() override
+    {
+        processor.setStandalonePhysicalOutputChannelCount(0);
+    }
+
+private:
+    PolyHostPluginProcessor& processor;
+    std::atomic<bool> enabled { false };
+
+    JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(
+        StandaloneAuxOutputRouter)
+};
+
 class StandaloneAudioSettingsComponent final : public juce::Component
 {
 public:
@@ -3000,10 +3109,15 @@ private:
             {
                 maxNumOutputs =
                     juce::jmax(
-                        0,
+                        maxNumOutputs,
                         outputBus->getDefaultLayout().size());
             }
         }
+
+        maxNumOutputs =
+            juce::jmax(
+                maxNumOutputs,
+                (PluginCore::advancedAuxOutputCount + 1) * 2);
 
         auto content =
             std::make_unique<
@@ -3087,6 +3201,16 @@ public:
             &playHeadTracker);
         pluginHolder->startPlaying();
 
+        // The holder owns the first device callback and renders MAIN. JUCE
+        // mixes later callbacks into that result, so this callback supplies
+        // only the physical AUX pairs without replacing MAIN.
+        auxOutputRouter =
+            std::make_unique<StandaloneAuxOutputRouter>(
+                *processor);
+        pluginHolder->deviceManager.addAudioCallback(
+            auxOutputRouter.get());
+        auxOutputRouter->setEnabled(true);
+
         auto* editor =
             new PolyHostPluginEditor(*processor, &menuExtension);
 
@@ -3155,6 +3279,19 @@ public:
         const auto metronomeModeToSave =
             playHeadTracker.getMetronomeMode();
 
+        if (auxOutputRouter != nullptr)
+        {
+            auxOutputRouter->setEnabled(false);
+
+            if (pluginHolder != nullptr)
+            {
+                pluginHolder->deviceManager.removeAudioCallback(
+                    auxOutputRouter.get());
+            }
+
+            auxOutputRouter.reset();
+        }
+
         if (pluginHolder != nullptr)
             pluginHolder->stopPlaying();
 
@@ -3198,6 +3335,9 @@ public:
     {
         if (pluginHolder != nullptr)
         {
+            if (auxOutputRouter != nullptr)
+                auxOutputRouter->setEnabled(false);
+
             DebugLog::write("[Shutdown] audio stop begin");
             pluginHolder->stopPlaying();
             DebugLog::write("[Shutdown] audio stop returned");
@@ -3220,6 +3360,9 @@ public:
         if (pluginHolder == nullptr || mainView == nullptr)
             return false;
 
+        if (auxOutputRouter != nullptr)
+            auxOutputRouter->setEnabled(false);
+
         pluginHolder->stopPlaying();
 
         const bool loaded =
@@ -3227,6 +3370,9 @@ public:
                                      openInNewTab);
 
         pluginHolder->startPlaying();
+
+        if (auxOutputRouter != nullptr)
+            auxOutputRouter->setEnabled(true);
 
         return loaded;
     }
@@ -3320,6 +3466,7 @@ private:
         playHead,
         midiOutputController
     };
+    std::unique_ptr<StandaloneAuxOutputRouter> auxOutputRouter;
     std::unique_ptr<juce::StandalonePluginHolder> pluginHolder;
     StandaloneMenuExtension menuExtension;
     PolyHostPluginProcessor* processor = nullptr;

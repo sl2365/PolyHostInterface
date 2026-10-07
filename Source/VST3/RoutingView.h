@@ -111,7 +111,6 @@ private:
         static int knobValueToAdjustMethod(double knobValue);
 
         ModuleEntry entry;
-        ButtonStyling::RoundedTextButtonLookAndFeel roundedButtonLookAndFeel { ButtonStyling::defaultCornerRadius() };
         VolumeKnobLookAndFeel volumeKnobLookAndFeel;
         DragHandle dragHandle;
         juce::Label nameLabel;
@@ -123,7 +122,7 @@ private:
         juce::Slider adjustMethodSlider;
         juce::Label adjustMethodValueLabel;
         ButtonStyling::SmallIconButton closeButton { ButtonStyling::Glyphs::close() };
-        juce::TextButton midiButton { "MIDI Ch" };
+        ButtonStyling::MidiConnectorIconButton midiButton;
         ButtonStyling::StatusIconButton bypassButton
         {
             ButtonStyling::Glyphs::activeTick(),

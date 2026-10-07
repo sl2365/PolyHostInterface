@@ -3503,6 +3503,19 @@ void MainView::timerCallback()
 {
     processor.sampleSuspensionDiagnostics();
 
+    const int standaloneOutputPairCount =
+        processor.getStandalonePhysicalOutputPairCount();
+
+    if (standaloneOutputPairCount
+            != lastKnownStandaloneOutputPairCount)
+    {
+        lastKnownStandaloneOutputPairCount =
+            standaloneOutputPairCount;
+
+        if (isShowingAdvancedRoutingView())
+            rebuildAdvancedRoutingView();
+    }
+
     auto controllerDisplayValue = 0;
     if (processor.consumeMidiKeyboardPitchBendDisplay(
             controllerDisplayValue))
@@ -5310,6 +5323,16 @@ void MainView::rebuildRoutingView()
 void MainView::rebuildAdvancedRoutingView()
 {
     auto& core = processor.getCore();
+    const int standaloneOutputPairCount =
+        processor.getStandalonePhysicalOutputPairCount();
+
+    auto outputBusIsAvailable =
+        [standaloneOutputPairCount](int outputBusIndex)
+        {
+            return standaloneOutputPairCount < 0
+                   || outputBusIndex
+                          < standaloneOutputPairCount;
+        };
 
     if (! core.isAdvancedRoutingInitialised())
     {
@@ -5368,6 +5391,7 @@ void MainView::rebuildAdvancedRoutingView()
     mainNode.subtitle = "Primary stereo output";
     mainNode.kind = AdvancedRoutingView::NodeKind::Output;
     mainNode.acceptsInput = true;
+    mainNode.available = outputBusIsAvailable(0);
     mainNode.outputBusIndex = 0;
     mainNode.position = core.getAdvancedRoutingNodePosition(
         mainNode.id,
@@ -5385,6 +5409,8 @@ void MainView::rebuildAdvancedRoutingView()
         auxNode.subtitle = "Stereo output bus";
         auxNode.kind = AdvancedRoutingView::NodeKind::Output;
         auxNode.acceptsInput = true;
+        auxNode.available =
+            outputBusIsAvailable(auxIndex + 1);
         auxNode.outputBusIndex = auxIndex + 1;
         auxNode.position = mainNode.position;
         nodes.add(auxNode);
@@ -6257,15 +6283,9 @@ bool MainView::saveSessionToFile(const juce::File& file)
         }
     }
 
-    SessionData sessionData;
-
-    {
-        ScopedPresetProcessingSuspension presetProcessingSuspension(
-            processor,
-            "Save Preset State");
-
-        sessionData = core.buildSessionData();
-    }
+    // Saving is a read-only snapshot. Suspending the complete PHI processor
+    // here created an audible gap in otherwise uninterrupted playback.
+    SessionData sessionData = core.buildSessionData();
 
     sessionData.name = file.getFileNameWithoutExtension();
 

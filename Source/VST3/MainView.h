@@ -752,6 +752,7 @@ private:
     bool lastKnownShowingState = true;
     int lastDisplayedCpuPercent = 0;
     juce::uint32 lastCpuDisplayUpdateMs = 0;
+    int lastKnownStandaloneOutputPairCount = -2;
     bool pendingMissingPluginPrompt = false;
     int pendingMissingPluginPromptDelayTicks = 0;
     bool suppressEmptyEditorResize = false;

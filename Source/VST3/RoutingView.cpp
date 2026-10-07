@@ -313,11 +313,6 @@ RoutingView::ModuleRow::ModuleRow()
     addAndMakeVisible(infoButton);
     addAndMakeVisible(closeButton);
 
-    midiButton.setLookAndFeel(&roundedButtonLookAndFeel);
-
-    midiButton.setColour(juce::TextButton::buttonColourId, ButtonStyling::defaultBackground());
-    midiButton.setColour(juce::TextButton::buttonOnColourId, ButtonStyling::defaultBackground());
-
     closeButton.setTooltip(ButtonStyling::Tooltips::closeTab());
     midiButton.setTooltip(ButtonStyling::Tooltips::midiAssignments());
     bypassButton.setTooltip(ButtonStyling::Tooltips::toggleBypass());
@@ -357,7 +352,6 @@ RoutingView::ModuleRow::ModuleRow()
 
 RoutingView::ModuleRow::~ModuleRow()
 {
-    midiButton.setLookAndFeel(nullptr);
     volumeSlider.setLookAndFeel(nullptr);
     adjustMethodSlider.setLookAndFeel(nullptr);
 }
@@ -414,8 +408,6 @@ void RoutingView::ModuleRow::setModule(const ModuleEntry& newEntry)
         typeButton.setButtonText(ButtonStyling::Labels::empty());
         typeButton.setColour(juce::TextButton::buttonColourId, juce::Colour(0xFF555555));
     }
-
-    midiButton.setButtonText("MIDI Ch");
 
     midiButton.setTooltip(
         entry.midiAssignmentsTooltip.isNotEmpty()
@@ -495,9 +487,10 @@ void RoutingView::ModuleRow::resized()
     bypassButton.setBounds(bypassBounds);
     area.removeFromRight(8);
 
-    auto midiArea = area.removeFromRight(80);
-    midiButton.setBounds(midiArea.reduced(0, 8));
-    area.removeFromRight(10);
+    auto midiArea = area.removeFromRight(ButtonStyling::defaultButtonWidth());
+    midiArea = midiArea.withSizeKeepingCentre(midiArea.getWidth(), buttonHeight);
+    midiButton.setBounds(midiArea);
+    area.removeFromRight(8);
 
     auto volumeSlot = area.removeFromRight(50);
     auto volumeStack = juce::Rectangle<int>(volumeSlot.getX(),

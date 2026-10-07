@@ -36,10 +36,6 @@ public:
         enabledButton.setClickingTogglesState(true);
         enabledButton.setTooltip(
             "Assign this parameter to the next free Macro, or pause/resume its existing Macro");
-        enabledButton.setColour(juce::ToggleButton::tickColourId,
-                                juce::Colour(macroColour));
-        enabledButton.setColour(juce::ToggleButton::tickDisabledColourId,
-                                juce::Colour(macroColour).withAlpha(0.35f));
         enabledButton.onClick = [this]
         {
             owner.changeMappingEnabled(entry,
@@ -51,6 +47,13 @@ public:
     void setEntry(const ParameterEntry& newEntry)
     {
         entry = newEntry;
+        const auto tabColour = colourForTab(entry.tabIndex)
+                                   .interpolatedWith(juce::Colours::white,
+                                                     0.35f);
+        enabledButton.setColour(juce::ToggleButton::tickColourId,
+                                tabColour);
+        enabledButton.setColour(juce::ToggleButton::tickDisabledColourId,
+                                tabColour.withAlpha(0.35f));
         enabledButton.setToggleState(entry.macroIndex >= 0
                                          && entry.mappingEnabled,
                                      juce::dontSendNotification);
@@ -328,7 +331,7 @@ MacroMappingsView::MacroMappingsView()
     header.addColumn("Plugin", pluginColumn, 120, 120, 420);
     header.addColumn("Parameter", parameterColumn, 190, 150, 620);
     header.addColumn("Mapped", mappedColumn, 84, 72, 110);
-    header.addColumn("Targets", targetsColumn, 304, 272, 360);
+    header.addColumn("Seqwencer Targets", targetsColumn, 304, 272, 360);
     header.addColumn("Macro", macroColumn, 134, 118, 170);
     header.setPopupMenuActive(false);
     header.setStretchToFitActive(true);

@@ -399,6 +399,85 @@ namespace ButtonStyling
                          1);
     }
 
+    MidiConnectorIconButton::MidiConnectorIconButton(
+        juce::Colour baseColourIn,
+        float cornerRadiusIn)
+        : juce::Button("MidiConnectorIconButton"),
+          baseColour(baseColourIn),
+          cornerRadius(cornerRadiusIn)
+    {
+    }
+
+    void MidiConnectorIconButton::paintButton(
+        juce::Graphics& g,
+        bool isMouseOverButton,
+        bool isButtonDown)
+    {
+        auto area = getLocalBounds().toFloat().reduced(0.5f);
+        auto drawColour = baseColour;
+        const bool enabled = isEnabled();
+
+        if (! enabled)
+            drawColour = drawColour.withAlpha(0.5f);
+
+        drawButtonBackground(g,
+                             area,
+                             drawColour,
+                             enabled ? isMouseOverButton : false,
+                             enabled ? isButtonDown : false,
+                             false,
+                             cornerRadius);
+
+        auto iconColour = textColour(false);
+        if (! enabled)
+            iconColour = iconColour.withAlpha(0.5f);
+
+        const auto centre = area.getCentre().translated(0.0f, 0.5f);
+        const float cx = centre.x;
+        const float cy = centre.y;
+
+        juce::Path socketOutline;
+        socketOutline.startNewSubPath(cx - 6.2f, cy - 4.8f);
+        socketOutline.cubicTo(cx - 8.0f, cy - 2.4f,
+                              cx - 7.8f, cy + 4.8f,
+                              cx, cy + 7.0f);
+        socketOutline.cubicTo(cx + 7.8f, cy + 4.8f,
+                              cx + 8.0f, cy - 2.4f,
+                              cx + 6.2f, cy - 4.8f);
+        socketOutline.lineTo(cx + 3.8f, cy - 6.7f);
+        socketOutline.lineTo(cx + 2.2f, cy - 5.0f);
+        socketOutline.quadraticTo(cx + 1.3f, cy - 4.0f,
+                                  cx, cy - 4.0f);
+        socketOutline.quadraticTo(cx - 1.3f, cy - 4.0f,
+                                  cx - 2.2f, cy - 5.0f);
+        socketOutline.lineTo(cx - 3.8f, cy - 6.7f);
+        socketOutline.closeSubPath();
+
+        g.setColour(iconColour);
+        g.strokePath(socketOutline,
+                     juce::PathStrokeType(1.45f,
+                                          juce::PathStrokeType::curved,
+                                          juce::PathStrokeType::rounded));
+
+        constexpr float pinRadius = 1.15f;
+        const juce::Point<float> pins[]
+        {
+            { cx - 5.0f, cy - 0.4f },
+            { cx + 5.0f, cy - 0.4f },
+            { cx - 2.8f, cy + 2.8f },
+            { cx + 2.8f, cy + 2.8f },
+            { cx,        cy + 4.8f }
+        };
+
+        for (const auto pin : pins)
+        {
+            g.fillEllipse(pin.x - pinRadius,
+                          pin.y - pinRadius,
+                          pinRadius * 2.0f,
+                          pinRadius * 2.0f);
+        }
+    }
+
     RoundedTextButtonLookAndFeel::RoundedTextButtonLookAndFeel(float cornerRadiusIn)
         : cornerRadius(cornerRadiusIn)
     {

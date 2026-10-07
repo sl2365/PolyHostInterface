@@ -22,6 +22,7 @@ public:
         NodeKind kind = NodeKind::Synth;
         bool acceptsInput = false;
         bool producesOutput = false;
+        bool available = true;
         int outputBusIndex = -1;
         juce::Point<int> position;
     };
@@ -85,7 +86,9 @@ private:
         static constexpr int canvasContentPadding = 240;
         static constexpr int gridSnapSize = 5;
         static constexpr int majorGridSize = 20;
-        static constexpr int minimumNodePosition = 20;
+        static constexpr int minimumNodePosition = 0;
+        static constexpr int moduleGap = 10;
+        static constexpr int moduleSnapDistance = 10;
         static constexpr int nodeWidth = 168;
         static constexpr int nodeHeight = 66;
         static constexpr int outputModuleWidth = 96;
@@ -116,6 +119,12 @@ private:
         void updateCanvasSizeFromNodes(bool allowShrink = true);
         static juce::Point<int> snapPositionToGrid(
             juce::Point<int> position);
+        juce::Point<int> constrainNodePosition(
+            int movingNodeIndex,
+            juce::Point<int> desiredPosition) const;
+        bool isNodePositionOverlapping(
+            int movingNodeIndex,
+            juce::Point<int> position) const;
         static juce::Colour getCableBaseColour();
         bool isConnectionAttachedToSelectedNode(
             const AdvancedRoutingConnection& connection) const;
@@ -126,6 +135,9 @@ private:
         juce::Array<AdvancedRoutingConnection> connectionEntries;
         int draggedNodeIndex = -1;
         juce::Point<int> dragOffset;
+        juce::Point<int> dragStartPosition;
+        juce::Point<int> lastValidDragPosition;
+        bool hasValidDragPosition = false;
         int cableSourceNodeIndex = -1;
         juce::Point<float> cableEnd;
         int reconnectConnectionIndex = -1;
