@@ -145,6 +145,7 @@ static constexpr auto kMidiMonitorShowAftertouch            = "midiMonitorShowAf
 static constexpr auto kMidiMonitorShowSysEx                 = "midiMonitorShowSysEx";
 static constexpr auto kMidiMonitorShowRealtime              = "midiMonitorShowRealtime";
 static constexpr auto kMidiMonitorShowSystemCommon          = "midiMonitorShowSystemCommon";
+static constexpr auto kMidiMonitorHistoryMinutes            = "midiMonitorHistoryMinutes";
 static constexpr auto kMidiMonitorColumnTime                = "midiMonitorColumnTime";
 static constexpr auto kMidiMonitorColumnSource              = "midiMonitorColumnSource";
 static constexpr auto kMidiMonitorColumnType                = "midiMonitorColumnType";
@@ -1435,6 +1436,48 @@ bool AppSettings::getMidiMonitorShowRealtime() const
 bool AppSettings::getMidiMonitorShowSystemCommon() const
 {
     return xml->getBoolAttribute(kMidiMonitorShowSystemCommon, false);
+}
+
+int AppSettings::getMidiMonitorHistoryMinutes() const
+{
+    const int minutes =
+        xml->getIntAttribute(kMidiMonitorHistoryMinutes, 5);
+
+    switch (minutes)
+    {
+        case 1:
+        case 2:
+        case 5:
+        case 10:
+        case 15:
+        case 30:
+            return minutes;
+
+        default:
+            return 5;
+    }
+}
+
+void AppSettings::setMidiMonitorHistoryMinutes(int minutes)
+{
+    switch (minutes)
+    {
+        case 1:
+        case 2:
+        case 5:
+        case 10:
+        case 15:
+        case 30:
+            xml->setAttribute(kMidiMonitorHistoryMinutes,
+                              minutes);
+            break;
+
+        default:
+            xml->setAttribute(kMidiMonitorHistoryMinutes, 5);
+            break;
+    }
+
+    save();
 }
 
 void AppSettings::setMidiMonitorFilterSettings(bool hideClock,

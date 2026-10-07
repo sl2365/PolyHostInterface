@@ -1,4 +1,5 @@
 #include "AdvancedRoutingView.h"
+#include "ButtonStyling.h"
 
 namespace
 {
@@ -16,11 +17,438 @@ namespace
     constexpr auto cableColour = 0xFF3A7BD5;
 }
 
+class AdvancedRoutingView::Canvas::NodeControls final
+    : public juce::Component
+{
+public:
+    explicit NodeControls(AdvancedRoutingView& ownerIn)
+        : owner(ownerIn),
+          closeButton(ButtonStyling::Glyphs::close(),
+                      ButtonStyling::defaultBackground(),
+                      3.0f,
+                      12.5f,
+                      0),
+          midiButton(ButtonStyling::defaultBackground(), 3.0f),
+          bypassButton(ButtonStyling::Glyphs::activeTick(),
+                       ButtonStyling::Glyphs::bypassCross(),
+                       ButtonStyling::bypassActiveBackground(),
+                       ButtonStyling::bypassInactiveBackground(),
+                       3.0f,
+                       12.5f,
+                       0),
+          soloButton(ButtonStyling::Glyphs::solo(),
+                     ButtonStyling::Glyphs::solo(),
+                     juce::Colour(0xFFB8860B),
+                     ButtonStyling::defaultBackground(),
+                     3.0f,
+                     11.5f,
+                     0),
+          infoButton(ButtonStyling::Glyphs::info(),
+                     ButtonStyling::defaultBackground(),
+                     3.0f,
+                     12.5f,
+                     0)
+    {
+        setInterceptsMouseClicks(false, true);
+
+        typeButton.setColour(juce::TextButton::textColourOffId,
+                             juce::Colours::white);
+        typeButton.setTooltip(ButtonStyling::Tooltips::viewTab());
+        typeButton.setWantsKeyboardFocus(false);
+        typeButton.onClick = [this]
+        {
+            if (owner.onSelectTab)
+                owner.onSelectTab(entry.tabIndex);
+        };
+        addAndMakeVisible(typeButton);
+
+        configureLabel(volumeLabel, "VOL", 8.0f,
+                       juce::Colours::lightgrey);
+        configureLabel(volumeValueLabel, "0", 8.0f,
+                       juce::Colours::white);
+        configureLabel(adjustLabel, "ADJ", 8.0f,
+                       juce::Colours::lightgrey);
+        configureLabel(adjustMethodValueLabel, "Global", 8.0f,
+                       juce::Colours::white);
+        addAndMakeVisible(volumeLabel);
+        addAndMakeVisible(volumeValueLabel);
+        addAndMakeVisible(adjustLabel);
+        addAndMakeVisible(adjustMethodValueLabel);
+
+        configureKnob(volumeSlider);
+        volumeSlider.setRange(-12.0, 12.0, 0.1);
+        volumeSlider.setDoubleClickReturnValue(true, 0.0);
+        volumeSlider.setTooltip(
+            "Set this tab's output volume from -12 dB to +12 dB\n"
+            "Double-click to reset to 0 dB");
+        volumeSlider.onValueChange = [this]
+        {
+            updateVolumeValueLabel();
+
+            if (owner.onSetOutputGainDb)
+            {
+                owner.onSetOutputGainDb(
+                    entry.tabIndex,
+                    static_cast<float>(volumeSlider.getValue()));
+            }
+        };
+
+        configureKnob(adjustMethodSlider);
+        adjustMethodSlider.setRange(0.0, 2.0, 1.0);
+        adjustMethodSlider.setDoubleClickReturnValue(true, 1.0);
+        adjustMethodSlider.setMouseDragSensitivity(60);
+        adjustMethodSlider.setVelocityBasedMode(false);
+        adjustMethodSlider.setTooltip(
+            "Set the Pointer Control adjustment method\n"
+            "Left: Scroll  Centre: Global  Right: Drag\n"
+            "Double-click to reset to Global");
+        adjustMethodSlider.onValueChange = [this]
+        {
+            updateAdjustMethodValueLabel();
+
+            if (owner.onSetPointerAdjustMethodOverride)
+            {
+                owner.onSetPointerAdjustMethodOverride(
+                    entry.tabIndex,
+                    knobValueToAdjustMethod(
+                        adjustMethodSlider.getValue()));
+            }
+        };
+
+        addAndMakeVisible(volumeSlider);
+        addAndMakeVisible(adjustMethodSlider);
+        addAndMakeVisible(midiButton);
+        addAndMakeVisible(bypassButton);
+        addAndMakeVisible(soloButton);
+        addAndMakeVisible(infoButton);
+        addAndMakeVisible(closeButton);
+
+        closeButton.setTooltip(ButtonStyling::Tooltips::closeTab());
+        midiButton.setTooltip(ButtonStyling::Tooltips::midiAssignments());
+        bypassButton.setTooltip(ButtonStyling::Tooltips::toggleBypass());
+        soloButton.setTooltip(ButtonStyling::Tooltips::toggleSolo());
+        infoButton.setTooltip(ButtonStyling::Tooltips::routingInfo());
+
+        midiButton.onClick = [this]
+        {
+            if (owner.onShowMidiAssignments)
+            {
+                owner.onShowMidiAssignments(entry.tabIndex,
+                                            &midiButton);
+            }
+        };
+
+        bypassButton.onClick = [this]
+        {
+            if (owner.onToggleBypass)
+                owner.onToggleBypass(entry.tabIndex);
+        };
+
+        soloButton.onClick = [this]
+        {
+            if (owner.onToggleSolo)
+                owner.onToggleSolo(entry.tabIndex);
+        };
+
+        infoButton.onClick = [this]
+        {
+            if (owner.onShowPluginInfo)
+                owner.onShowPluginInfo(entry.tabIndex, &infoButton);
+        };
+
+        closeButton.onClick = [this]
+        {
+            if (owner.onCloseTab)
+                owner.onCloseTab(entry.tabIndex);
+        };
+
+        for (auto* button : { static_cast<juce::Button*>(&midiButton),
+                              static_cast<juce::Button*>(&bypassButton),
+                              static_cast<juce::Button*>(&soloButton),
+                              static_cast<juce::Button*>(&infoButton),
+                              static_cast<juce::Button*>(&closeButton) })
+        {
+            button->setWantsKeyboardFocus(false);
+        }
+    }
+
+    ~NodeControls() override
+    {
+        volumeSlider.setLookAndFeel(nullptr);
+        adjustMethodSlider.setLookAndFeel(nullptr);
+    }
+
+    void setNode(const NodeEntry& newEntry)
+    {
+        entry = newEntry;
+
+        if (entry.kind == NodeKind::Synth)
+        {
+            typeButton.setButtonText(ButtonStyling::Labels::synth());
+            typeButton.setColour(juce::TextButton::buttonColourId,
+                                 juce::Colour(0xFF3A7BD5));
+        }
+        else
+        {
+            typeButton.setButtonText(ButtonStyling::Labels::fx());
+            typeButton.setColour(juce::TextButton::buttonColourId,
+                                 juce::Colour(0xFFE67E22));
+        }
+
+        midiButton.setTooltip(
+            entry.midiAssignmentsTooltip.isNotEmpty()
+                ? entry.midiAssignmentsTooltip
+                : "MIDI Ch: None");
+
+        juce::String infoTooltip =
+            entry.routingTooltip.isNotEmpty()
+                ? entry.routingTooltip
+                : ButtonStyling::Tooltips::routingInfo();
+
+        if (entry.isMutedBySolo)
+            infoTooltip << "\n\nMuted by Solo";
+
+        if (entry.needsAttention
+            && entry.attentionMessage.isNotEmpty())
+        {
+            infoTooltip << "\n\nAttention required:\n"
+                        << entry.attentionMessage;
+        }
+
+        infoButton.setTooltip(
+            infoTooltip + "\n\nClick for plugin diagnostics.");
+        bypassButton.setVisualState(! entry.isBypassed);
+        soloButton.setVisualState(entry.isSoloed);
+
+        volumeSlider.setValue(entry.outputGainDb,
+                              juce::dontSendNotification);
+        adjustMethodSlider.setValue(
+            adjustMethodToKnobValue(
+                entry.pointerAdjustMethodOverride),
+            juce::dontSendNotification);
+        updateVolumeValueLabel();
+        updateAdjustMethodValueLabel();
+        repaint();
+    }
+
+    const juce::String& getNodeId() const noexcept
+    {
+        return entry.id;
+    }
+
+    void resized() override
+    {
+        typeButton.setBounds(4, 3, 42, 17);
+
+        volumeLabel.setBounds(4, 20, 31, 9);
+        volumeSlider.setBounds(8, 29, 23, 23);
+        volumeValueLabel.setBounds(4, 52, 31, 11);
+
+        adjustLabel.setBounds(35, 20, 38, 9);
+        adjustMethodSlider.setBounds(43, 29, 23, 23);
+        adjustMethodValueLabel.setBounds(34, 52, 40, 11);
+
+        midiButton.setBounds(76, 22, 26, 18);
+        bypassButton.setBounds(106, 22, 26, 18);
+        soloButton.setBounds(136, 22, 26, 18);
+        infoButton.setBounds(91, 44, 26, 18);
+        closeButton.setBounds(121, 44, 26, 18);
+    }
+
+private:
+    class CompactKnobLookAndFeel final : public juce::LookAndFeel_V4
+    {
+    public:
+        void drawRotarySlider(juce::Graphics& g,
+                              int x,
+                              int y,
+                              int width,
+                              int height,
+                              float sliderPosition,
+                              float rotaryStartAngle,
+                              float rotaryEndAngle,
+                              juce::Slider& slider) override
+        {
+            auto dialArea = juce::Rectangle<float>(
+                static_cast<float>(x),
+                static_cast<float>(y),
+                static_cast<float>(width),
+                static_cast<float>(height)).reduced(1.0f);
+            const auto centre = dialArea.getCentre();
+            const float radius = 0.5f
+                * juce::jmin(dialArea.getWidth(),
+                             dialArea.getHeight());
+            const float angle = rotaryStartAngle
+                + sliderPosition
+                    * (rotaryEndAngle - rotaryStartAngle);
+            const float opacity = slider.isEnabled() ? 1.0f
+                                                      : 0.38f;
+
+            const auto knobColour =
+                ButtonStyling::resolveBackgroundColour(
+                    ButtonStyling::defaultBackground(),
+                    slider.isMouseOverOrDragging(),
+                    slider.isMouseButtonDown(),
+                    false);
+
+            g.setColour(knobColour.withMultipliedAlpha(opacity));
+            g.fillEllipse(dialArea);
+
+            const auto borderColour =
+                ButtonStyling::outlineColour()
+                    .withAlpha(0.38f)
+                    .withMultipliedAlpha(opacity);
+
+            g.setColour(borderColour);
+            g.drawEllipse(dialArea.reduced(0.5f), 1.0f);
+
+            const auto pointerEnd = centre
+                + juce::Point<float>(std::sin(angle),
+                                     -std::cos(angle))
+                    * (radius * 0.67f);
+
+            g.drawLine(juce::Line<float>(centre, pointerEnd), 1.4f);
+        }
+    };
+
+    static void configureLabel(juce::Label& label,
+                               const juce::String& text,
+                               float fontHeight,
+                               juce::Colour colour)
+    {
+        label.setText(text, juce::dontSendNotification);
+        label.setJustificationType(juce::Justification::centred);
+        label.setColour(juce::Label::textColourId, colour);
+        label.setFont(ButtonStyling::textFont(fontHeight, true));
+        label.setInterceptsMouseClicks(false, false);
+    }
+
+    void configureKnob(juce::Slider& slider)
+    {
+        slider.setSliderStyle(
+            juce::Slider::RotaryHorizontalVerticalDrag);
+        slider.setTextBoxStyle(juce::Slider::NoTextBox,
+                               false,
+                               0,
+                               0);
+        slider.setRotaryParameters(
+            juce::MathConstants<float>::pi * 1.25f,
+            juce::MathConstants<float>::pi * 2.75f,
+            true);
+        slider.setLookAndFeel(&knobLookAndFeel);
+        slider.setWantsKeyboardFocus(false);
+    }
+
+    static double adjustMethodToKnobValue(int methodOverride)
+    {
+        switch (methodOverride)
+        {
+            case 1:  return 0.0;
+            case 2:  return 2.0;
+            case 0:
+            default: return 1.0;
+        }
+    }
+
+    static int knobValueToAdjustMethod(double knobValue)
+    {
+        switch (juce::jlimit(0,
+                             2,
+                             juce::roundToInt(knobValue)))
+        {
+            case 0:  return 1;
+            case 2:  return 2;
+            case 1:
+            default: return 0;
+        }
+    }
+
+    void updateVolumeValueLabel()
+    {
+        const double value = volumeSlider.getValue();
+        const int wholeValue = juce::roundToInt(value);
+        const bool isWholeValue =
+            std::abs(value - static_cast<double>(wholeValue))
+                < 0.001;
+        juce::String displayValue =
+            isWholeValue ? juce::String(wholeValue)
+                         : juce::String(value, 1);
+
+        if (value > 0.0)
+            displayValue = "+" + displayValue;
+
+        volumeValueLabel.setText(displayValue,
+                                 juce::dontSendNotification);
+    }
+
+    void updateAdjustMethodValueLabel()
+    {
+        juce::String displayValue;
+
+        switch (knobValueToAdjustMethod(
+            adjustMethodSlider.getValue()))
+        {
+            case 1:  displayValue = "Scroll"; break;
+            case 2:  displayValue = "Drag";   break;
+            case 0:
+            default: displayValue = "Global"; break;
+        }
+
+        adjustMethodValueLabel.setText(
+            displayValue,
+            juce::dontSendNotification);
+    }
+
+    AdvancedRoutingView& owner;
+    NodeEntry entry;
+    CompactKnobLookAndFeel knobLookAndFeel;
+    ButtonStyling::TypeBadgeButton typeButton;
+    juce::Label volumeLabel;
+    juce::Slider volumeSlider;
+    juce::Label volumeValueLabel;
+    juce::Label adjustLabel;
+    juce::Slider adjustMethodSlider;
+    juce::Label adjustMethodValueLabel;
+    ButtonStyling::SmallIconButton closeButton;
+    ButtonStyling::MidiConnectorIconButton midiButton;
+    ButtonStyling::StatusIconButton bypassButton;
+    ButtonStyling::StatusIconButton soloButton;
+    ButtonStyling::SmallIconButton infoButton;
+};
+
+class AdvancedRoutingView::Canvas::DragOverlay final
+    : public juce::Component
+{
+public:
+    explicit DragOverlay(Canvas& ownerIn)
+        : owner(ownerIn)
+    {
+        setInterceptsMouseClicks(false, false);
+    }
+
+    void paint(juce::Graphics& g) override
+    {
+        owner.paintDraggedNodeOverlay(g);
+    }
+
+private:
+    Canvas& owner;
+};
+
 AdvancedRoutingView::Canvas::Canvas(AdvancedRoutingView& ownerIn)
-    : owner(ownerIn)
+    : owner(ownerIn),
+      dragOverlay(std::make_unique<DragOverlay>(*this))
 {
     setWantsKeyboardFocus(true);
+    addChildComponent(dragOverlay.get());
     setSize(1800, 1200);
+}
+
+AdvancedRoutingView::Canvas::~Canvas() = default;
+
+void AdvancedRoutingView::Canvas::resized()
+{
+    dragOverlay->setBounds(getLocalBounds());
 }
 
 void AdvancedRoutingView::Canvas::setModel(
@@ -34,9 +462,51 @@ void AdvancedRoutingView::Canvas::setModel(
     hoveredConnectionIndex = -1;
     reconnectConnectionIndex = -1;
     reconnectEnd = ReconnectEnd::None;
+    draggedNodeIndex = -1;
+    hasValidDragPosition = false;
+    dragOverlay->setVisible(false);
 
+    rebuildNodeControls();
     updateCanvasSizeFromNodes();
     repaint();
+}
+
+void AdvancedRoutingView::Canvas::rebuildNodeControls()
+{
+    nodeControls.clear();
+
+    for (const auto& node : nodeEntries)
+    {
+        if (node.kind != NodeKind::Synth
+            && node.kind != NodeKind::Effect)
+        {
+            continue;
+        }
+
+        auto* controls = nodeControls.add(
+            new NodeControls(owner));
+        controls->setNode(node);
+        addAndMakeVisible(controls);
+    }
+
+    updateNodeControlBounds();
+}
+
+void AdvancedRoutingView::Canvas::updateNodeControlBounds()
+{
+    for (auto* controls : nodeControls)
+    {
+        const int nodeIndex = findNodeIndex(
+            controls->getNodeId());
+
+        if (juce::isPositiveAndBelow(nodeIndex,
+                                     nodeEntries.size()))
+        {
+            controls->setBounds(
+                getNodeBounds(
+                    nodeEntries.getReference(nodeIndex)));
+        }
+    }
 }
 
 void AdvancedRoutingView::Canvas::updateCanvasSizeFromNodes(
@@ -134,9 +604,13 @@ juce::Point<int> AdvancedRoutingView::Canvas::constrainNodePosition(
         if (verticallyAligned)
         {
             const int leftOfObstacle =
-                obstacle.getX() - moduleGap - movingSize.x;
+                snapPositionToGrid({
+                    obstacle.getX() - moduleGap - movingSize.x,
+                    position.y }).x;
             const int rightOfObstacle =
-                obstacle.getRight() + moduleGap;
+                snapPositionToGrid({
+                    obstacle.getRight() + moduleGap,
+                    position.y }).x;
             const int leftDistance =
                 std::abs(position.x - leftOfObstacle);
             const int rightDistance =
@@ -175,9 +649,13 @@ juce::Point<int> AdvancedRoutingView::Canvas::constrainNodePosition(
         if (horizontallyAligned)
         {
             const int aboveObstacle =
-                obstacle.getY() - moduleGap - movingSize.y;
+                snapPositionToGrid({
+                    position.x,
+                    obstacle.getY() - moduleGap - movingSize.y }).y;
             const int belowObstacle =
-                obstacle.getBottom() + moduleGap;
+                snapPositionToGrid({
+                    position.x,
+                    obstacle.getBottom() + moduleGap }).y;
             const int aboveDistance =
                 std::abs(position.y - aboveObstacle);
             const int belowDistance =
@@ -486,6 +964,245 @@ bool AdvancedRoutingView::Canvas::isConnectionAttachedToSelectedNode(
                   == NodeKind::Output;
 }
 
+void AdvancedRoutingView::Canvas::paintNode(
+    juce::Graphics& g,
+    const NodeEntry& node) const
+{
+    const auto bounds = getNodeBounds(node).toFloat();
+    juce::Colour fill(nodeColour);
+    juce::Colour border(nodeBorderColour);
+
+    if (node.kind == NodeKind::AudioInput)
+    {
+        fill = juce::Colour(inputNodeColour);
+        border = juce::Colour(inputNodeBorderColour);
+    }
+    else if (node.kind == NodeKind::Effect)
+    {
+        fill = juce::Colour(effectNodeColour);
+        border = juce::Colour(effectNodeBorderColour);
+    }
+
+    const bool isPluginNode =
+        node.kind == NodeKind::Synth
+        || node.kind == NodeKind::Effect;
+    const bool isInactive =
+        node.isMutedBySolo
+        || (node.isBypassed && ! node.isSoloed);
+
+    if (isPluginNode && node.needsAttention)
+    {
+        fill = juce::Colour(0xFF4A1F1F);
+        border = juce::Colour(0xFFFF6B6B).withAlpha(0.80f);
+    }
+    else if (isPluginNode && isInactive)
+    {
+        fill = fill.darker(0.35f);
+        border = border.withAlpha(0.55f);
+    }
+
+    g.setColour(fill);
+    g.fillRoundedRectangle(bounds, 8.0f);
+    g.setColour(border);
+    g.drawRoundedRectangle(bounds, 8.0f, 1.5f);
+
+    if (isPluginNode)
+    {
+        g.setColour(
+            node.needsAttention
+                ? juce::Colour(0xFFFF6B6B)
+                : (isInactive
+                       ? juce::Colours::lightgrey.withAlpha(0.65f)
+                       : juce::Colours::white));
+        g.setFont(juce::Font(
+            juce::FontOptions(12.0f, juce::Font::bold)));
+        g.drawFittedText(
+            node.label,
+            juce::Rectangle<float>(bounds.getX() + 50.0f,
+                                   bounds.getY() + 3.0f,
+                                   114.0f,
+                                   17.0f).toNearestInt(),
+            juce::Justification::centredLeft,
+            1);
+    }
+    else
+    {
+        auto textBounds = bounds.reduced(14.0f, 9.0f);
+        g.setColour(juce::Colours::white);
+        g.setFont(juce::Font(
+            juce::FontOptions(15.0f, juce::Font::bold)));
+        g.drawFittedText(
+            node.label,
+            textBounds.removeFromTop(24.0f).toNearestInt(),
+            juce::Justification::centredLeft,
+            1);
+
+        g.setColour(juce::Colours::lightgrey);
+        g.setFont(juce::Font(juce::FontOptions(11.5f)));
+        g.drawFittedText(node.subtitle,
+                         textBounds.toNearestInt(),
+                         juce::Justification::centredLeft,
+                         1);
+    }
+
+    if (node.acceptsInput)
+    {
+        g.setColour(juce::Colour(portColour));
+        const auto port = getInputPort(node);
+        g.fillEllipse(port.x - portRadius,
+                      port.y - portRadius,
+                      portRadius * 2.0f,
+                      portRadius * 2.0f);
+    }
+
+    if (node.producesOutput)
+    {
+        g.setColour(juce::Colour(portColour));
+        const auto port = getOutputPort(node);
+        g.fillEllipse(port.x - portRadius,
+                      port.y - portRadius,
+                      portRadius * 2.0f,
+                      portRadius * 2.0f);
+    }
+}
+
+void AdvancedRoutingView::Canvas::paintOutputModule(
+    juce::Graphics& g) const
+{
+    const auto outputBounds = getOutputModuleBounds().toFloat();
+
+    if (outputBounds.isEmpty())
+        return;
+
+    g.setColour(juce::Colour(outputNodeColour));
+    g.fillRoundedRectangle(outputBounds, 8.0f);
+    g.setColour(juce::Colour(outputNodeBorderColour));
+    g.drawRoundedRectangle(outputBounds, 8.0f, 1.5f);
+
+    g.setColour(juce::Colours::white);
+    g.setFont(juce::Font(juce::FontOptions(13.5f,
+                                           juce::Font::bold)));
+    g.drawFittedText(
+        "OUTPUTS",
+        juce::Rectangle<float>(outputBounds.getX() + 14.0f,
+                               outputBounds.getY() + 4.0f,
+                               outputBounds.getWidth() - 28.0f,
+                               24.0f).toNearestInt(),
+        juce::Justification::centredLeft,
+        1);
+
+    g.setColour(
+        juce::Colour(outputNodeBorderColour).withAlpha(0.45f));
+    g.drawHorizontalLine(
+        juce::roundToInt(outputBounds.getY()
+                         + outputHeaderHeight),
+        outputBounds.getX() + 10.0f,
+        outputBounds.getRight() - 10.0f);
+
+    for (int busIndex = 0;
+         busIndex < outputBusCount;
+         ++busIndex)
+    {
+        const NodeEntry* outputNode = nullptr;
+
+        for (const auto& node : nodeEntries)
+        {
+            if (node.kind == NodeKind::Output
+                && node.outputBusIndex == busIndex)
+            {
+                outputNode = &node;
+                break;
+            }
+        }
+
+        if (outputNode == nullptr)
+            continue;
+
+        const auto port = getInputPort(*outputNode);
+        g.setColour(
+            outputNode->available
+                ? juce::Colour(portColour)
+                : juce::Colour(outputNodeBorderColour)
+                      .withAlpha(0.45f));
+        g.fillEllipse(port.x - portRadius,
+                      port.y - portRadius,
+                      portRadius * 2.0f,
+                      portRadius * 2.0f);
+
+        g.setColour(
+            outputNode->available
+                ? (busIndex == 0
+                       ? juce::Colours::white
+                       : juce::Colours::lightgrey)
+                : juce::Colour(outputNodeBorderColour)
+                      .withAlpha(0.55f));
+        g.setFont(juce::Font(
+            juce::FontOptions(busIndex == 0 ? 11.5f : 10.5f,
+                              busIndex == 0
+                                  ? juce::Font::bold
+                                  : juce::Font::plain)));
+        g.drawFittedText(
+            outputNode->label,
+            juce::Rectangle<float>(
+                outputBounds.getX() + 16.0f,
+                port.y
+                    - static_cast<float>(outputRowHeight) * 0.5f,
+                outputBounds.getWidth() - 28.0f,
+                static_cast<float>(outputRowHeight)).toNearestInt(),
+            juce::Justification::centredLeft,
+            1);
+
+        if (busIndex < outputBusCount - 1)
+        {
+            g.setColour(
+                juce::Colour(outputNodeBorderColour)
+                    .withAlpha(0.16f));
+            g.drawHorizontalLine(
+                juce::roundToInt(port.y
+                                 + outputRowHeight * 0.5f),
+                outputBounds.getX() + 12.0f,
+                outputBounds.getRight() - 10.0f);
+        }
+    }
+}
+
+void AdvancedRoutingView::Canvas::paintDraggedNodeOverlay(
+    juce::Graphics& g)
+{
+    if (! juce::isPositiveAndBelow(draggedNodeIndex,
+                                   nodeEntries.size()))
+    {
+        return;
+    }
+
+    const auto& draggedNode =
+        nodeEntries.getReference(draggedNodeIndex);
+
+    if (draggedNode.kind == NodeKind::Output)
+        paintOutputModule(g);
+    else
+        paintNode(g, draggedNode);
+
+    if (draggedNode.kind != NodeKind::Synth
+        && draggedNode.kind != NodeKind::Effect)
+    {
+        return;
+    }
+
+    for (auto* controls : nodeControls)
+    {
+        if (controls->getNodeId() != draggedNode.id)
+            continue;
+
+        juce::Graphics::ScopedSaveState savedState(g);
+        g.addTransform(juce::AffineTransform::translation(
+            static_cast<float>(controls->getX()),
+            static_cast<float>(controls->getY())));
+        controls->paintEntireComponent(g, true);
+        break;
+    }
+}
+
 void AdvancedRoutingView::Canvas::paint(juce::Graphics& g)
 {
     g.fillAll(juce::Colour(canvasColour));
@@ -615,170 +1332,29 @@ void AdvancedRoutingView::Canvas::paint(juce::Graphics& g)
         }
     }
 
-    for (const auto& node : nodeEntries)
+    for (int nodeIndex = 0;
+         nodeIndex < nodeEntries.size();
+         ++nodeIndex)
     {
+        const auto& node = nodeEntries.getReference(nodeIndex);
+
         if (node.kind == NodeKind::Output)
             continue;
 
-        const auto bounds = getNodeBounds(node).toFloat();
-        juce::Colour fill(nodeColour);
-        juce::Colour border(nodeBorderColour);
-
-        if (node.kind == NodeKind::AudioInput)
-        {
-            fill = juce::Colour(inputNodeColour);
-            border = juce::Colour(inputNodeBorderColour);
-        }
-        else if (node.kind == NodeKind::Effect)
-        {
-            fill = juce::Colour(effectNodeColour);
-            border = juce::Colour(effectNodeBorderColour);
-        }
-
-        g.setColour(fill);
-        g.fillRoundedRectangle(bounds, 8.0f);
-        g.setColour(border);
-        g.drawRoundedRectangle(bounds, 8.0f, 1.5f);
-
-        auto textBounds = bounds.reduced(14.0f, 9.0f);
-        g.setColour(juce::Colours::white);
-        g.setFont(juce::Font(juce::FontOptions(15.0f,
-                                               juce::Font::bold)));
-        g.drawFittedText(node.label,
-                         textBounds.removeFromTop(24.0f).toNearestInt(),
-                         juce::Justification::centredLeft,
-                         1);
-
-        g.setColour(juce::Colours::lightgrey);
-        g.setFont(juce::Font(juce::FontOptions(11.5f)));
-        g.drawFittedText(node.subtitle,
-                         textBounds.toNearestInt(),
-                         juce::Justification::centredLeft,
-                         1);
-
-        if (node.acceptsInput)
-        {
-            g.setColour(juce::Colour(portColour));
-            const auto port = getInputPort(node);
-            g.fillEllipse(port.x - portRadius,
-                          port.y - portRadius,
-                          portRadius * 2.0f,
-                          portRadius * 2.0f);
-        }
-
-        if (node.producesOutput)
-        {
-            g.setColour(juce::Colour(portColour));
-            const auto port = getOutputPort(node);
-            g.fillEllipse(port.x - portRadius,
-                          port.y - portRadius,
-                          portRadius * 2.0f,
-                          portRadius * 2.0f);
-        }
+        if (nodeIndex != draggedNodeIndex)
+            paintNode(g, node);
     }
 
-    const auto outputBounds = getOutputModuleBounds().toFloat();
-    if (! outputBounds.isEmpty())
-    {
-        g.setColour(juce::Colour(outputNodeColour));
-        g.fillRoundedRectangle(outputBounds, 8.0f);
-        g.setColour(juce::Colour(outputNodeBorderColour));
-        g.drawRoundedRectangle(outputBounds, 8.0f, 1.5f);
-
-        g.setColour(juce::Colours::white);
-        g.setFont(juce::Font(juce::FontOptions(13.5f,
-                                               juce::Font::bold)));
-        g.drawFittedText(
-            "OUTPUTS",
-            juce::Rectangle<float>(outputBounds.getX() + 14.0f,
-                                   outputBounds.getY() + 4.0f,
-                                   outputBounds.getWidth() - 28.0f,
-                                   24.0f).toNearestInt(),
-            juce::Justification::centredLeft,
-            1);
-
-        g.setColour(
-            juce::Colour(outputNodeBorderColour).withAlpha(0.45f));
-        g.drawHorizontalLine(
-            juce::roundToInt(outputBounds.getY()
-                             + outputHeaderHeight),
-            outputBounds.getX() + 10.0f,
-            outputBounds.getRight() - 10.0f);
-
-        for (int busIndex = 0;
-             busIndex < outputBusCount;
-             ++busIndex)
-        {
-            const NodeEntry* outputNode = nullptr;
-
-            for (const auto& node : nodeEntries)
-            {
-                if (node.kind == NodeKind::Output
-                    && node.outputBusIndex == busIndex)
-                {
-                    outputNode = &node;
-                    break;
-                }
-            }
-
-            if (outputNode == nullptr)
-                continue;
-
-            const auto port = getInputPort(*outputNode);
-            g.setColour(
-                outputNode->available
-                    ? juce::Colour(portColour)
-                    : juce::Colour(outputNodeBorderColour)
-                          .withAlpha(0.45f));
-            g.fillEllipse(port.x - portRadius,
-                          port.y - portRadius,
-                          portRadius * 2.0f,
-                          portRadius * 2.0f);
-
-            g.setColour(
-                outputNode->available
-                    ? (busIndex == 0
-                           ? juce::Colours::white
-                           : juce::Colours::lightgrey)
-                    : juce::Colour(outputNodeBorderColour)
-                          .withAlpha(0.55f));
-            g.setFont(juce::Font(
-                juce::FontOptions(busIndex == 0 ? 11.5f : 10.5f,
-                                  busIndex == 0
-                                      ? juce::Font::bold
-                                      : juce::Font::plain)));
-            g.drawFittedText(
-                outputNode->label,
-                juce::Rectangle<float>(
-                    outputBounds.getX() + 16.0f,
-                    port.y
-                        - static_cast<float>(outputRowHeight) * 0.5f,
-                    outputBounds.getWidth() - 28.0f,
-                    static_cast<float>(outputRowHeight)).toNearestInt(),
-                juce::Justification::centredLeft,
-                1);
-
-            if (busIndex < outputBusCount - 1)
-            {
-                g.setColour(
-                    juce::Colour(outputNodeBorderColour)
-                        .withAlpha(0.16f));
-                g.drawHorizontalLine(
-                    juce::roundToInt(port.y
-                                     + outputRowHeight * 0.5f),
-                    outputBounds.getX() + 12.0f,
-                    outputBounds.getRight() - 10.0f);
-            }
-        }
-
-    }
+    paintOutputModule(g);
 }
 
 void AdvancedRoutingView::Canvas::mouseMove(
     const juce::MouseEvent& event)
 {
     const int newHoveredConnectionIndex =
-        findConnectionAt(event.position);
+        findNodeAt(event.position) >= 0
+            ? -1
+            : findConnectionAt(event.position);
 
     if (hoveredConnectionIndex != newHoveredConnectionIndex)
     {
@@ -804,11 +1380,13 @@ void AdvancedRoutingView::Canvas::mouseDown(
 {
     grabKeyboardFocus();
     const auto position = event.position;
+    const int nodeIndexAtPosition = findNodeAt(position);
     const int connectionIndex = findConnectionAt(position);
 
     if (event.mods.isPopupMenu())
     {
-        if (juce::isPositiveAndBelow(connectionIndex,
+        if (nodeIndexAtPosition < 0
+            && juce::isPositiveAndBelow(connectionIndex,
                                      connectionEntries.size()))
         {
             const auto connection =
@@ -820,7 +1398,13 @@ void AdvancedRoutingView::Canvas::mouseDown(
         return;
     }
 
-    cableSourceNodeIndex = findOutputPortAt(position);
+    const int outputPortIndex = findOutputPortAt(position);
+    cableSourceNodeIndex =
+        outputPortIndex >= 0
+        && (nodeIndexAtPosition < 0
+            || outputPortIndex == nodeIndexAtPosition)
+            ? outputPortIndex
+            : -1;
 
     if (cableSourceNodeIndex >= 0)
     {
@@ -828,6 +1412,27 @@ void AdvancedRoutingView::Canvas::mouseDown(
         selectedNodeIndex = -1;
         hoveredConnectionIndex = -1;
         cableEnd = position;
+        repaint();
+        return;
+    }
+
+    if (nodeIndexAtPosition >= 0)
+    {
+        draggedNodeIndex = nodeIndexAtPosition;
+        selectedConnectionIndex = -1;
+        selectedNodeIndex = draggedNodeIndex;
+        hoveredConnectionIndex = -1;
+        const auto& node = nodeEntries.getReference(draggedNodeIndex);
+        dragOffset = position.toInt()
+                     - getNodeBounds(node).getPosition();
+        dragStartPosition = node.position;
+        lastValidDragPosition = node.position;
+        hasValidDragPosition = ! isNodePositionOverlapping(
+            draggedNodeIndex,
+            node.position);
+        dragOverlay->setVisible(true);
+        dragOverlay->toFront(false);
+        dragOverlay->repaint();
         repaint();
         return;
     }
@@ -867,27 +1472,9 @@ void AdvancedRoutingView::Canvas::mouseDown(
         }
     }
 
-    draggedNodeIndex = findNodeAt(position);
-    if (draggedNodeIndex >= 0)
-    {
-        selectedConnectionIndex = -1;
-        selectedNodeIndex = draggedNodeIndex;
-        hoveredConnectionIndex = -1;
-        const auto& node = nodeEntries.getReference(draggedNodeIndex);
-        dragOffset = position.toInt()
-                     - getNodeBounds(node).getPosition();
-        dragStartPosition = node.position;
-        lastValidDragPosition = node.position;
-        hasValidDragPosition = ! isNodePositionOverlapping(
-            draggedNodeIndex,
-            node.position);
-    }
-    else
-    {
-        selectedConnectionIndex = -1;
-        selectedNodeIndex = -1;
-        hoveredConnectionIndex = -1;
-    }
+    selectedConnectionIndex = -1;
+    selectedNodeIndex = -1;
+    hoveredConnectionIndex = -1;
 
     repaint();
 }
@@ -919,12 +1506,16 @@ void AdvancedRoutingView::Canvas::mouseDrag(
 
     auto& node = nodeEntries.getReference(draggedNodeIndex);
     hoveredConnectionIndex = -1;
-    const auto newPosition = constrainNodePosition(
-        draggedNodeIndex,
-        event.position.toInt() - dragOffset);
-    const bool newPositionIsValid = ! isNodePositionOverlapping(
+    const auto requestedPosition =
+        event.position.toInt() - dragOffset;
+    const auto newPosition = snapPositionToGrid(
+        requestedPosition);
+    const auto snappedPosition = constrainNodePosition(
         draggedNodeIndex,
         newPosition);
+    const bool snappedPositionIsValid =
+        ! isNodePositionOverlapping(draggedNodeIndex,
+                                    snappedPosition);
 
     if (node.kind == NodeKind::Output)
     {
@@ -937,13 +1528,15 @@ void AdvancedRoutingView::Canvas::mouseDrag(
         node.position = newPosition;
     }
 
-    if (newPositionIsValid)
+    if (snappedPositionIsValid)
     {
-        lastValidDragPosition = newPosition;
+        lastValidDragPosition = snappedPosition;
         hasValidDragPosition = true;
     }
 
+    updateNodeControlBounds();
     updateCanvasSizeFromNodes(false);
+    dragOverlay->repaint();
     repaint();
 }
 
@@ -1032,35 +1625,49 @@ void AdvancedRoutingView::Canvas::mouseUp(
                                  nodeEntries.size()))
     {
         auto& node = nodeEntries.getReference(draggedNodeIndex);
+        const auto snappedDropPosition = constrainNodePosition(
+            draggedNodeIndex,
+            node.position);
+        const bool snappedDropPositionIsValid =
+            ! isNodePositionOverlapping(draggedNodeIndex,
+                                        snappedDropPosition);
+        const auto finalPosition =
+            snappedDropPositionIsValid
+                ? snappedDropPosition
+                : (hasValidDragPosition
+                       ? lastValidDragPosition
+                       : dragStartPosition);
 
-        if (isNodePositionOverlapping(draggedNodeIndex,
-                                      node.position))
+        if (node.kind == NodeKind::Output)
         {
-            const auto restoredPosition =
-                hasValidDragPosition
-                    ? lastValidDragPosition
-                    : dragStartPosition;
-
-            if (node.kind == NodeKind::Output)
-            {
-                for (auto& outputNode : nodeEntries)
-                    if (outputNode.kind == NodeKind::Output)
-                        outputNode.position = restoredPosition;
-            }
-            else
-            {
-                node.position = restoredPosition;
-            }
+            for (auto& outputNode : nodeEntries)
+                if (outputNode.kind == NodeKind::Output)
+                    outputNode.position = finalPosition;
+        }
+        else
+        {
+            node.position = finalPosition;
         }
 
-        if (owner.onNodeMoved)
-            owner.onNodeMoved(node.id, node.position);
+        const auto movedNodeId = node.id;
+        const auto movedNodePosition = node.position;
 
+        updateNodeControlBounds();
         updateCanvasSizeFromNodes();
+        draggedNodeIndex = -1;
+        hasValidDragPosition = false;
+        dragOverlay->setVisible(false);
+        repaint();
+
+        if (owner.onNodeMoved)
+            owner.onNodeMoved(movedNodeId, movedNodePosition);
+
+        return;
     }
 
     draggedNodeIndex = -1;
     hasValidDragPosition = false;
+    dragOverlay->setVisible(false);
 }
 
 void AdvancedRoutingView::Canvas::removeSelectedConnection()
@@ -1121,6 +1728,16 @@ AdvancedRoutingView::AdvancedRoutingView()
     };
     addAndMakeVisible(simpleButton);
 
+    undoDeleteButton.setEnabled(false);
+    undoDeleteButton.setTooltip(
+        "Restore the most recently deleted tab");
+    undoDeleteButton.onClick = [this]
+    {
+        if (onUndoDelete)
+            onUndoDelete();
+    };
+    addAndMakeVisible(undoDeleteButton);
+
     autoLayoutButton.onClick = [this]
     {
         if (onAutoLayout)
@@ -1166,6 +1783,12 @@ void AdvancedRoutingView::setModel(
     canvas.setModel(nodes, connections);
 }
 
+void AdvancedRoutingView::setDeleteUndoAvailable(
+    bool shouldBeAvailable)
+{
+    undoDeleteButton.setEnabled(shouldBeAvailable);
+}
+
 void AdvancedRoutingView::paint(juce::Graphics& g)
 {
     g.fillAll(juce::Colour(backgroundColour));
@@ -1180,6 +1803,8 @@ void AdvancedRoutingView::resized()
     clearButton.setBounds(header.removeFromRight(104).reduced(2));
     header.removeFromRight(6);
     autoLayoutButton.setBounds(header.removeFromRight(94).reduced(2));
+    header.removeFromRight(6);
+    undoDeleteButton.setBounds(header.removeFromRight(70).reduced(2));
     header.removeFromRight(6);
     simpleButton.setBounds(header.removeFromRight(80).reduced(2));
 

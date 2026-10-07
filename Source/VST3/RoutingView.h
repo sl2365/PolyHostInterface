@@ -28,6 +28,7 @@ public:
     RoutingView();
 
     void setModules(const juce::Array<ModuleEntry>& newModules);
+    void setDeleteUndoAvailable(bool shouldBeAvailable);
 
     std::function<void(int fromTabIndex, int toTabIndex)> onMove;
     std::function<void(int tabIndex)> onToggleBypass;
@@ -39,6 +40,7 @@ public:
     std::function<void(int tabIndex, juce::Component* anchorComponent)> onShowPluginInfo;
     std::function<void()> onRefreshMidiDevices;
     std::function<void()> onShowAdvanced;
+    std::function<void()> onUndoDelete;
     std::function<void(int tabIndex, int methodOverride)> onSetPointerAdjustMethodOverride;
 
     void paint(juce::Graphics& g) override;
@@ -153,6 +155,7 @@ private:
     juce::Label midiHelpLabel;
     juce::TextButton refreshMidiButton { "Refresh MIDI" };
     juce::TextButton advancedButton { "Advanced" };
+    juce::TextButton undoDeleteButton { "Undo" };
     juce::Label emptyLabel;
     juce::Viewport viewport;
     juce::Component contentComponent;

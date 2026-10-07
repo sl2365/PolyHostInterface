@@ -213,6 +213,8 @@ public:
     bool getMidiMonitorShowSysEx() const;
     bool getMidiMonitorShowRealtime() const;
     bool getMidiMonitorShowSystemCommon() const;
+    int getMidiMonitorHistoryMinutes() const;
+    void setMidiMonitorHistoryMinutes(int minutes);
 
     void setMidiMonitorFilterSettings(bool hideClock,
                                       bool hideActiveSense,

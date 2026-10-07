@@ -1,5 +1,6 @@
 #include "ButtonStyling.h"
 #include <PolyHostAssets.h>
+#include <cmath>
 
 namespace
 {
@@ -436,21 +437,63 @@ namespace ButtonStyling
         const float cx = centre.x;
         const float cy = centre.y;
 
+        constexpr float socketRadius = 7.0f;
+        constexpr float notchOpeningHalfWidth = 1.15f;
+        constexpr float notchSideHalfWidth = 0.95f;
+
+        const float notchAngle = std::asin(notchOpeningHalfWidth / socketRadius);
+        const float notchOpeningY = cy - std::sqrt(socketRadius * socketRadius
+                                                    - notchOpeningHalfWidth
+                                                          * notchOpeningHalfWidth);
+
+        const auto pointOnSocket = [cx, cy, socketRadius](float angle)
+        {
+            return juce::Point<float>(cx + socketRadius * std::sin(angle),
+                                      cy - socketRadius * std::cos(angle));
+        };
+
         juce::Path socketOutline;
-        socketOutline.startNewSubPath(cx - 6.2f, cy - 4.8f);
-        socketOutline.cubicTo(cx - 8.0f, cy - 2.4f,
-                              cx - 7.8f, cy + 4.8f,
-                              cx, cy + 7.0f);
-        socketOutline.cubicTo(cx + 7.8f, cy + 4.8f,
-                              cx + 8.0f, cy - 2.4f,
-                              cx + 6.2f, cy - 4.8f);
-        socketOutline.lineTo(cx + 3.8f, cy - 6.7f);
-        socketOutline.lineTo(cx + 2.2f, cy - 5.0f);
-        socketOutline.quadraticTo(cx + 1.3f, cy - 4.0f,
-                                  cx, cy - 4.0f);
-        socketOutline.quadraticTo(cx - 1.3f, cy - 4.0f,
-                                  cx - 2.2f, cy - 5.0f);
-        socketOutline.lineTo(cx - 3.8f, cy - 6.7f);
+        socketOutline.startNewSubPath(pointOnSocket(notchAngle));
+
+        const auto appendCircularArc = [&socketOutline,
+                                        &pointOnSocket,
+                                        socketRadius](float from,
+                                                      float to)
+        {
+            const float controlScale = 4.0f / 3.0f
+                                     * std::tan((to - from) * 0.25f);
+            const auto start = pointOnSocket(from);
+            const auto end = pointOnSocket(to);
+            const juce::Point<float> startTangent(socketRadius * std::cos(from),
+                                                   socketRadius * std::sin(from));
+            const juce::Point<float> endTangent(socketRadius * std::cos(to),
+                                                 socketRadius * std::sin(to));
+
+            socketOutline.cubicTo(start + startTangent * controlScale,
+                                  end - endTangent * controlScale,
+                                  end);
+        };
+
+        constexpr float halfPi = juce::MathConstants<float>::halfPi;
+        constexpr float pi = juce::MathConstants<float>::pi;
+        constexpr float twoPi = juce::MathConstants<float>::twoPi;
+
+        appendCircularArc(notchAngle, halfPi);
+        appendCircularArc(halfPi, pi);
+        appendCircularArc(pi, pi + halfPi);
+        appendCircularArc(pi + halfPi, twoPi - notchAngle);
+
+        socketOutline.quadraticTo(cx - notchSideHalfWidth, notchOpeningY,
+                                  cx - notchSideHalfWidth, cy - 6.5f);
+        socketOutline.lineTo(cx - notchSideHalfWidth, cy - 5.65f);
+        socketOutline.quadraticTo(cx - notchSideHalfWidth, cy - 4.95f,
+                                  cx - 0.25f, cy - 4.95f);
+        socketOutline.lineTo(cx + 0.25f, cy - 4.95f);
+        socketOutline.quadraticTo(cx + notchSideHalfWidth, cy - 4.95f,
+                                  cx + notchSideHalfWidth, cy - 5.65f);
+        socketOutline.lineTo(cx + notchSideHalfWidth, cy - 6.5f);
+        socketOutline.quadraticTo(cx + notchSideHalfWidth, notchOpeningY,
+                                  cx + notchOpeningHalfWidth, notchOpeningY);
         socketOutline.closeSubPath();
 
         g.setColour(iconColour);
@@ -462,11 +505,11 @@ namespace ButtonStyling
         constexpr float pinRadius = 1.15f;
         const juce::Point<float> pins[]
         {
-            { cx - 5.0f, cy - 0.4f },
-            { cx + 5.0f, cy - 0.4f },
-            { cx - 2.8f, cy + 2.8f },
-            { cx + 2.8f, cy + 2.8f },
-            { cx,        cy + 4.8f }
+            { cx - 5.1f, cy },
+            { cx - 3.6f, cy + 3.6f },
+            { cx,        cy + 5.1f },
+            { cx + 3.6f, cy + 3.6f },
+            { cx + 5.1f, cy }
         };
 
         for (const auto pin : pins)

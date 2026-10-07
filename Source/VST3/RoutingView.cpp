@@ -551,6 +551,16 @@ RoutingView::RoutingView()
         "Open the modular Advanced routing graph. Simple routing is kept unchanged.");
     addAndMakeVisible(advancedButton);
 
+    undoDeleteButton.setEnabled(false);
+    undoDeleteButton.setTooltip(
+        "Restore the most recently deleted tab");
+    undoDeleteButton.onClick = [this]
+    {
+        if (onUndoDelete)
+            onUndoDelete();
+    };
+    addAndMakeVisible(undoDeleteButton);
+
     emptyLabel.setText("No loaded plugins.\nLoad a synth or FX in the tab view to see it here.",
                        juce::dontSendNotification);
     emptyLabel.setJustificationType(juce::Justification::centred);
@@ -580,6 +590,11 @@ void RoutingView::setModules(const juce::Array<ModuleEntry>& newModules)
     emptyLabel.setVisible(!hasModules);
 
     resized();
+}
+
+void RoutingView::setDeleteUndoAvailable(bool shouldBeAvailable)
+{
+    undoDeleteButton.setEnabled(shouldBeAvailable);
 }
 
 void RoutingView::rebuildModuleRows()
@@ -946,6 +961,8 @@ void RoutingView::resized()
 
     auto headerArea = area.removeFromTop(36);
     refreshMidiButton.setBounds(headerArea.removeFromRight(130));
+    headerArea.removeFromRight(8);
+    undoDeleteButton.setBounds(headerArea.removeFromRight(70));
     headerArea.removeFromRight(8);
     advancedButton.setBounds(headerArea.removeFromRight(100));
     headerArea.removeFromRight(8);

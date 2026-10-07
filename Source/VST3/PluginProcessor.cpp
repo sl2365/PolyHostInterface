@@ -584,12 +584,26 @@ void PolyHostPluginProcessor::processBlock(
             processorMidiInputScratchBuffer);
     }
 
+    const double midiMonitorBlockTimeSeconds =
+        juce::Time::highResolutionTicksToSeconds(
+            juce::Time::getHighResolutionTicks());
+
+    const double midiMonitorSampleRate = getSampleRate();
+
     for (const auto metadata : midiMessages)
     {
         const auto& message =
             metadata.getMessage();
 
-        pushMidiMonitorEvent(message);
+        const double eventOffsetSeconds =
+            midiMonitorSampleRate > 0.0
+                ? static_cast<double>(metadata.samplePosition)
+                      / midiMonitorSampleRate
+                : 0.0;
+
+        pushMidiMonitorEvent(
+            message,
+            midiMonitorBlockTimeSeconds + eventOffsetSeconds);
 
         if (message.isController())
         {
@@ -1079,7 +1093,8 @@ bool PolyHostPluginProcessor::popNextPointerMidiEvent(PointerMidiEvent& dest)
 }
 
 void PolyHostPluginProcessor::pushMidiMonitorEvent(
-    const juce::MidiMessage& message)
+    const juce::MidiMessage& message,
+    double captureTimeSeconds)
 {
     const int dataSize =
         message.getRawDataSize();
@@ -1114,6 +1129,7 @@ void PolyHostPluginProcessor::pushMidiMonitorEvent(
 
     event.dataSize = dataSize;
     event.timeStamp = message.getTimeStamp();
+    event.captureTimeSeconds = captureTimeSeconds;
 
     midiMonitorWriteIndex.store(
         nextWrite,
@@ -1155,6 +1171,8 @@ PolyHostPluginProcessor::popPendingMidiMonitorEvents()
                     rawEvent.timeStamp);
 
             event.sourceName = "Host MIDI";
+            event.captureTimeSeconds =
+                rawEvent.captureTimeSeconds;
             event.valid = true;
 
             result.add(event);

@@ -962,6 +962,7 @@ PluginCore::~PluginCore()
 {
     clearPluginLoadCrashMarker();
     playbackPrepared.store(false);
+    discardClosedTabUndoState();
 
     for (auto* tab : hostedTabs)
     {
@@ -3202,24 +3203,241 @@ bool PluginCore::closeSelectedTab()
     if (! juce::isPositiveAndBelow(selectedTabIndex, hostedTabs.size()))
         return false;
 
-    if (hostedTabs.size() <= 1)
-    {
-        resetForNewPreset();
-        return true;
-    }
+    discardClosedTabUndoState();
 
+    closedTabUndoIndex = selectedTabIndex;
     auto* tab = hostedTabs[selectedTabIndex];
     const auto removedRoutingId = tab->routingId;
+
+    for (int i = 0; i < advancedRoutingConnections.size(); ++i)
+    {
+        const auto& connection =
+            advancedRoutingConnections.getReference(i);
+
+        if (connection.sourceNodeId == removedRoutingId
+            || connection.destinationNodeId == removedRoutingId)
+        {
+            IndexedAdvancedConnection indexedConnection;
+            indexedConnection.index = i;
+            indexedConnection.connection = connection;
+            closedTabAdvancedConnections.add(indexedConnection);
+        }
+    }
+
+    for (const auto& position : advancedRoutingNodePositions)
+    {
+        if (position.nodeId == removedRoutingId)
+        {
+            closedTabAdvancedPosition = position;
+            closedTabHadAdvancedPosition = true;
+            break;
+        }
+    }
+
+    for (int i = macroMappings.size(); --i >= 0;)
+    {
+        auto& mapping = macroMappings.getReference(i);
+
+        if (mapping.tabIndex == selectedTabIndex)
+        {
+            IndexedMacroMapping indexedMapping;
+            indexedMapping.index = i;
+            indexedMapping.mapping = mapping;
+            closedTabMacroMappings.insert(0, indexedMapping);
+            macroMappings.remove(i);
+        }
+        else if (mapping.tabIndex > selectedTabIndex)
+        {
+            --mapping.tabIndex;
+        }
+    }
+
+    if (lastTouchedParameter.valid)
+    {
+        if (lastTouchedParameter.tabIndex == selectedTabIndex)
+        {
+            closedTabLastTouchedParameter = lastTouchedParameter;
+            lastTouchedParameter = {};
+        }
+        else if (lastTouchedParameter.tabIndex > selectedTabIndex)
+        {
+            --lastTouchedParameter.tabIndex;
+        }
+    }
+
+    for (int i = missingPlugins.size(); --i >= 0;)
+    {
+        auto& missingPlugin = missingPlugins.getReference(i);
+
+        if (missingPlugin.tabIndex == selectedTabIndex)
+            missingPlugins.remove(i);
+        else if (missingPlugin.tabIndex > selectedTabIndex)
+            --missingPlugin.tabIndex;
+    }
+
     detachFromHostedPlugin(tab->pluginInstance.get());
-    disposeHostedPluginInstance(*tab, "Close tab", false);
-    hostedTabs.remove(selectedTabIndex);
+    closedTabUndoState.reset(
+        hostedTabs.removeAndReturn(selectedTabIndex));
     removeAdvancedRoutingForNode(removedRoutingId);
+
+    if (hostedTabs.isEmpty())
+    {
+        closedTabUsedEmptyReplacement = true;
+        addTab("Empty");
+    }
+
     publishAdvancedRoutingGraph();
 
     ensureValidSelectedTab();
     rebuildTabModelFromHostedTabs();
     markDirty();
     statusText = "Tab closed";
+    return true;
+}
+
+bool PluginCore::hasClosedTabUndoState() const noexcept
+{
+    return closedTabUndoState != nullptr;
+}
+
+bool PluginCore::undoLastClosedTab()
+{
+    if (closedTabUndoState == nullptr)
+        return false;
+
+    if (closedTabUsedEmptyReplacement
+        && hostedTabs.size() == 1
+        && hostedTabs[0] != nullptr
+        && hostedTabs[0]->pluginInstance == nullptr
+        && ! hostedTabs[0]->restoreIssueActive
+        && hostedTabs[0]->tabName == "Empty")
+    {
+        hostedTabs.remove(0);
+    }
+
+    const int restoredIndex = juce::jlimit(
+        0,
+        hostedTabs.size(),
+        closedTabUndoIndex);
+
+    for (auto& mapping : macroMappings)
+        if (mapping.tabIndex >= restoredIndex)
+            ++mapping.tabIndex;
+
+    for (const auto& indexedMapping : closedTabMacroMappings)
+    {
+        bool macroSlotAlreadyUsed = false;
+
+        for (const auto& existingMapping : macroMappings)
+        {
+            if (existingMapping.macroIndex
+                == indexedMapping.mapping.macroIndex)
+            {
+                macroSlotAlreadyUsed = true;
+                break;
+            }
+        }
+
+        if (macroSlotAlreadyUsed)
+            continue;
+
+        macroMappings.insert(
+            juce::jlimit(0,
+                         macroMappings.size(),
+                         indexedMapping.index),
+            indexedMapping.mapping);
+    }
+
+    if (closedTabLastTouchedParameter.valid)
+    {
+        lastTouchedParameter = closedTabLastTouchedParameter;
+    }
+    else if (lastTouchedParameter.valid
+             && lastTouchedParameter.tabIndex >= restoredIndex)
+    {
+        ++lastTouchedParameter.tabIndex;
+    }
+
+    auto* restoredTab = closedTabUndoState.release();
+    hostedTabs.insert(restoredIndex, restoredTab);
+    attachToHostedPlugin(restoredTab->pluginInstance.get());
+
+    for (auto& missingPlugin : missingPlugins)
+        if (missingPlugin.tabIndex >= restoredIndex)
+            ++missingPlugin.tabIndex;
+
+    if (restoredTab->restoreIssueActive
+        && restoredTab->restoreIssueMissingPlugin
+        && restoredTab->restoreIssueHasPluginData)
+    {
+        MissingPluginEntry entry;
+        entry.tabIndex = restoredIndex;
+        entry.pluginName =
+            restoredTab->restoreIssuePluginData.pluginName;
+        entry.pluginPath =
+            restoredTab->restoreIssuePluginData.pluginPath;
+        entry.pluginPathRelative =
+            restoredTab->restoreIssuePluginData.pluginPathRelative;
+        entry.pluginPathDriveFlexible =
+            restoredTab->restoreIssuePluginData
+                .pluginPathDriveFlexible;
+        entry.pluginStateBase64 =
+            restoredTab->restoreIssuePluginData.pluginStateBase64;
+        entry.pluginFormatName =
+            restoredTab->restoreIssuePluginData.pluginFormatName;
+        entry.isInstrument =
+            restoredTab->restoreIssuePluginData.isInstrument;
+        entry.pluginManufacturer =
+            restoredTab->restoreIssuePluginData.pluginManufacturer;
+        entry.pluginVersion =
+            restoredTab->restoreIssuePluginData.pluginVersion;
+        missingPlugins.add(entry);
+    }
+
+    if (closedTabHadAdvancedPosition)
+        advancedRoutingNodePositions.add(closedTabAdvancedPosition);
+
+    for (const auto& indexedConnection :
+         closedTabAdvancedConnections)
+    {
+        bool connectionAlreadyExists = false;
+
+        for (const auto& existingConnection :
+             advancedRoutingConnections)
+        {
+            if (existingConnection.sourceNodeId
+                    == indexedConnection.connection.sourceNodeId
+                && existingConnection.destinationNodeId
+                    == indexedConnection.connection
+                           .destinationNodeId)
+            {
+                connectionAlreadyExists = true;
+                break;
+            }
+        }
+
+        if (connectionAlreadyExists
+            || advancedConnectionWouldCreateCycle(
+                indexedConnection.connection.sourceNodeId,
+                indexedConnection.connection.destinationNodeId))
+        {
+            continue;
+        }
+
+        advancedRoutingConnections.insert(
+            juce::jlimit(0,
+                         advancedRoutingConnections.size(),
+                         indexedConnection.index),
+            indexedConnection.connection);
+    }
+
+    selectedTabIndex = restoredIndex;
+    publishAdvancedRoutingGraph();
+    rebuildTabModelFromHostedTabs();
+    markDirty();
+    statusText = "Deleted tab restored";
+
+    discardClosedTabUndoState();
     return true;
 }
 
@@ -3465,6 +3683,8 @@ void PluginCore::moveHostedTab(int fromIndex, int toIndex)
 
     if (fromIndex == toIndex)
         return;
+
+    discardClosedTabUndoState();
 
     // Advanced layout is independent of Simple tab order. Preserve any
     // automatically displayed positions before the tab indices change.
@@ -5308,6 +5528,25 @@ void PluginCore::disposeHostedPluginInstance(
         std::memory_order_release);
 }
 
+void PluginCore::discardClosedTabUndoState()
+{
+    if (closedTabUndoState != nullptr)
+    {
+        disposeHostedPluginInstance(
+            *closedTabUndoState,
+            "Discard deleted-tab undo");
+        closedTabUndoState.reset();
+    }
+
+    closedTabUndoIndex = -1;
+    closedTabUsedEmptyReplacement = false;
+    closedTabAdvancedConnections.clearQuick();
+    closedTabHadAdvancedPosition = false;
+    closedTabAdvancedPosition = {};
+    closedTabMacroMappings.clearQuick();
+    closedTabLastTouchedParameter = {};
+}
+
 PluginCore::HostedTabState* PluginCore::getSelectedHostedTab()
 {
     if (! juce::isPositiveAndBelow(selectedTabIndex, hostedTabs.size()))
@@ -5909,6 +6148,8 @@ void PluginCore::unloadMainSlotPlugin()
 
 void PluginCore::resetForNewPreset()
 {
+    discardClosedTabUndoState();
+
     DebugLog::write("[PresetTeardown] 11 core reset entered | tabs="
                     + juce::String(hostedTabs.size()));
 
@@ -6415,6 +6656,8 @@ SessionData PluginCore::buildSessionData() const
 bool PluginCore::restoreSessionData(const SessionData& sessionData,
                                     juce::StringArray& warnings)
 {
+    discardClosedTabUndoState();
+
     warnings.clear();
     missingPlugins.clear();
     importUnclosedPluginLoadCrashMarker(warnings);

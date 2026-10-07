@@ -6,6 +6,8 @@
 
 struct VstMidiMonitorEntry
 {
+    juce::MidiMessage message;
+    double captureTimeSeconds = 0.0;
     juce::String time;
     juce::String device;
     juce::String type;
@@ -17,6 +19,41 @@ struct VstMidiMonitorEntry
     juce::Colour colour;
     int rawStatus = -1;
     int filterFlags = 0;
+};
+
+class VstMidiMonitorCompactTextButton : public juce::TextButton
+{
+public:
+    explicit VstMidiMonitorCompactTextButton(const juce::String& labelText)
+        : juce::TextButton(labelText)
+    {
+    }
+
+    void paintButton(juce::Graphics& g,
+                     bool isMouseOverButton,
+                     bool isButtonDown) override
+    {
+        auto& buttonLookAndFeel = getLookAndFeel();
+        const auto backgroundColour = findColour(getToggleState()
+                                                     ? juce::TextButton::buttonOnColourId
+                                                     : juce::TextButton::buttonColourId);
+
+        buttonLookAndFeel.drawButtonBackground(g,
+                                               *this,
+                                               backgroundColour,
+                                               isMouseOverButton,
+                                               isButtonDown);
+
+        g.setFont(buttonLookAndFeel.getTextButtonFont(*this, getHeight()));
+        g.setColour(findColour(getToggleState()
+                                   ? juce::TextButton::textColourOnId
+                                   : juce::TextButton::textColourOffId)
+                        .withMultipliedAlpha(isEnabled() ? 1.0f : 0.5f));
+        g.drawText(getButtonText(),
+                   getLocalBounds().reduced(2, 0),
+                   juce::Justification::centred,
+                   false);
+    }
 };
 
 class VstMidiMonitorComponent : public juce::Component,
@@ -51,9 +88,24 @@ public:
         copyAllButton.setButtonText("Copy All");
         copyAllButton.addListener(this);
 
-        addAndMakeVisible(exportButton);
-        exportButton.setButtonText("Export");
-        exportButton.addListener(this);
+        addAndMakeVisible(exportTextButton);
+        exportTextButton.addListener(this);
+
+        addAndMakeVisible(exportMidiButton);
+        exportMidiButton.addListener(this);
+
+        addAndMakeVisible(historyLabel);
+        historyLabel.setText("History", juce::dontSendNotification);
+        historyLabel.setJustificationType(juce::Justification::centredLeft);
+
+        addAndMakeVisible(historyMinutesBox);
+        historyMinutesBox.addItem("1 min", 1);
+        historyMinutesBox.addItem("2 min", 2);
+        historyMinutesBox.addItem("5 min", 5);
+        historyMinutesBox.addItem("10 min", 10);
+        historyMinutesBox.addItem("15 min", 15);
+        historyMinutesBox.addItem("30 min", 30);
+        historyMinutesBox.onChange = [this] { handleHistoryLimitChanged(); };
 
         addAndMakeVisible(hideClockButton);
         hideClockButton.setButtonText("Hide Clock");
@@ -157,6 +209,8 @@ public:
                                             table.getHeader().getColumnWidth(6),
                                             table.getHeader().getColumnWidth(7),
                                             table.getHeader().getColumnWidth(8));
+
+        settings.setMidiMonitorHistoryMinutes(getSelectedHistoryMinutes());
     }
 
     void resized() override
@@ -173,20 +227,33 @@ public:
 
         copyRowButton.setBounds(actionRow1);
         copyAllButton.setBounds(actionRow2);
-        exportButton.setBounds(actionRow3);
+        clearButton.setBounds(actionRow3);
 
         topBar.removeFromLeft(8);
 
-        auto captureColumn = topBar.removeFromLeft(70);
+        auto exportColumn = topBar.removeFromLeft(78);
+        auto exportRow1 = exportColumn.removeFromTop(22);
+        exportColumn.removeFromTop(2);
+        auto exportRow2 = exportColumn.removeFromTop(22);
+        exportColumn.removeFromTop(2);
+        auto exportRow3 = exportColumn.removeFromTop(22);
+
+        exportTextButton.setBounds(exportRow1);
+        exportMidiButton.setBounds(exportRow2);
+        historyMinutesBox.setBounds(exportRow3);
+
+        topBar.removeFromLeft(8);
+
+        auto captureColumn = topBar.removeFromLeft(90);
         auto captureRow1 = captureColumn.removeFromTop(22);
         captureColumn.removeFromTop(2);
         auto captureRow2 = captureColumn.removeFromTop(22);
         captureColumn.removeFromTop(2);
         auto captureRow3 = captureColumn.removeFromTop(22);
 
-        clearButton.setBounds(captureRow1);
-        pauseButton.setBounds(captureRow2);
-        freezeButton.setBounds(captureRow3);
+        pauseButton.setBounds(captureRow1);
+        freezeButton.setBounds(captureRow2);
+        historyLabel.setBounds(captureRow3);
 
         topBar.removeFromLeft(8);
 
@@ -307,55 +374,25 @@ private:
     void timerCallback() override
     {
         auto messages = processor.popPendingMidiMonitorEvents();
+        bool changed = trimEntriesToHistoryLimit();
 
         if (pauseButton.getToggleState())
-            return;
-
-        if (messages.isEmpty())
-            return;
-
-        bool addedAny = false;
+        {
+            messages.clear();
+        }
 
         for (auto& incoming : messages)
         {
-            if (! incoming.valid)
-                continue;
-
-            const auto& message = incoming.message;
-
-            int rawStatus = -1;
-
-            if (message.getRawDataSize() > 0)
+            if (incoming.valid)
             {
-                rawStatus =
-                    static_cast<int>(
-                        static_cast<unsigned char>(
-                            message.getRawData()[0]));
+                allEntries.add(makeEntry(incoming));
+                changed = true;
             }
-
-            if (hideClockButton.getToggleState()
-                && rawStatus == 0xF8)
-            {
-                continue;
-            }
-
-            if (hideActiveSenseButton.getToggleState()
-                && rawStatus == 0xFE)
-            {
-                continue;
-            }
-
-            allEntries.add(makeEntry(incoming));
-            addedAny = true;
         }
 
-        if (! addedAny)
-            return;
+        changed = trimEntriesToHistoryLimit() || changed;
 
-        if (allEntries.size() > 1000)
-            allEntries.removeRange(0, allEntries.size() - 1000);
-
-        if (freezeButton.getToggleState())
+        if (! changed || freezeButton.getToggleState())
             return;
 
         autoFollow = isScrolledToBottom();
@@ -393,9 +430,15 @@ private:
             return;
         }
 
-        if (button == &exportButton)
+        if (button == &exportTextButton)
         {
-            exportVisibleRows();
+            exportVisibleRowsAsText();
+            return;
+        }
+
+        if (button == &exportMidiButton)
+        {
+            exportVisibleRowsAsMidi();
             return;
         }
 
@@ -445,6 +488,8 @@ private:
         showSysExButton.setToggleState(settings.getMidiMonitorShowSysEx(), juce::dontSendNotification);
         showRealtimeButton.setToggleState(settings.getMidiMonitorShowRealtime(), juce::dontSendNotification);
         showSystemCommonButton.setToggleState(settings.getMidiMonitorShowSystemCommon(), juce::dontSendNotification);
+        historyMinutesBox.setSelectedId(settings.getMidiMonitorHistoryMinutes(),
+                                        juce::dontSendNotification);
     }
 
     static void updateFilterButtonColour(juce::ToggleButton& button)
@@ -602,7 +647,7 @@ private:
         juce::SystemClipboard::copyTextToClipboard(buildVisibleRowsAsTsv(true));
     }
 
-    void exportVisibleRows()
+    void exportVisibleRowsAsText()
     {
         auto defaultFile = AppSettings::getAppDirectory().getChildFile("midi-monitor-log.csv");
 
@@ -625,6 +670,165 @@ private:
                                        : buildVisibleRowsAsCsv();
 
         file.replaceWithText(text);
+    }
+
+    void exportVisibleRowsAsMidi()
+    {
+        auto defaultFile = AppSettings::getAppDirectory().getChildFile("midi-monitor.mid");
+
+        juce::FileChooser chooser("Export visible MIDI monitor events",
+                                  defaultFile,
+                                  "*.mid",
+                                  true);
+
+        if (! chooser.browseForFileToSave(true))
+            return;
+
+        auto file = chooser.getResult();
+
+        if (! file.hasFileExtension("mid"))
+            file = file.withFileExtension(".mid");
+
+        constexpr int ticksPerQuarterNote = 960;
+        constexpr double ticksPerSecond = 1920.0;
+
+        juce::MidiFile midiFile;
+        midiFile.setTicksPerQuarterNote(ticksPerQuarterNote);
+
+        juce::MidiMessageSequence tempoTrack;
+        auto tempoName = juce::MidiMessage::textMetaEvent(3, "Tempo");
+        tempoName.setTimeStamp(0.0);
+        tempoTrack.addEvent(tempoName);
+
+        auto tempo = juce::MidiMessage::tempoMetaEvent(500000);
+        tempo.setTimeStamp(0.0);
+        tempoTrack.addEvent(tempo);
+
+        auto timeSignature = juce::MidiMessage::timeSignatureMetaEvent(4, 4);
+        timeSignature.setTimeStamp(0.0);
+        tempoTrack.addEvent(timeSignature);
+
+        const double firstCaptureTime = entries.isEmpty()
+                                            ? 0.0
+                                            : entries.getFirst().captureTimeSeconds;
+        double finalTick = 0.0;
+        juce::MidiMessageSequence eventTrack;
+        auto trackName = juce::MidiMessage::textMetaEvent(3, "MIDI Monitor");
+        trackName.setTimeStamp(0.0);
+        eventTrack.addEvent(trackName);
+
+        for (const auto& entry : entries)
+        {
+            auto message = entry.message;
+            const double elapsedSeconds = juce::jmax(0.0,
+                                                      entry.captureTimeSeconds
+                                                          - firstCaptureTime);
+            finalTick = elapsedSeconds * ticksPerSecond;
+            message.setTimeStamp(finalTick);
+            eventTrack.addEvent(message);
+        }
+
+        auto eventEnd = juce::MidiMessage::endOfTrack();
+        eventEnd.setTimeStamp(finalTick + 1.0);
+        eventTrack.addEvent(eventEnd);
+        eventTrack.updateMatchedPairs();
+
+        auto tempoEnd = juce::MidiMessage::endOfTrack();
+        tempoEnd.setTimeStamp(finalTick + 1.0);
+        tempoTrack.addEvent(tempoEnd);
+
+        midiFile.addTrack(tempoTrack);
+        midiFile.addTrack(eventTrack);
+
+        juce::TemporaryFile temporaryFile(file);
+        auto outputStream = temporaryFile.getFile().createOutputStream();
+        const bool written = outputStream != nullptr
+                          && outputStream->openedOk()
+                          && midiFile.writeTo(*outputStream, 1);
+
+        if (outputStream != nullptr)
+            outputStream->flush();
+
+        outputStream.reset();
+
+        if (! written || ! temporaryFile.overwriteTargetFileWithTemporary())
+        {
+            juce::AlertWindow::showMessageBoxAsync(
+                juce::AlertWindow::WarningIcon,
+                "MIDI export failed",
+                "The MIDI file could not be written.");
+        }
+    }
+
+    int getSelectedHistoryMinutes() const
+    {
+        const int selected = historyMinutesBox.getSelectedId();
+
+        switch (selected)
+        {
+            case 1:
+            case 2:
+            case 5:
+            case 10:
+            case 15:
+            case 30:
+                return selected;
+
+            default:
+                return 5;
+        }
+    }
+
+    static double getCurrentCaptureTimeSeconds()
+    {
+        return juce::Time::highResolutionTicksToSeconds(
+            juce::Time::getHighResolutionTicks());
+    }
+
+    bool trimEntriesToHistoryLimit()
+    {
+        bool changed = false;
+        const double cutoff = getCurrentCaptureTimeSeconds()
+                            - static_cast<double>(getSelectedHistoryMinutes() * 60);
+        int entriesToRemove = 0;
+
+        while (entriesToRemove < allEntries.size()
+               && allEntries.getReference(entriesToRemove).captureTimeSeconds < cutoff)
+        {
+            ++entriesToRemove;
+        }
+
+        if (entriesToRemove > 0)
+        {
+            allEntries.removeRange(0, entriesToRemove);
+            changed = true;
+        }
+
+        if (allEntries.size() > maximumStoredEntries)
+        {
+            allEntries.removeRange(0, allEntries.size() - maximumStoredEntries);
+            changed = true;
+        }
+
+        return changed;
+    }
+
+    void handleHistoryLimitChanged()
+    {
+        settings.setMidiMonitorHistoryMinutes(getSelectedHistoryMinutes());
+        trimEntriesToHistoryLimit();
+
+        if (freezeButton.getToggleState())
+            return;
+
+        autoFollow = isScrolledToBottom();
+        rebuildVisibleEntries();
+        table.updateContent();
+
+        if (autoFollow && entries.size() > 0)
+            table.scrollToEnsureRowIsOnscreen(entries.size() - 1);
+
+        repaint();
     }
 
     bool anyTypeFilterEnabled() const
@@ -723,6 +927,8 @@ private:
     VstMidiMonitorEntry makeEntry(const PolyHostPluginProcessor::MidiMonitorEvent& incoming)
     {
         VstMidiMonitorEntry e;
+        e.message = incoming.message;
+        e.captureTimeSeconds = incoming.captureTimeSeconds;
 
         auto now = juce::Time::getCurrentTime();
         e.time = now.formatted("%H:%M:%S");
@@ -872,12 +1078,16 @@ private:
 
     PolyHostPluginProcessor& processor;
     AppSettings& settings;
+    static constexpr int maximumStoredEntries = 100000;
     juce::TextButton clearButton;
     juce::ToggleButton pauseButton;
     juce::ToggleButton freezeButton;
     juce::TextButton copyRowButton;
     juce::TextButton copyAllButton;
-    juce::TextButton exportButton;
+    VstMidiMonitorCompactTextButton exportTextButton { "Export Txt" };
+    VstMidiMonitorCompactTextButton exportMidiButton { "Export Mid" };
+    juce::Label historyLabel;
+    juce::ComboBox historyMinutesBox;
     juce::ToggleButton hideClockButton;
     juce::ToggleButton hideActiveSenseButton;
     juce::ToggleButton showNoteButton;

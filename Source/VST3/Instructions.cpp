@@ -137,20 +137,22 @@ namespace
             "Use MIDI > MIDI Monitor to inspect incoming MIDI events.\n\n"
             "The monitor shows event time, source, channel, type, data, and raw hex bytes.\n\n"
             "Filters let you show or hide note events, CC, pitch bend, NRPN/RPN, program change, aftertouch, SysEx, realtime/transport, and system common messages.\n\n"
-            "Hide Clock and Hide Active Sense suppress high-frequency messages that can otherwise flood the display.\n\n"
+            "Hide Clock and Hide Active Sense suppress high-frequency messages that can otherwise flood the display. The History selector keeps only events captured within the selected 1-30 minute period.\n\n"
             "Pause discards incoming monitor events while active. Freeze keeps capturing internally but stops visual updates until unfrozen.\n\n"
-            "Copy Row copies the selected visible event. Copy All copies all visible events. Export saves visible events to a text or CSV file.\n\n"
+            "Copy Row copies the selected visible event. Copy All copies all visible events. Export Txt saves the visible rows to a text or CSV file. Export Mid saves only the currently visible, filtered events to a MIDI file while preserving their captured timing.\n\n"
             "PHI currently receives MIDI as a combined stream and labels it Host MIDI. The monitor does not retain the original physical-device identity." ) });
 
         topics.push_back({ "Routing View", makeBody("Routing View",
             "Routing View provides a compact overview of loaded tabs in their processing order.\n\n"
             "Use the routing toolbar button to switch between the normal plugin editor view and Routing View.\n\n"
             "From Routing View you can select or close tabs, drag them into a new order, change their MIDI-channel assignments and pointer adjustment method, toggle bypass or solo, and open Plugin Diagnostics. Changes apply immediately.\n\n"
+            "After closing a tab in either Simple or Advanced Routing, click Undo to restore the most recently deleted tab. PHI retains its hosted plug-in, state, routing cables, module position, Pointer controls and Macro mappings. A later deletion replaces the previous Undo item.\n\n"
             "Each tab has a compact Volume knob from -12 dB to +12 dB. Its value is shown beneath the knob without an editable text box. It adjusts that tab's processed output before it reaches later effects or the final PHI output. Double-click the knob to reset it to 0. Tab volume is saved in PHI presets.\n\n"
             "The Adj Method knob has three fixed positions: Scroll at the left, Global in the centre and Drag at the right. Double-click it to reset to Global. The selected setting is shown beneath the knob.\n\n"
             "When Options > Keyboard > Show is enabled, the graphical MIDI keyboard remains fixed at the bottom of the window. Routing rows scroll only inside the area above it, so you can play notes while adjusting Volume, Bypass, Solo or routing controls. Routing View remembers its dragged height independently of the keyboard.\n\n"
             "Synth outputs join the current audio signal. Effects process the signal reaching their position, so changing the tab order changes which later effects process each synth.\n\n"
             "Advanced Routing provides MAIN and AUX 1-16 stereo destinations. In PHI VST3 these are separate plug-in output buses. In standalone PHI, MAIN uses the first active stereo device pair, AUX 1 uses the second pair, AUX 2 the third pair, and so on. Enable the required physical channels in Options > Audio Settings. AUX rows that the selected device cannot currently provide are dimmed; their cables remain saved and do not fall back to MAIN.\n\n"
+            "Each Advanced plugin module includes the same compact controls as its Simple Routing row: select the tab, adjust Volume or pointer adjustment method, choose MIDI assignments, toggle Bypass or Solo, open Plugin Diagnostics, or close the tab. Empty module space remains available for dragging the module.\n\n"
             "Modules use the complete grid from its top-left corner, snap to the five-pixel grid, and cannot overlap. Bringing modules together snaps them against the nearest free edge with a 10-pixel gap.\n\n"
             "Routing View is also useful when a plugin GUI is very small or when you need to manage the session structure rather than edit the plugin itself." ) });
 

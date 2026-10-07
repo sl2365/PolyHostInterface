@@ -74,6 +74,7 @@ public:
     {
         juce::MidiMessage message;
         juce::String sourceName;
+        double captureTimeSeconds = 0.0;
         bool valid = false;
     };
 
@@ -82,7 +83,8 @@ public:
 
     juce::Array<MidiMonitorEvent> popPendingMidiMonitorEvents();
     void pushMidiMonitorEvent(
-        const juce::MidiMessage& message);
+        const juce::MidiMessage& message,
+        double captureTimeSeconds);
 
     PluginCore& getCore();
     AudioRecordingController& getAudioRecordingController();
@@ -296,6 +298,7 @@ private:
 
         int dataSize = 0;
         double timeStamp = 0.0;
+        double captureTimeSeconds = 0.0;
     };
 
     RawMidiMonitorEvent

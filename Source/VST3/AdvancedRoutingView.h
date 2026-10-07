@@ -19,10 +19,20 @@ public:
         juce::String id;
         juce::String label;
         juce::String subtitle;
+        int tabIndex = -1;
         NodeKind kind = NodeKind::Synth;
         bool acceptsInput = false;
         bool producesOutput = false;
         bool available = true;
+        bool isBypassed = false;
+        bool isSoloed = false;
+        bool isMutedBySolo = false;
+        float outputGainDb = 0.0f;
+        juce::String midiAssignmentsTooltip;
+        juce::String routingTooltip;
+        int pointerAdjustMethodOverride = 0;
+        bool needsAttention = false;
+        juce::String attentionMessage;
         int outputBusIndex = -1;
         juce::Point<int> position;
     };
@@ -32,8 +42,10 @@ public:
     void setModel(
         const juce::Array<NodeEntry>& nodes,
         const juce::Array<AdvancedRoutingConnection>& connections);
+    void setDeleteUndoAvailable(bool shouldBeAvailable);
 
     std::function<void()> onShowSimple;
+    std::function<void()> onUndoDelete;
     std::function<void()> onClearConnections;
     std::function<void()> onAutoLayout;
     std::function<bool(const juce::String& sourceNodeId,
@@ -51,6 +63,19 @@ public:
     std::function<void(const juce::String& nodeId,
                        juce::Point<int> position)> onNodeMoved;
     std::function<void(const juce::String& message)> onStatusMessage;
+    std::function<void(int tabIndex)> onToggleBypass;
+    std::function<void(int tabIndex)> onToggleSolo;
+    std::function<void(int tabIndex, float gainDb)> onSetOutputGainDb;
+    std::function<void(int tabIndex)> onSelectTab;
+    std::function<void(int tabIndex)> onCloseTab;
+    std::function<void(int tabIndex,
+                       juce::Component* anchorComponent)>
+        onShowMidiAssignments;
+    std::function<void(int tabIndex,
+                       juce::Component* anchorComponent)>
+        onShowPluginInfo;
+    std::function<void(int tabIndex, int methodOverride)>
+        onSetPointerAdjustMethodOverride;
 
     void paint(juce::Graphics& g) override;
     void resized() override;
@@ -60,6 +85,7 @@ private:
     {
     public:
         explicit Canvas(AdvancedRoutingView& ownerIn);
+        ~Canvas() override;
 
         void setModel(
             const juce::Array<NodeEntry>& nodes,
@@ -72,8 +98,12 @@ private:
         void mouseMove(const juce::MouseEvent& event) override;
         void mouseExit(const juce::MouseEvent& event) override;
         bool keyPressed(const juce::KeyPress& key) override;
+        void resized() override;
 
     private:
+        class NodeControls;
+        class DragOverlay;
+
         enum class ReconnectEnd
         {
             None,
@@ -128,11 +158,19 @@ private:
         static juce::Colour getCableBaseColour();
         bool isConnectionAttachedToSelectedNode(
             const AdvancedRoutingConnection& connection) const;
+        void paintNode(juce::Graphics& g,
+                       const NodeEntry& node) const;
+        void paintOutputModule(juce::Graphics& g) const;
+        void paintDraggedNodeOverlay(juce::Graphics& g);
         void removeSelectedConnection();
+        void rebuildNodeControls();
+        void updateNodeControlBounds();
 
         AdvancedRoutingView& owner;
         juce::Array<NodeEntry> nodeEntries;
         juce::Array<AdvancedRoutingConnection> connectionEntries;
+        juce::OwnedArray<NodeControls> nodeControls;
+        std::unique_ptr<DragOverlay> dragOverlay;
         int draggedNodeIndex = -1;
         juce::Point<int> dragOffset;
         juce::Point<int> dragStartPosition;
@@ -150,6 +188,7 @@ private:
     juce::Label titleLabel;
     juce::Label helpLabel;
     juce::TextButton simpleButton { "Simple" };
+    juce::TextButton undoDeleteButton { "Undo" };
     juce::TextButton autoLayoutButton { "Auto Layout" };
     juce::TextButton clearButton { "Clear Cables" };
     juce::Viewport viewport;

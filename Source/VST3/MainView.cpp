@@ -2692,6 +2692,11 @@ MainView::MainView(PolyHostPluginProcessor& processorIn,
         showRoutingMode(RoutingMode::Advanced);
     };
 
+    routingView.onUndoDelete = [this]
+    {
+        undoLastDeletedTab();
+    };
+
     routingView.onSetPointerAdjustMethodOverride = [this](int tabIndex, int methodOverride)
     {
         processor.getCore().setTabPointerAdjustMethodOverride(tabIndex, methodOverride);
@@ -2708,6 +2713,87 @@ MainView::MainView(PolyHostPluginProcessor& processorIn,
     {
         showRoutingMode(RoutingMode::Simple);
     };
+
+    advancedRoutingView.onUndoDelete = [this]
+    {
+        undoLastDeletedTab();
+    };
+
+    advancedRoutingView.onSelectTab = [this](int tabIndex)
+    {
+        if (! juce::isPositiveAndBelow(
+                tabIndex,
+                processor.getCore().getNumTabs()))
+        {
+            return;
+        }
+
+        showingRoutingView = false;
+        selectTab(tabIndex);
+    };
+
+    advancedRoutingView.onCloseTab = [this](int tabIndex)
+    {
+        closeTab(tabIndex);
+    };
+
+    advancedRoutingView.onToggleBypass = [this](int tabIndex)
+    {
+        auto& core = processor.getCore();
+
+        while (manualBypassStates.size() < core.getNumTabs())
+            manualBypassStates.add(false);
+
+        if (! juce::isPositiveAndBelow(
+                tabIndex,
+                manualBypassStates.size()))
+        {
+            return;
+        }
+
+        manualBypassStates.set(
+            tabIndex,
+            ! manualBypassStates[tabIndex]);
+        applyEffectiveBypassStates();
+        refreshFromCore();
+        repaint();
+    };
+
+    advancedRoutingView.onToggleSolo = [this](int tabIndex)
+    {
+        handleToggleSolo(tabIndex);
+    };
+
+    advancedRoutingView.onShowMidiAssignments =
+        [this](int tabIndex, juce::Component* anchorComponent)
+        {
+            showMidiAssignmentsPopup(tabIndex, anchorComponent);
+        };
+
+    advancedRoutingView.onShowPluginInfo =
+        [this](int tabIndex, juce::Component*)
+        {
+            showPluginDiagnosticsDialog(tabIndex);
+        };
+
+    advancedRoutingView.onSetPointerAdjustMethodOverride =
+        [this](int tabIndex, int methodOverride)
+        {
+            processor.getCore()
+                .setTabPointerAdjustMethodOverride(
+                    tabIndex,
+                    methodOverride);
+            refreshFromCore();
+            repaint();
+        };
+
+    advancedRoutingView.onSetOutputGainDb =
+        [this](int tabIndex, float gainDb)
+        {
+            processor.getCore().setTabOutputGainDb(
+                tabIndex,
+                gainDb);
+        };
 
     advancedRoutingView.onAddConnection =
         [this](const juce::String& sourceNodeId,
@@ -2789,7 +2875,7 @@ MainView::MainView(PolyHostPluginProcessor& processorIn,
         auto& core = processor.getCore();
         core.setAdvancedRoutingNodePosition(
             PluginCore::advancedAudioInputNodeId,
-            { 40, 80 });
+            { 20, 20 });
 
         int pluginRow = 0;
         for (int i = 0; i < core.getNumTabs(); ++i)
@@ -2808,7 +2894,7 @@ MainView::MainView(PolyHostPluginProcessor& processorIn,
 
         core.setAdvancedRoutingNodePosition(
             PluginCore::advancedMainOutputNodeId,
-            { 720, 50 });
+            { 905, 20 });
 
         rebuildAdvancedRoutingView();
         repaint();
@@ -5350,7 +5436,7 @@ void MainView::rebuildAdvancedRoutingView()
     inputNode.producesOutput = true;
     inputNode.position = core.getAdvancedRoutingNodePosition(
         inputNode.id,
-        { 40, 80 });
+        { 20, 20 });
     nodes.add(inputNode);
 
     int visiblePluginRow = 0;
@@ -5367,6 +5453,7 @@ void MainView::rebuildAdvancedRoutingView()
         AdvancedRoutingView::NodeEntry pluginNode;
         pluginNode.id = core.getTabRoutingId(tabIndex);
         pluginNode.label = tab.name;
+        pluginNode.tabIndex = tabIndex;
         pluginNode.subtitle =
             tab.type == PluginSlotType::Synth
                 ? "SYNTH"
@@ -5378,6 +5465,85 @@ void MainView::rebuildAdvancedRoutingView()
         pluginNode.acceptsInput =
             tab.type == PluginSlotType::FX;
         pluginNode.producesOutput = true;
+
+        const bool isSoloed =
+            soloedTabIndices.contains(tabIndex);
+        const bool manualBypassed =
+            juce::isPositiveAndBelow(
+                tabIndex,
+                manualBypassStates.size())
+                ? manualBypassStates[tabIndex]
+                : core.isTabBypassed(tabIndex);
+
+        pluginNode.isBypassed = manualBypassed;
+        pluginNode.isSoloed = isSoloed;
+        pluginNode.isMutedBySolo =
+            ! soloedTabIndices.isEmpty()
+            && ! isSoloed
+            && ! manualBypassed;
+        pluginNode.outputGainDb =
+            core.getTabOutputGainDb(tabIndex);
+
+        if (core.isMidiInputAssignedToTab(
+                tabIndex,
+                "MIDI Ch: All"))
+        {
+            pluginNode.midiAssignmentsTooltip =
+                "MIDI Ch: All";
+        }
+        else
+        {
+            juce::StringArray assignedChannels;
+
+            for (int channel = 1; channel <= 16; ++channel)
+            {
+                const auto assignmentName =
+                    "MIDI Ch: " + juce::String(channel);
+
+                if (core.isMidiInputAssignedToTab(
+                        tabIndex,
+                        assignmentName))
+                {
+                    assignedChannels.add(juce::String(channel));
+                }
+            }
+
+            if (assignedChannels.isEmpty())
+            {
+                pluginNode.midiAssignmentsTooltip =
+                    "MIDI Ch: None";
+            }
+            else
+            {
+                const auto lastChannel =
+                    assignedChannels[
+                        assignedChannels.size() - 1];
+                assignedChannels.remove(
+                    assignedChannels.size() - 1);
+
+                pluginNode.midiAssignmentsTooltip =
+                    "MIDI Ch: ";
+
+                if (! assignedChannels.isEmpty())
+                {
+                    pluginNode.midiAssignmentsTooltip +=
+                        assignedChannels.joinIntoString(", ")
+                        + " and ";
+                }
+
+                pluginNode.midiAssignmentsTooltip +=
+                    lastChannel;
+            }
+        }
+
+        pluginNode.routingTooltip =
+            core.getRoutingTooltipForTab(tabIndex);
+        pluginNode.pointerAdjustMethodOverride =
+            core.getTabPointerAdjustMethodOverride(tabIndex);
+        pluginNode.needsAttention =
+            core.tabNeedsAttention(tabIndex);
+        pluginNode.attentionMessage =
+            core.getTabAttentionMessage(tabIndex);
         pluginNode.position = core.getAdvancedRoutingNodePosition(
             pluginNode.id,
             { 330, 50 + visiblePluginRow * 90 });
@@ -5395,7 +5561,7 @@ void MainView::rebuildAdvancedRoutingView()
     mainNode.outputBusIndex = 0;
     mainNode.position = core.getAdvancedRoutingNodePosition(
         mainNode.id,
-        { 720, 50 });
+        { 905, 20 });
     nodes.add(mainNode);
 
     for (int auxIndex = 0;
@@ -5551,34 +5717,7 @@ void MainView::handleTabContextCommand(int commandId, int tabIndex)
             if (core.getNumTabs() <= 1)
                 return;
 
-            clearHostedEditor();
-            if (core.closeSelectedTab())
-            {
-                juce::Array<int> updatedSoloIndices;
-
-                for (int i = 0; i < soloedTabIndices.size(); ++i)
-                {
-                    const int soloIndex = soloedTabIndices.getReference(i);
-
-                    if (soloIndex == tabIndex)
-                        continue;
-
-                    if (soloIndex > tabIndex)
-                        updatedSoloIndices.add(soloIndex - 1);
-                    else
-                        updatedSoloIndices.add(soloIndex);
-                }
-
-                soloedTabIndices = updatedSoloIndices;
-
-                if (juce::isPositiveAndBelow(tabIndex, manualBypassStates.size()))
-                    manualBypassStates.remove(tabIndex);
-
-                applyEffectiveBypassStates();
-                core.getTabModel().selectTab(core.getSelectedTabIndex());
-                refreshFromCore();
-                repaint();
-            }
+            closeTab(tabIndex);
             return;
 
         default:
@@ -5624,8 +5763,27 @@ void MainView::closeTab(int tabIndex)
     core.setSelectedTabIndex(tabIndex);
     core.getTabModel().selectTab(tabIndex);
 
+    const bool deletedManualBypass =
+        juce::isPositiveAndBelow(
+            tabIndex,
+            manualBypassStates.size())
+            ? manualBypassStates[tabIndex]
+            : core.isTabBypassed(tabIndex);
+    const bool deletedWasSoloed =
+        soloedTabIndices.contains(tabIndex);
+    const bool deletedWasOnlyTab = core.getNumTabs() == 1;
+
+    ScopedPresetProcessingSuspension presetProcessingSuspension(
+        processor,
+        "Close Tab");
+
     if (core.closeSelectedTab())
     {
+        deletedTabUndoIndex = tabIndex;
+        deletedTabUndoManualBypass = deletedManualBypass;
+        deletedTabUndoWasSoloed = deletedWasSoloed;
+        deletedTabUndoUsedEmptyReplacement = deletedWasOnlyTab;
+
         juce::Array<int> updatedSoloIndices;
 
         for (int i = 0; i < soloedTabIndices.size(); ++i)
@@ -5654,6 +5812,68 @@ void MainView::closeTab(int tabIndex)
     }
 }
 
+void MainView::undoLastDeletedTab()
+{
+    auto& core = processor.getCore();
+
+    if (! core.hasClosedTabUndoState())
+        return;
+
+    const bool emptyReplacementWillBeRemoved =
+        deletedTabUndoUsedEmptyReplacement
+        && core.getNumTabs() == 1
+        && core.getTabModel().getTab(0).type
+               == PluginSlotType::Empty
+        && core.getTabModel().getTab(0).name == "Empty"
+        && ! core.tabNeedsAttention(0);
+
+    dismissMidiAssignmentsPopup();
+
+    ScopedPresetProcessingSuspension presetProcessingSuspension(
+        processor,
+        "Undo Delete Tab");
+
+    clearHostedEditor();
+
+    if (! core.undoLastClosedTab())
+        return;
+
+    const int restoredIndex = juce::jlimit(
+        0,
+        juce::jmax(0, core.getNumTabs() - 1),
+        deletedTabUndoIndex);
+
+    for (auto& soloIndex : soloedTabIndices)
+        if (soloIndex >= restoredIndex)
+            ++soloIndex;
+
+    if (deletedTabUndoWasSoloed)
+        soloedTabIndices.addIfNotAlreadyThere(restoredIndex);
+
+    if (emptyReplacementWillBeRemoved
+        && manualBypassStates.size() == 1)
+    {
+        manualBypassStates.remove(0);
+    }
+
+    manualBypassStates.insert(
+        juce::jlimit(0,
+                     manualBypassStates.size(),
+                     restoredIndex),
+        deletedTabUndoManualBypass);
+
+    deletedTabUndoIndex = -1;
+    deletedTabUndoManualBypass = false;
+    deletedTabUndoWasSoloed = false;
+    deletedTabUndoUsedEmptyReplacement = false;
+
+    applyEffectiveBypassStates();
+    core.getTabModel().selectTab(core.getSelectedTabIndex());
+    showTemporaryStatusMessage("Restored deleted tab");
+    refreshFromCore();
+    repaint();
+}
+
 void MainView::newTab()
 {
     DebugLog::write("[Tabs] newTab requested");
@@ -5672,18 +5892,8 @@ void MainView::closeCurrentTab()
 {
     DebugLog::write("[Tabs] closeCurrentTab requested");
 
-    ScopedPresetProcessingSuspension presetProcessingSuspension(
-        processor,
-        "Close Tab");
-
     auto& core = processor.getCore();
-
-    if (core.closeSelectedTab())
-    {
-        core.getTabModel().selectTab(core.getSelectedTabIndex());
-        refreshFromCore();
-        repaint();
-    }
+    closeTab(core.getSelectedTabIndex());
 }
 
 std::unique_ptr<juce::PluginDescription> MainView::choosePluginDescriptionForFile(const juce::File& file)
@@ -6849,6 +7059,10 @@ void MainView::refreshFromCore()
     rebuildTabButtons();
     rebuildRoutingView();
     rebuildAdvancedRoutingView();
+    const bool deleteUndoAvailable =
+        core.hasClosedTabUndoState();
+    routingView.setDeleteUndoAvailable(deleteUndoAvailable);
+    advancedRoutingView.setDeleteUndoAvailable(deleteUndoAvailable);
     rebuildPointerMapDropdown();
 
     refreshMacroMappingsView();

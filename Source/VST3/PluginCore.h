@@ -40,6 +40,8 @@ public:
     void setSelectedTabIndex(int newIndex);
     bool addTab(const juce::String& tabName = {});
     bool closeSelectedTab();
+    bool hasClosedTabUndoState() const noexcept;
+    bool undoLastClosedTab();
     bool clearTab(int tabIndex);
     bool reloadTabPlugin(int tabIndex);
     void refreshTabModel();
@@ -345,6 +347,18 @@ private:
         SessionPluginData restoreIssuePluginData;
     };
 
+    struct IndexedAdvancedConnection
+    {
+        int index = -1;
+        AdvancedRoutingConnection connection;
+    };
+
+    struct IndexedMacroMapping
+    {
+        int index = -1;
+        SessionData::MacroMapping mapping;
+    };
+
     void audioProcessorParameterChanged(juce::AudioProcessor* processor,
                                         int parameterIndex,
                                         float newValue) override;
@@ -356,6 +370,7 @@ private:
     void disposeHostedPluginInstance(HostedTabState& tab,
                                      const juce::String& diagnosticContext,
                                      bool releaseHealthyPluginResources = true);
+    void discardClosedTabUndoState();
 
     HostedTabState* getSelectedHostedTab();
     const HostedTabState* getSelectedHostedTab() const;
@@ -468,6 +483,15 @@ private:
     TabModel tabModel;
     juce::OwnedArray<HostedTabState> hostedTabs;
     juce::Array<MissingPluginEntry> missingPlugins;
+    std::unique_ptr<HostedTabState> closedTabUndoState;
+    int closedTabUndoIndex = -1;
+    bool closedTabUsedEmptyReplacement = false;
+    juce::Array<IndexedAdvancedConnection>
+        closedTabAdvancedConnections;
+    bool closedTabHadAdvancedPosition = false;
+    AdvancedRoutingNodePosition closedTabAdvancedPosition;
+    juce::Array<IndexedMacroMapping> closedTabMacroMappings;
+    LastTouchedParameter closedTabLastTouchedParameter;
     juce::StringPairArray pluginQuarantineReasons;
     juce::String lastPresetLoadReportText;
     bool lastPresetLoadReportHadProblems = false;

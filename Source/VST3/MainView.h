@@ -599,6 +599,7 @@ private:
     void selectTab(int tabIndex);
     void clearTab(int tabIndex);
     void closeTab(int tabIndex);
+    void undoLastDeletedTab();
     void showTabContextMenuAsync(int tabIndex, juce::Component* anchor);
     void handleTabContextCommand(int commandId, int tabIndex);
     void showMidiAssignmentsPopup(int tabIndex, juce::Component* anchorComponent);
@@ -725,6 +726,10 @@ private:
     bool showingMacroMappingsView = false;
     juce::Array<int> soloedTabIndices;
     juce::Array<bool> manualBypassStates;
+    int deletedTabUndoIndex = -1;
+    bool deletedTabUndoManualBypass = false;
+    bool deletedTabUndoWasSoloed = false;
+    bool deletedTabUndoUsedEmptyReplacement = false;
 
     PointerControl pointerControl;
     juce::Rectangle<int> lastPointerTargetBounds;
