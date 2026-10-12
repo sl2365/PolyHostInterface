@@ -362,7 +362,8 @@ private:
                     ButtonStyling::Tooltips::routing(),
                     ButtonStyling::Glyphs::routing(),
                     ButtonStyling::ToolbarIconButton::ContentType::IconGlyph,
-                    ButtonStyling::defaultButtonWidth());
+                    ButtonStyling::defaultButtonWidth(),
+                    [this] { return owner.showingRoutingView; });
 
                 button->onClick = [this] { owner.toggleRoutingView(); };
                 return button;
@@ -411,7 +412,8 @@ private:
                     ButtonStyling::Tooltips::macroMappings(),
                     ButtonStyling::Glyphs::mappings(),
                     ButtonStyling::ToolbarIconButton::ContentType::IconGlyph,
-                    ButtonStyling::defaultButtonWidth());
+                    ButtonStyling::defaultButtonWidth(),
+                    [this] { return owner.showingMacroMappingsView; });
 
                 button->onClick = [this] { owner.showMacroMappingsView(); };
                 return button;

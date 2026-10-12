@@ -2802,6 +2802,7 @@ MainView::MainView(PolyHostPluginProcessor& processorIn,
                int sourceBusIndex,
                const juce::String& destinationNodeId,
                int destinationBusIndex,
+               AdvancedRoutingConnectionType type,
                juce::String& errorMessage)
         {
             const bool added =
@@ -2810,6 +2811,7 @@ MainView::MainView(PolyHostPluginProcessor& processorIn,
                     sourceBusIndex,
                     destinationNodeId,
                     destinationBusIndex,
+                    type,
                     &errorMessage);
 
             if (added)
@@ -2825,13 +2827,15 @@ MainView::MainView(PolyHostPluginProcessor& processorIn,
         [this](const juce::String& sourceNodeId,
                int sourceBusIndex,
                const juce::String& destinationNodeId,
-               int destinationBusIndex)
+               int destinationBusIndex,
+               AdvancedRoutingConnectionType type)
         {
             if (processor.getCore().removeAdvancedRoutingConnection(
                     sourceNodeId,
                     sourceBusIndex,
                     destinationNodeId,
-                    destinationBusIndex))
+                    destinationBusIndex,
+                    type))
             {
                 rebuildAdvancedRoutingView();
                 repaint();
@@ -2847,6 +2851,7 @@ MainView::MainView(PolyHostPluginProcessor& processorIn,
                int newSourceBusIndex,
                const juce::String& newDestinationNodeId,
                int newDestinationBusIndex,
+               AdvancedRoutingConnectionType type,
                juce::String& errorMessage)
         {
             const bool reconnected =
@@ -2859,6 +2864,7 @@ MainView::MainView(PolyHostPluginProcessor& processorIn,
                     newSourceBusIndex,
                     newDestinationNodeId,
                     newDestinationBusIndex,
+                    type,
                     &errorMessage);
 
             if (reconnected)
@@ -5100,6 +5106,7 @@ void MainView::toggleRecordingView()
     hidePointerEditOverlay();
     showingRoutingView = false;
     showingMacroMappingsView = false;
+    toolbar.repaint();
     routingView.setVisible(false);
     advancedRoutingView.setVisible(false);
     macroMappingsView.setVisible(false);
@@ -5286,6 +5293,8 @@ void MainView::toggleRoutingView()
     if (showingRoutingView)
         showingMacroMappingsView = false;
 
+    toolbar.repaint();
+
     DebugLog::write("[Routing] toggleRoutingView new state="
                     + juce::String(showingRoutingView ? "true" : "false"));
 
@@ -5452,6 +5461,7 @@ void MainView::rebuildAdvancedRoutingView()
     inputNode.subtitle = "Standalone / host input";
     inputNode.kind = AdvancedRoutingView::NodeKind::AudioInput;
     inputNode.producesOutput = true;
+    inputNode.producesMidi = true;
     inputNode.position = core.getAdvancedRoutingNodePosition(
         inputNode.id,
         { 20, 20 });
@@ -5480,6 +5490,8 @@ void MainView::rebuildAdvancedRoutingView()
             tab.type == PluginSlotType::Synth
                 ? AdvancedRoutingView::NodeKind::Synth
                 : AdvancedRoutingView::NodeKind::Effect;
+        pluginNode.acceptsMidi = true;
+        pluginNode.producesMidi = true;
 
         auto appendPorts = [](
             const juce::Array<PluginCore::AdvancedAudioBusInfo>& buses,
@@ -6714,6 +6726,7 @@ bool MainView::loadSessionFromFile(const juce::File& file)
     dismissMidiAssignmentsPopup();
     showingRoutingView = false;
     showingMacroMappingsView = false;
+    toolbar.repaint();
     soloedTabIndices.clear();
     manualBypassStates.clear();
 
@@ -7316,6 +7329,7 @@ void MainView::refreshFromCore()
 
     refreshDirtyUiOnly();
     resized();
+    toolbar.repaint();
     updatePointerEditOverlay();
 }
 

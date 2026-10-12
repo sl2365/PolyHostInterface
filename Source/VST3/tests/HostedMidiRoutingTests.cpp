@@ -21,21 +21,25 @@ namespace
 int main()
 {
     using phi_midi_routing::findLatestReadySourceBefore;
-    using phi_midi_routing::isMidiOnlyEffect;
+    using phi_midi_routing::isMidiOnlyProcessor;
     using phi_midi_routing::shouldUsePreservedInputForDownstream;
 
-    expect(shouldUsePreservedInputForDownstream(true),
+    expect(shouldUsePreservedInputForDownstream(true, false, false),
            "a synth routes its preserved input MIDI downstream");
-    expect(! shouldUsePreservedInputForDownstream(false),
-           "a MIDI processor routes its processed output downstream");
+    expect(! shouldUsePreservedInputForDownstream(true, true, false),
+           "an instrument-classified MIDI processor routes its processed output downstream");
+    expect(! shouldUsePreservedInputForDownstream(true, false, true),
+           "an audio-capable instrument that generated MIDI routes its processed output downstream");
+    expect(! shouldUsePreservedInputForDownstream(false, false, false),
+           "an FX-classified MIDI processor routes its processed output downstream");
 
-    expect(isMidiOnlyEffect(true, false, false, true, 0, 0),
-           "a zero-audio MIDI-generating FX is preprocessed as an arp");
-    expect(! isMidiOnlyEffect(true, false, false, true, 2, 2),
+    expect(isMidiOnlyProcessor(false, false, true, 0, 0),
+           "a zero-audio MIDI generator is preprocessed regardless of plugin category");
+    expect(! isMidiOnlyProcessor(false, false, true, 2, 2),
            "an audio FX is never double-processed");
-    expect(! isMidiOnlyEffect(true, true, false, true, 0, 0),
+    expect(! isMidiOnlyProcessor(true, false, true, 0, 0),
            "a bypassed arp does not control a synth");
-    expect(! isMidiOnlyEffect(true, false, true, true, 0, 0),
+    expect(! isMidiOnlyProcessor(false, true, true, 0, 0),
            "a quarantined arp is not called again");
 
     const std::array<bool, 5> routeReady { false, true, false, true, false };

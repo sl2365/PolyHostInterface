@@ -50,6 +50,8 @@ std::unique_ptr<juce::XmlElement> SessionManager::createXmlFromSessionData(const
                                 : "Simple");
     presetXml->setAttribute("advancedRoutingInitialised",
                             session.advancedRoutingInitialised);
+    presetXml->setAttribute("advancedMidiRoutingInitialised",
+                            session.advancedMidiRoutingInitialised);
     presetXml->setAttribute("hasSimpleRoutingViewSize",
                             session.hasSimpleRoutingViewSize);
     presetXml->setAttribute("simpleRoutingViewWidth",
@@ -133,6 +135,12 @@ std::unique_ptr<juce::XmlElement> SessionManager::createXmlFromSessionData(const
                                         connection.sourceBusIndex);
             connectionXml->setAttribute("destinationBus",
                                         connection.destinationBusIndex);
+
+            if (connection.type
+                == AdvancedRoutingConnectionType::Midi)
+            {
+                connectionXml->setAttribute("type", "MIDI");
+            }
         }
 
         for (const auto& position :
@@ -186,6 +194,10 @@ bool SessionManager::restoreSessionDataFromXml(const juce::XmlElement& xml,
             : RoutingMode::Simple;
     session.advancedRoutingInitialised =
         xml.getBoolAttribute("advancedRoutingInitialised", false);
+    session.advancedMidiRoutingInitialised =
+        xml.getBoolAttribute(
+            "advancedMidiRoutingInitialised",
+            false);
     session.hasSimpleRoutingViewSize =
         xml.getBoolAttribute("hasSimpleRoutingViewSize", false);
     session.simpleRoutingViewWidth =
@@ -274,6 +286,18 @@ bool SessionManager::restoreSessionDataFromXml(const juce::XmlElement& xml,
             if (childXml->hasTagName("Connection"))
             {
                 AdvancedRoutingConnection connection;
+                connection.type =
+                    childXml->getStringAttribute("type")
+                            .equalsIgnoreCase("MIDI")
+                        ? AdvancedRoutingConnectionType::Midi
+                        : AdvancedRoutingConnectionType::Audio;
+
+                if (connection.type
+                    == AdvancedRoutingConnectionType::Midi)
+                {
+                    session.advancedMidiRoutingInitialised =
+                        true;
+                }
                 connection.sourceNodeId =
                     childXml->getStringAttribute("source").trim();
                 connection.destinationNodeId =

@@ -154,11 +154,13 @@ public:
                                       int sourceBusIndex,
                                       const juce::String& destinationNodeId,
                                       int destinationBusIndex,
+                                      AdvancedRoutingConnectionType type,
                                       juce::String* errorMessage = nullptr);
     bool removeAdvancedRoutingConnection(const juce::String& sourceNodeId,
                                          int sourceBusIndex,
                                          const juce::String& destinationNodeId,
-                                         int destinationBusIndex);
+                                         int destinationBusIndex,
+                                         AdvancedRoutingConnectionType type);
     bool reconnectAdvancedRoutingConnection(
         const juce::String& oldSourceNodeId,
         int oldSourceBusIndex,
@@ -168,6 +170,7 @@ public:
         int newSourceBusIndex,
         const juce::String& newDestinationNodeId,
         int newDestinationBusIndex,
+        AdvancedRoutingConnectionType type,
         juce::String* errorMessage = nullptr);
     void clearAdvancedRoutingConnections();
     void setAdvancedRoutingNodePosition(const juce::String& nodeId,
@@ -316,6 +319,8 @@ private:
         bool pluginProducesMidi = false;
         juce::MidiBuffer midiScratchBuffer;
         juce::MidiBuffer midiInputScratchBuffer;
+        juce::MidiBuffer advancedMidiPreviousOutputBuffer;
+        bool advancedMidiPreviousOutputReady = false;
         bool hasProducedGeneratedMidi = false;
         bool midiRouteReadyThisBlock = false;
         bool midiPreprocessedThisBlock = false;
@@ -434,19 +439,29 @@ private:
         int destinationChannelCount = 0;
     };
 
+    struct ResolvedAdvancedMidiConnection
+    {
+        int sourceTabIndex = -1;      // -1 is the host/controller input.
+        int destinationTabIndex = -1;
+    };
+
     struct ResolvedAdvancedGraph
     {
-        std::vector<ResolvedAdvancedConnection> connections;
+        std::vector<ResolvedAdvancedConnection> audioConnections;
+        std::vector<ResolvedAdvancedMidiConnection> midiConnections;
     };
 
     void publishAdvancedRoutingGraph();
+    void ensureAdvancedMidiRoutingInitialised();
     int findTabIndexForRoutingId(const juce::String& routingId) const;
     bool advancedConnectionWouldCreateCycle(const juce::String& sourceNodeId,
                                             const juce::String& destinationNodeId) const;
     bool isAdvancedSourcePort(const juce::String& nodeId,
-                              int busIndex) const;
+                              int busIndex,
+                              AdvancedRoutingConnectionType type) const;
     bool isAdvancedDestinationPort(const juce::String& nodeId,
-                                   int busIndex) const;
+                                   int busIndex,
+                                   AdvancedRoutingConnectionType type) const;
     static const AdvancedAudioBusInfo* findAdvancedBus(
         const juce::Array<AdvancedAudioBusInfo>& buses,
         int busIndex);
@@ -552,10 +567,13 @@ private:
     std::array<juce::AudioBuffer<float>, advancedAuxOutputCount>
         advancedAuxOutputScratchBuffers;
     juce::MidiBuffer hostMidiInputScratchBuffer;
+    juce::MidiBuffer advancedMidiMergeScratchBuffer;
     juce::MidiBuffer midiReleaseResetScratchBuffer;
     juce::MidiBuffer midiPanicScratchBuffer;
     juce::MidiMessage seqwencerPresenceMessage;
     juce::Array<int> fxIndexScratch;
+    juce::Array<int> synthIndexScratch;
+    juce::Array<int> midiProcessorIndexScratch;
     juce::Array<int> advancedFxOrderScratch;
     juce::Array<int> advancedFxPendingScratch;
 
@@ -568,6 +586,7 @@ private:
 
     std::atomic<RoutingMode> routingMode { RoutingMode::Simple };
     bool advancedRoutingInitialised = false;
+    bool advancedMidiRoutingInitialised = false;
     juce::Array<AdvancedRoutingConnection> advancedRoutingConnections;
     juce::Array<AdvancedRoutingNodePosition> advancedRoutingNodePositions;
     std::shared_ptr<const ResolvedAdvancedGraph> resolvedAdvancedGraph;

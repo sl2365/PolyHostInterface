@@ -15,8 +15,16 @@ enum class RoutingMode
     Advanced = 1
 };
 
+enum class AdvancedRoutingConnectionType
+{
+    Audio = 0,
+    Midi = 1
+};
+
 struct AdvancedRoutingConnection
 {
+    AdvancedRoutingConnectionType type =
+        AdvancedRoutingConnectionType::Audio;
     juce::String sourceNodeId;
     juce::String destinationNodeId;
     int sourceBusIndex = 0;
@@ -92,6 +100,7 @@ struct SessionData
     int selectedTabIndex = 0;
     RoutingMode routingMode = RoutingMode::Simple;
     bool advancedRoutingInitialised = false;
+    bool advancedMidiRoutingInitialised = false;
     bool hasSimpleRoutingViewSize = false;
     int simpleRoutingViewWidth = 800;
     int simpleRoutingViewHeight = 500;

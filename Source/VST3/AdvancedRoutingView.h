@@ -30,6 +30,8 @@ public:
         NodeKind kind = NodeKind::Synth;
         bool acceptsInput = false;
         bool producesOutput = false;
+        bool acceptsMidi = false;
+        bool producesMidi = false;
         bool available = true;
         bool isBypassed = false;
         bool isSoloed = false;
@@ -69,11 +71,13 @@ public:
                        int sourceBusIndex,
                        const juce::String& destinationNodeId,
                        int destinationBusIndex,
+                       AdvancedRoutingConnectionType type,
                        juce::String& errorMessage)> onAddConnection;
     std::function<void(const juce::String& sourceNodeId,
                        int sourceBusIndex,
                        const juce::String& destinationNodeId,
-                       int destinationBusIndex)>
+                       int destinationBusIndex,
+                       AdvancedRoutingConnectionType type)>
         onRemoveConnection;
     std::function<bool(const juce::String& oldSourceNodeId,
                        int oldSourceBusIndex,
@@ -83,6 +87,7 @@ public:
                        int newSourceBusIndex,
                        const juce::String& newDestinationNodeId,
                        int newDestinationBusIndex,
+                       AdvancedRoutingConnectionType type,
                        juce::String& errorMessage)>
         onReconnectConnection;
     std::function<void(const juce::String& nodeId,
@@ -149,6 +154,8 @@ private:
         {
             int nodeIndex = -1;
             int busIndex = 0;
+            AdvancedRoutingConnectionType type =
+                AdvancedRoutingConnectionType::Audio;
 
             bool isValid() const noexcept
             {
@@ -178,6 +185,7 @@ private:
             + outputBottomPadding;
         static constexpr float portRadius = 6.0f;
         static constexpr float auxiliaryPortRadius = 4.0f;
+        static constexpr float midiPortRadius = 5.0f;
 
         juce::Rectangle<int> getNodeBounds(const NodeEntry& node) const;
         int getNodeWidth(const NodeEntry& node) const;
@@ -186,6 +194,10 @@ private:
                                         int busIndex) const;
         juce::Point<float> getOutputPort(const NodeEntry& node,
                                          int busIndex) const;
+        juce::Point<float> getMidiInputPort(
+            const NodeEntry& node) const;
+        juce::Point<float> getMidiOutputPort(
+            const NodeEntry& node) const;
         juce::Point<float> getInputPortDirection(
             const NodeEntry& node,
             int busIndex) const;
@@ -218,7 +230,8 @@ private:
         bool isNodePositionOverlapping(
             int movingNodeIndex,
             juce::Point<int> position) const;
-        static juce::Colour getCableBaseColour();
+        static juce::Colour getCableBaseColour(
+            AdvancedRoutingConnectionType type);
         bool isConnectionAttachedToSelectedNode(
             const AdvancedRoutingConnection& connection) const;
         void paintNode(juce::Graphics& g,
@@ -241,6 +254,8 @@ private:
         bool hasValidDragPosition = false;
         int cableSourceNodeIndex = -1;
         int cableSourceBusIndex = 0;
+        AdvancedRoutingConnectionType cableSourceType =
+            AdvancedRoutingConnectionType::Audio;
         juce::Point<float> cableEnd;
         int reconnectConnectionIndex = -1;
         ReconnectEnd reconnectEnd = ReconnectEnd::None;

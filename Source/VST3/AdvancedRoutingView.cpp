@@ -16,6 +16,7 @@ namespace
     constexpr auto inputPortColour = inputNodeBorderColour;
     constexpr auto outputPortColour = outputNodeBorderColour;
     constexpr auto cableColour = 0xFF3A7BD5;
+    constexpr auto midiColour = 0xFFE67E22;
 }
 
 class AdvancedRoutingView::Canvas::NodeControls final
@@ -194,19 +195,19 @@ public:
 
     void resized() override
     {
-        typeButton.setBounds(4, 3, 42, 17);
+        typeButton.setBounds(11, 5, 42, 19);
 
-        volumeLabel.setBounds(4, 20, 31, 9);
-        volumeSlider.setBounds(8, 29, 23, 23);
-        volumeValueLabel.setBounds(4, 52, 31, 11);
+        volumeLabel.setBounds(4, 24, 31, 7);
+        volumeSlider.setBounds(8, 31, 23, 23);
+        volumeValueLabel.setBounds(4, 54, 31, 9);
 
-        adjustLabel.setBounds(33, 20, 38, 9);
-        adjustMethodSlider.setBounds(41, 29, 23, 23);
-        adjustMethodValueLabel.setBounds(32, 52, 40, 11);
+        adjustLabel.setBounds(33, 24, 38, 7);
+        adjustMethodSlider.setBounds(41, 31, 23, 23);
+        adjustMethodValueLabel.setBounds(32, 54, 40, 9);
 
-        midiButton.setBounds(74, 29, 26, 22);
-        bypassButton.setBounds(104, 29, 26, 22);
-        soloButton.setBounds(134, 29, 26, 22);
+        midiButton.setBounds(74, 31, 26, 22);
+        bypassButton.setBounds(104, 31, 26, 22);
+        soloButton.setBounds(134, 31, 26, 22);
     }
 
 private:
@@ -412,8 +413,16 @@ void AdvancedRoutingView::Canvas::setModel(
 
     auto hasPort = [](const NodeEntry& node,
                       int busIndex,
-                      bool isInput)
+                      bool isInput,
+                      AdvancedRoutingConnectionType type)
     {
+        if (type == AdvancedRoutingConnectionType::Midi)
+        {
+            return busIndex == 0
+                && (isInput ? node.acceptsMidi
+                            : node.producesMidi);
+        }
+
         const auto& ports = isInput ? node.inputPorts
                                     : node.outputPorts;
 
@@ -445,10 +454,12 @@ void AdvancedRoutingView::Canvas::setModel(
                                            nodeEntries.size())
             || ! hasPort(nodeEntries.getReference(sourceIndex),
                          connection.sourceBusIndex,
-                         false)
+                         false,
+                         connection.type)
             || ! hasPort(nodeEntries.getReference(destinationIndex),
                          connection.destinationBusIndex,
-                         true))
+                         true,
+                         connection.type))
         {
             connectionEntries.remove(connectionIndex);
         }
@@ -890,6 +901,22 @@ AdvancedRoutingView::Canvas::getOutputPort(
 }
 
 juce::Point<float>
+AdvancedRoutingView::Canvas::getMidiInputPort(
+    const NodeEntry& node) const
+{
+    const auto bounds = getNodeBounds(node).toFloat();
+    return { bounds.getX(), bounds.getY() + 11.0f };
+}
+
+juce::Point<float>
+AdvancedRoutingView::Canvas::getMidiOutputPort(
+    const NodeEntry& node) const
+{
+    const auto bounds = getNodeBounds(node).toFloat();
+    return { bounds.getRight(), bounds.getY() + 11.0f };
+}
+
+juce::Point<float>
 AdvancedRoutingView::Canvas::getInputPortDirection(
     const NodeEntry& node,
     int busIndex) const
@@ -1010,16 +1037,28 @@ juce::Path AdvancedRoutingView::Canvas::makeConnectionPath(
     }
 
     return makeCablePath(
-        getOutputPort(nodeEntries.getReference(sourceIndex),
-                      connection.sourceBusIndex),
-        getInputPort(nodeEntries.getReference(destinationIndex),
-                     connection.destinationBusIndex),
-        getOutputPortDirection(
-            nodeEntries.getReference(sourceIndex),
-            connection.sourceBusIndex),
-        getInputPortDirection(
-            nodeEntries.getReference(destinationIndex),
-            connection.destinationBusIndex));
+        connection.type == AdvancedRoutingConnectionType::Midi
+            ? getMidiOutputPort(
+                  nodeEntries.getReference(sourceIndex))
+            : getOutputPort(
+                  nodeEntries.getReference(sourceIndex),
+                  connection.sourceBusIndex),
+        connection.type == AdvancedRoutingConnectionType::Midi
+            ? getMidiInputPort(
+                  nodeEntries.getReference(destinationIndex))
+            : getInputPort(
+                  nodeEntries.getReference(destinationIndex),
+                  connection.destinationBusIndex),
+        connection.type == AdvancedRoutingConnectionType::Midi
+            ? juce::Point<float> { 1.0f, 0.0f }
+            : getOutputPortDirection(
+                  nodeEntries.getReference(sourceIndex),
+                  connection.sourceBusIndex),
+        connection.type == AdvancedRoutingConnectionType::Midi
+            ? juce::Point<float> { -1.0f, 0.0f }
+            : getInputPortDirection(
+                  nodeEntries.getReference(destinationIndex),
+                  connection.destinationBusIndex));
 }
 
 int AdvancedRoutingView::Canvas::findNodeAt(
@@ -1054,6 +1093,15 @@ AdvancedRoutingView::Canvas::findInputPortAt(
     for (int i = 0; i < nodeEntries.size(); ++i)
     {
         const auto& node = nodeEntries.getReference(i);
+
+        if (node.acceptsMidi
+            && getMidiInputPort(node)
+                   .getDistanceFrom(position) <= 10.0f)
+        {
+            return { i,
+                     0,
+                     AdvancedRoutingConnectionType::Midi };
+        }
 
         if (! node.acceptsInput)
             continue;
@@ -1104,6 +1152,15 @@ AdvancedRoutingView::Canvas::findOutputPortAt(
     {
         const auto& node = nodeEntries.getReference(i);
 
+        if (node.producesMidi
+            && getMidiOutputPort(node)
+                   .getDistanceFrom(position) <= 10.0f)
+        {
+            return { i,
+                     0,
+                     AdvancedRoutingConnectionType::Midi };
+        }
+
         if (! node.producesOutput)
             continue;
 
@@ -1151,9 +1208,13 @@ int AdvancedRoutingView::Canvas::findConnectionAt(
     return -1;
 }
 
-juce::Colour AdvancedRoutingView::Canvas::getCableBaseColour()
+juce::Colour AdvancedRoutingView::Canvas::getCableBaseColour(
+    AdvancedRoutingConnectionType type)
 {
-    return juce::Colour(cableColour);
+    return juce::Colour(
+        type == AdvancedRoutingConnectionType::Midi
+            ? midiColour
+            : cableColour);
 }
 
 bool AdvancedRoutingView::Canvas::isConnectionAttachedToSelectedNode(
@@ -1236,10 +1297,10 @@ void AdvancedRoutingView::Canvas::paintNode(
             juce::FontOptions(12.0f, juce::Font::bold)));
         g.drawFittedText(
             node.label,
-            juce::Rectangle<float>(bounds.getX() + 50.0f,
-                                   bounds.getY() + 3.0f,
-                                   bounds.getWidth() - 54.0f,
-                                   17.0f).toNearestInt(),
+            juce::Rectangle<float>(bounds.getX() + 57.0f,
+                                   bounds.getY() + 5.0f,
+                                   bounds.getWidth() - 61.0f,
+                                   19.0f).toNearestInt(),
             juce::Justification::centredLeft,
             1);
     }
@@ -1310,6 +1371,26 @@ void AdvancedRoutingView::Canvas::paintNode(
         else
             for (const auto& port : node.outputPorts)
                 drawOutputPort(port.busIndex);
+    }
+
+    g.setColour(juce::Colour(midiColour));
+
+    if (node.acceptsMidi)
+    {
+        const auto port = getMidiInputPort(node);
+        g.fillEllipse(port.x - midiPortRadius,
+                      port.y - midiPortRadius,
+                      midiPortRadius * 2.0f,
+                      midiPortRadius * 2.0f);
+    }
+
+    if (node.producesMidi)
+    {
+        const auto port = getMidiOutputPort(node);
+        g.fillEllipse(port.x - midiPortRadius,
+                      port.y - midiPortRadius,
+                      midiPortRadius * 2.0f,
+                      midiPortRadius * 2.0f);
     }
 }
 
@@ -1510,7 +1591,7 @@ void AdvancedRoutingView::Canvas::paint(juce::Graphics& g)
             i == selectedConnectionIndex
             || isConnectionAttachedToSelectedNode(connection);
         const bool isHovered = i == hoveredConnectionIndex;
-        auto colour = getCableBaseColour();
+        auto colour = getCableBaseColour(connection.type);
         float strokeWidth = 2.5f;
 
         if (isHovered)
@@ -1538,17 +1619,23 @@ void AdvancedRoutingView::Canvas::paint(juce::Graphics& g)
     if (juce::isPositiveAndBelow(cableSourceNodeIndex,
                                  nodeEntries.size()))
     {
+        const auto& sourceNode =
+            nodeEntries.getReference(cableSourceNodeIndex);
         const auto start =
-            getOutputPort(nodeEntries.getReference(cableSourceNodeIndex),
-                          cableSourceBusIndex);
-        g.setColour(getCableBaseColour());
+            cableSourceType == AdvancedRoutingConnectionType::Midi
+                ? getMidiOutputPort(sourceNode)
+                : getOutputPort(sourceNode,
+                                cableSourceBusIndex);
+        g.setColour(getCableBaseColour(cableSourceType));
         g.strokePath(makeCablePath(
                          start,
                          cableEnd,
-                         getOutputPortDirection(
-                             nodeEntries.getReference(
-                                 cableSourceNodeIndex),
-                             cableSourceBusIndex),
+                         cableSourceType
+                                 == AdvancedRoutingConnectionType::Midi
+                             ? juce::Point<float> { 1.0f, 0.0f }
+                             : getOutputPortDirection(
+                                   sourceNode,
+                                   cableSourceBusIndex),
                          { -1.0f, 0.0f }),
                      juce::PathStrokeType(3.0f,
                                           juce::PathStrokeType::curved,
@@ -1568,18 +1655,32 @@ void AdvancedRoutingView::Canvas::paint(juce::Graphics& g)
             && juce::isPositiveAndBelow(destinationIndex,
                                         nodeEntries.size()))
         {
-            auto start = getOutputPort(
-                nodeEntries.getReference(sourceIndex),
-                connection.sourceBusIndex);
-            auto end = getInputPort(
-                nodeEntries.getReference(destinationIndex),
-                connection.destinationBusIndex);
-            auto startDirection = getOutputPortDirection(
-                nodeEntries.getReference(sourceIndex),
-                connection.sourceBusIndex);
-            auto endDirection = getInputPortDirection(
-                nodeEntries.getReference(destinationIndex),
-                connection.destinationBusIndex);
+            const auto& sourceNode =
+                nodeEntries.getReference(sourceIndex);
+            const auto& destinationNode =
+                nodeEntries.getReference(destinationIndex);
+            auto start = connection.type
+                             == AdvancedRoutingConnectionType::Midi
+                ? getMidiOutputPort(sourceNode)
+                : getOutputPort(sourceNode,
+                                connection.sourceBusIndex);
+            auto end = connection.type
+                           == AdvancedRoutingConnectionType::Midi
+                ? getMidiInputPort(destinationNode)
+                : getInputPort(destinationNode,
+                               connection.destinationBusIndex);
+            auto startDirection = connection.type
+                                      == AdvancedRoutingConnectionType::Midi
+                ? juce::Point<float> { 1.0f, 0.0f }
+                : getOutputPortDirection(
+                      sourceNode,
+                      connection.sourceBusIndex);
+            auto endDirection = connection.type
+                                    == AdvancedRoutingConnectionType::Midi
+                ? juce::Point<float> { -1.0f, 0.0f }
+                : getInputPortDirection(
+                      destinationNode,
+                      connection.destinationBusIndex);
 
             if (reconnectEnd == ReconnectEnd::Source)
             {
@@ -1592,7 +1693,7 @@ void AdvancedRoutingView::Canvas::paint(juce::Graphics& g)
                 endDirection = { -1.0f, 0.0f };
             }
 
-            g.setColour(getCableBaseColour());
+            g.setColour(getCableBaseColour(connection.type));
             g.strokePath(makeCablePath(start,
                                        end,
                                        startDirection,
@@ -1634,6 +1735,13 @@ void AdvancedRoutingView::Canvas::mouseMove(
         }
 
         const auto& node = nodeEntries.getReference(hit.nodeIndex);
+
+        if (hit.type == AdvancedRoutingConnectionType::Midi)
+        {
+            return isOutput
+                ? "MIDI output - drag to an orange MIDI input"
+                : "MIDI input - accepts an orange MIDI cable";
+        }
 
         if (node.kind == NodeKind::AudioInput)
             return "Audio input - drag from this output";
@@ -1774,7 +1882,8 @@ void AdvancedRoutingView::Canvas::mouseDown(
                 owner.onRemoveConnection(connection.sourceNodeId,
                                          connection.sourceBusIndex,
                                          connection.destinationNodeId,
-                                         connection.destinationBusIndex);
+                                         connection.destinationBusIndex,
+                                         connection.type);
         }
         return;
     }
@@ -1787,6 +1896,7 @@ void AdvancedRoutingView::Canvas::mouseDown(
             ? outputPort.nodeIndex
             : -1;
     cableSourceBusIndex = outputPort.busIndex;
+    cableSourceType = outputPort.type;
 
     if (cableSourceNodeIndex >= 0)
     {
@@ -1832,12 +1942,22 @@ void AdvancedRoutingView::Canvas::mouseDown(
             && juce::isPositiveAndBelow(destinationIndex,
                                         nodeEntries.size()))
         {
-            const auto sourcePosition = getOutputPort(
-                nodeEntries.getReference(sourceIndex),
-                connection.sourceBusIndex);
-            const auto destinationPosition = getInputPort(
-                nodeEntries.getReference(destinationIndex),
-                connection.destinationBusIndex);
+            const auto sourcePosition =
+                connection.type
+                        == AdvancedRoutingConnectionType::Midi
+                    ? getMidiOutputPort(
+                          nodeEntries.getReference(sourceIndex))
+                    : getOutputPort(
+                          nodeEntries.getReference(sourceIndex),
+                          connection.sourceBusIndex);
+            const auto destinationPosition =
+                connection.type
+                        == AdvancedRoutingConnectionType::Midi
+                    ? getMidiInputPort(
+                          nodeEntries.getReference(destinationIndex))
+                    : getInputPort(
+                          nodeEntries.getReference(destinationIndex),
+                          connection.destinationBusIndex);
 
             reconnectConnectionIndex = connectionIndex;
             reconnectEnd =
@@ -1945,6 +2065,7 @@ void AdvancedRoutingView::Canvas::mouseUp(
         reconnectEnd = ReconnectEnd::None;
 
         if (target.isValid()
+            && target.type == oldConnection.type
             && juce::isPositiveAndBelow(target.nodeIndex,
                                         nodeEntries.size())
             && owner.onReconnectConnection)
@@ -1978,6 +2099,7 @@ void AdvancedRoutingView::Canvas::mouseUp(
                     newSourceBusIndex,
                     newDestinationNodeId,
                     newDestinationBusIndex,
+                    oldConnection.type,
                     errorMessage)
                 && errorMessage.isNotEmpty()
                 && owner.onStatusMessage)
@@ -1996,6 +2118,7 @@ void AdvancedRoutingView::Canvas::mouseUp(
             findInputPortAt(event.position);
 
         if (destinationPort.isValid()
+            && destinationPort.type == cableSourceType
             && juce::isPositiveAndBelow(
                 destinationPort.nodeIndex,
                 nodeEntries.size())
@@ -2012,6 +2135,7 @@ void AdvancedRoutingView::Canvas::mouseUp(
                                         cableSourceBusIndex,
                                         destination.id,
                                         destinationPort.busIndex,
+                                        cableSourceType,
                                         errorMessage)
                 && errorMessage.isNotEmpty()
                 && owner.onStatusMessage)
@@ -2022,6 +2146,8 @@ void AdvancedRoutingView::Canvas::mouseUp(
 
         cableSourceNodeIndex = -1;
         cableSourceBusIndex = 0;
+        cableSourceType =
+            AdvancedRoutingConnectionType::Audio;
         repaint();
     }
 
@@ -2090,7 +2216,8 @@ void AdvancedRoutingView::Canvas::removeSelectedConnection()
         owner.onRemoveConnection(connection.sourceNodeId,
                                  connection.sourceBusIndex,
                                  connection.destinationNodeId,
-                                 connection.destinationBusIndex);
+                                 connection.destinationBusIndex,
+                                 connection.type);
 }
 
 bool AdvancedRoutingView::Canvas::keyPressed(
@@ -2119,7 +2246,8 @@ AdvancedRoutingView::AdvancedRoutingView()
     addAndMakeVisible(titleLabel);
 
     helpLabel.setText(
-        "Drag from an output dot to connect. Drag either half of a cable to move its nearest end. Right-click a module for Info or Close. Right-click a cable, or select it and press Delete, to remove.",
+        "Blue ports/cables route audio; orange ports/cables route MIDI. Drag from an output dot to connect. Drag either half of a cable to move its nearest end.\n"
+        "Right-click a module for Info or Close. Right-click a cable, or select it and press Delete, to remove.",
         juce::dontSendNotification);
     helpLabel.setJustificationType(juce::Justification::centredLeft);
     helpLabel.setColour(juce::Label::textColourId,
@@ -2233,7 +2361,7 @@ void AdvancedRoutingView::resized()
     header.removeFromRight(6);
     simpleButton.setBounds(header.removeFromRight(80).reduced(2));
 
-    helpLabel.setBounds(area.removeFromTop(28));
+    helpLabel.setBounds(area.removeFromTop(38));
     area.removeFromTop(6);
     viewport.setBounds(area);
 }

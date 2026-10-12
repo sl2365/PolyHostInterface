@@ -1026,6 +1026,10 @@ void PluginCore::prepareToPlay(double sampleRate, int samplesPerBlock)
     hostMidiInputScratchBuffer.ensureSize(
         64 * 1024);
 
+    advancedMidiMergeScratchBuffer.clear();
+    advancedMidiMergeScratchBuffer.ensureSize(
+        64 * 1024);
+
     midiReleaseResetScratchBuffer.clear();
     midiReleaseResetScratchBuffer.ensureSize(
         8 * 1024);
@@ -1102,6 +1106,12 @@ void PluginCore::prepareToPlay(double sampleRate, int samplesPerBlock)
     fxIndexScratch.clearQuick();
     fxIndexScratch.ensureStorageAllocated(
         hostedTabs.size());
+    synthIndexScratch.clearQuick();
+    synthIndexScratch.ensureStorageAllocated(
+        hostedTabs.size());
+    midiProcessorIndexScratch.clearQuick();
+    midiProcessorIndexScratch.ensureStorageAllocated(
+        hostedTabs.size());
     advancedFxOrderScratch.clearQuick();
     advancedFxOrderScratch.ensureStorageAllocated(hostedTabs.size());
     advancedFxPendingScratch.clearQuick();
@@ -1119,6 +1129,11 @@ void PluginCore::prepareToPlay(double sampleRate, int samplesPerBlock)
         tab->midiInputScratchBuffer.clear();
         tab->midiInputScratchBuffer.ensureSize(
             64 * 1024);
+
+        tab->advancedMidiPreviousOutputBuffer.clear();
+        tab->advancedMidiPreviousOutputBuffer.ensureSize(
+            64 * 1024);
+        tab->advancedMidiPreviousOutputReady = false;
 
         tab->hasProducedGeneratedMidi = false;
 
@@ -1272,6 +1287,14 @@ void PluginCore::processBlock(juce::AudioBuffer<float>& buffer,
         tab->midiRouteReadyThisBlock = false;
         tab->midiPreprocessedThisBlock = false;
     }
+
+    const bool usingAdvancedRouting =
+        getRoutingMode() == RoutingMode::Advanced;
+
+    const auto advancedGraph =
+        std::atomic_load_explicit(
+            &resolvedAdvancedGraph,
+            std::memory_order_acquire);
 
     auto containsNonFiniteSamples =
         [](const juce::AudioBuffer<float>& audioBuffer) noexcept
@@ -1657,7 +1680,7 @@ void PluginCore::processBlock(juce::AudioBuffer<float>& buffer,
             return false;
         };
 
-    auto findMidiSourceBeforeTab =
+    auto findSimpleMidiSourceBeforeTab =
         [this] (int tabIndex) -> const juce::MidiBuffer&
         {
             const int sourceIndex =
@@ -1677,7 +1700,9 @@ void PluginCore::processBlock(juce::AudioBuffer<float>& buffer,
 
                 if (phi_midi_routing::shouldUsePreservedInputForDownstream(
                         getHostedTabType(sourceIndex)
-                            == PluginSlotType::Synth))
+                            == PluginSlotType::Synth,
+                        sourceTab->midiPreprocessedThisBlock,
+                        sourceTab->hasProducedGeneratedMidi))
                 {
                     return sourceTab->midiInputScratchBuffer;
                 }
@@ -1688,7 +1713,88 @@ void PluginCore::processBlock(juce::AudioBuffer<float>& buffer,
             return hostMidiInputScratchBuffer;
         };
 
-    auto isMidiOnlyFx =
+    auto findMidiSourceForTab =
+        [this,
+         usingAdvancedRouting,
+         &advancedGraph,
+         &findSimpleMidiSourceBeforeTab]
+        (int tabIndex) -> const juce::MidiBuffer&
+        {
+            if (! usingAdvancedRouting
+                || advancedGraph == nullptr)
+            {
+                return findSimpleMidiSourceBeforeTab(
+                    tabIndex);
+            }
+
+            advancedMidiMergeScratchBuffer.clear();
+
+            for (const auto& connection :
+                 advancedGraph->midiConnections)
+            {
+                if (connection.destinationTabIndex
+                    != tabIndex)
+                {
+                    continue;
+                }
+
+                if (connection.sourceTabIndex < 0)
+                {
+                    advancedMidiMergeScratchBuffer.addEvents(
+                        hostMidiInputScratchBuffer,
+                        0,
+                        -1,
+                        0);
+                    continue;
+                }
+
+                if (! juce::isPositiveAndBelow(
+                        connection.sourceTabIndex,
+                        hostedTabs.size()))
+                {
+                    continue;
+                }
+
+                const auto* sourceTab =
+                    hostedTabs[connection.sourceTabIndex];
+
+                if (sourceTab == nullptr)
+                {
+                    continue;
+                }
+
+                if (! sourceTab->midiRouteReadyThisBlock)
+                {
+                    if (sourceTab
+                            ->advancedMidiPreviousOutputReady)
+                    {
+                        advancedMidiMergeScratchBuffer.addEvents(
+                            sourceTab
+                                ->advancedMidiPreviousOutputBuffer,
+                            0,
+                            -1,
+                            0);
+                    }
+
+                    continue;
+                }
+
+                const auto& sourceMidi =
+                    sourceTab->hasProducedGeneratedMidi
+                        ? sourceTab->midiScratchBuffer
+                        : sourceTab->midiInputScratchBuffer;
+
+                advancedMidiMergeScratchBuffer.addEvents(
+                    sourceMidi,
+                    0,
+                    -1,
+                    0);
+            }
+
+            return advancedMidiMergeScratchBuffer;
+        };
+
+    auto isMidiOnlyProcessor =
         [this] (int tabIndex) noexcept
         {
             if (! juce::isPositiveAndBelow(
@@ -1704,19 +1810,17 @@ void PluginCore::processBlock(juce::AudioBuffer<float>& buffer,
                 || tab->pluginInstance == nullptr
                 || tab->bypassed
                 || tab->processingQuarantined.load(
-                    std::memory_order_acquire)
-                || getHostedTabType(tabIndex)
-                    != PluginSlotType::FX)
+                    std::memory_order_acquire))
             {
                 return false;
             }
 
-            return phi_midi_routing::isMidiOnlyEffect(
-                true,
+            return phi_midi_routing::isMidiOnlyProcessor(
                 tab->bypassed,
                 tab->processingQuarantined.load(
                     std::memory_order_acquire),
-                tab->pluginProducesMidi,
+                tab->pluginProducesMidi
+                    || tab->hasProducedGeneratedMidi,
                 tab->pluginInputChannelCount,
                 tab->pluginOutputChannelCount);
         };
@@ -1760,18 +1864,29 @@ void PluginCore::processBlock(juce::AudioBuffer<float>& buffer,
         auxBuffer.clear();
     }
 
-    const bool usingAdvancedRouting =
-        getRoutingMode() == RoutingMode::Advanced;
-
-    const auto advancedGraph =
-        std::atomic_load_explicit(
-            &resolvedAdvancedGraph,
-            std::memory_order_acquire);
-
     auto& fxIndices =
         fxIndexScratch;
 
+    auto& synthIndices =
+        synthIndexScratch;
+
     fxIndices.clearQuick();
+    synthIndices.clearQuick();
+
+    for (int i = 0; i < hostedTabs.size(); ++i)
+    {
+        auto* tab = hostedTabs[i];
+
+        if (tab != nullptr
+            && tab->pluginInstance != nullptr
+            && getHostedTabType(i)
+                   == PluginSlotType::Synth
+            && ! tab->processingQuarantined.load(
+                    std::memory_order_acquire))
+        {
+            synthIndices.add(i);
+        }
+    }
 
     for (int i = 0; i < hostedTabs.size(); ++i)
     {
@@ -1835,6 +1950,60 @@ void PluginCore::processBlock(juce::AudioBuffer<float>& buffer,
 
     if (usingAdvancedRouting
         && advancedGraph != nullptr
+        && synthIndices.size() > 1)
+    {
+        auto& pendingSynths = advancedFxPendingScratch;
+        auto& orderedSynths = advancedFxOrderScratch;
+        pendingSynths.clearQuick();
+        orderedSynths.clearQuick();
+        pendingSynths.addArray(synthIndices);
+
+        while (! pendingSynths.isEmpty())
+        {
+            int selectedPendingIndex = -1;
+
+            for (int pendingIndex = 0;
+                 pendingIndex < pendingSynths.size();
+                 ++pendingIndex)
+            {
+                const int candidateTab =
+                    pendingSynths[pendingIndex];
+                bool hasUnprocessedMidiInput = false;
+
+                for (const auto& connection :
+                     advancedGraph->midiConnections)
+                {
+                    if (connection.destinationTabIndex
+                            == candidateTab
+                        && connection.sourceTabIndex >= 0
+                        && pendingSynths.contains(
+                            connection.sourceTabIndex))
+                    {
+                        hasUnprocessedMidiInput = true;
+                        break;
+                    }
+                }
+
+                if (! hasUnprocessedMidiInput)
+                {
+                    selectedPendingIndex = pendingIndex;
+                    break;
+                }
+            }
+
+            if (selectedPendingIndex < 0)
+                selectedPendingIndex = 0;
+
+            orderedSynths.add(
+                pendingSynths.removeAndReturn(
+                    selectedPendingIndex));
+        }
+
+        synthIndices.swapWith(orderedSynths);
+    }
+
+    if (usingAdvancedRouting
+        && advancedGraph != nullptr
         && fxIndices.size() > 1)
     {
         auto& pendingFx = advancedFxPendingScratch;
@@ -1855,7 +2024,7 @@ void PluginCore::processBlock(juce::AudioBuffer<float>& buffer,
                 bool hasUnprocessedInput = false;
 
                 for (const auto& connection :
-                     advancedGraph->connections)
+                     advancedGraph->audioConnections)
                 {
                     if (connection.destinationTabIndex
                             == candidateTab
@@ -1865,6 +2034,23 @@ void PluginCore::processBlock(juce::AudioBuffer<float>& buffer,
                     {
                         hasUnprocessedInput = true;
                         break;
+                    }
+                }
+
+                if (! hasUnprocessedInput)
+                {
+                    for (const auto& connection :
+                         advancedGraph->midiConnections)
+                    {
+                        if (connection.destinationTabIndex
+                                == candidateTab
+                            && connection.sourceTabIndex >= 0
+                            && pendingFx.contains(
+                                connection.sourceTabIndex))
+                        {
+                            hasUnprocessedInput = true;
+                            break;
+                        }
                     }
                 }
 
@@ -1953,7 +2139,7 @@ void PluginCore::processBlock(juce::AudioBuffer<float>& buffer,
                 return;
 
             for (const auto& connection :
-                 advancedGraph->connections)
+                 advancedGraph->audioConnections)
             {
                 if (connection.sourceTabIndex != sourceTabIndex)
                     continue;
@@ -2042,14 +2228,84 @@ void PluginCore::processBlock(juce::AudioBuffer<float>& buffer,
             true);
     }
 
-    // MIDI-only effects such as dedicated arpeggiators must run before the
-    // synths beneath them.  PHI's audio graph processes synth audio before FX
-    // audio, so these zero-audio processors receive a separate MIDI-only pass
-    // and are skipped later in the audio-FX pass.
+    // MIDI-only processors such as dedicated arpeggiators must run before the
+    // synths beneath them.  Some legacy plug-ins identify themselves as
+    // instruments rather than effects, so use their actual audio/MIDI
+    // capabilities instead of their category.  They receive one MIDI-only
+    // pass and are skipped by their normal synth/FX processing pass below.
+    auto& midiProcessorIndices =
+        midiProcessorIndexScratch;
+    midiProcessorIndices.clearQuick();
+
     for (int i = 0; i < hostedTabs.size(); ++i)
     {
-        if (! isMidiOnlyFx(i))
-            continue;
+        if (isMidiOnlyProcessor(i))
+            midiProcessorIndices.add(i);
+    }
+
+    if (usingAdvancedRouting
+        && advancedGraph != nullptr
+        && midiProcessorIndices.size() > 1)
+    {
+        auto& pendingProcessors = advancedFxPendingScratch;
+        auto& orderedProcessors = advancedFxOrderScratch;
+        pendingProcessors.clearQuick();
+        orderedProcessors.clearQuick();
+        pendingProcessors.addArray(midiProcessorIndices);
+
+        while (! pendingProcessors.isEmpty())
+        {
+            int selectedPendingIndex = -1;
+
+            for (int pendingIndex = 0;
+                 pendingIndex < pendingProcessors.size();
+                 ++pendingIndex)
+            {
+                const int candidateTab =
+                    pendingProcessors[pendingIndex];
+                bool hasUnprocessedInput = false;
+
+                for (const auto& connection :
+                     advancedGraph->midiConnections)
+                {
+                    if (connection.destinationTabIndex
+                            == candidateTab
+                        && connection.sourceTabIndex >= 0
+                        && pendingProcessors.contains(
+                            connection.sourceTabIndex))
+                    {
+                        hasUnprocessedInput = true;
+                        break;
+                    }
+                }
+
+                if (! hasUnprocessedInput)
+                {
+                    selectedPendingIndex = pendingIndex;
+                    break;
+                }
+            }
+
+            if (selectedPendingIndex < 0)
+                selectedPendingIndex = 0;
+
+            orderedProcessors.add(
+                pendingProcessors.removeAndReturn(
+                    selectedPendingIndex));
+        }
+
+        midiProcessorIndices.swapWith(
+            orderedProcessors);
+    }
+
+    for (int midiProcessorListIndex = 0;
+         midiProcessorListIndex
+             < midiProcessorIndices.size();
+         ++midiProcessorListIndex)
+    {
+        const int i =
+            midiProcessorIndices[
+                midiProcessorListIndex];
 
         auto* tab = hostedTabs[i];
         auto* instance = tab->pluginInstance.get();
@@ -2058,7 +2314,7 @@ void PluginCore::processBlock(juce::AudioBuffer<float>& buffer,
         auto& routedMidi = tab->midiScratchBuffer;
         buildMidiBufferForTab(
             i,
-            findMidiSourceBeforeTab(i),
+            findMidiSourceForTab(i),
             routedMidi);
 
         auto& inputMidi = tab->midiInputScratchBuffer;
@@ -2180,8 +2436,11 @@ void PluginCore::processBlock(juce::AudioBuffer<float>& buffer,
         tab->midiRouteReadyThisBlock = true;
     }
 
-    for (int i = 0; i < hostedTabs.size(); ++i)
+    for (int synthListIndex = 0;
+         synthListIndex < synthIndices.size();
+         ++synthListIndex)
     {
+        const int i = synthIndices[synthListIndex];
         auto* tab = hostedTabs[i];
 
         if (tab == nullptr
@@ -2190,11 +2449,8 @@ void PluginCore::processBlock(juce::AudioBuffer<float>& buffer,
             continue;
         }
 
-        if (getHostedTabType(i)
-            != PluginSlotType::Synth)
-        {
+        if (tab->midiPreprocessedThisBlock)
             continue;
-        }
 
         if (tab->processingQuarantined.load(
                 std::memory_order_acquire))
@@ -2210,9 +2466,10 @@ void PluginCore::processBlock(juce::AudioBuffer<float>& buffer,
 
         buildMidiBufferForTab(
             i,
-            findMidiSourceBeforeTab(i),
+            findMidiSourceForTab(i),
             synthMidi,
-            tab->bypassed);
+            tab->bypassed
+                && ! usingAdvancedRouting);
 
         auto& synthInputMidi =
             tab->midiInputScratchBuffer;
@@ -2223,6 +2480,12 @@ void PluginCore::processBlock(juce::AudioBuffer<float>& buffer,
             0,
             numSamples,
             0);
+
+        if (usingAdvancedRouting && tab->bypassed)
+        {
+            tab->midiRouteReadyThisBlock = true;
+            continue;
+        }
 
         const int totalInputChannels =
             tab->pluginInputChannelCount;
@@ -2382,7 +2645,11 @@ void PluginCore::processBlock(juce::AudioBuffer<float>& buffer,
             std::memory_order_relaxed);
 
         if (tab->bypassed)
+        {
+            if (usingAdvancedRouting)
+                tab->midiRouteReadyThisBlock = true;
             continue;
+        }
 
         applyTabOutputGain(*tab, synthBuffer);
 
@@ -2403,9 +2670,16 @@ void PluginCore::processBlock(juce::AudioBuffer<float>& buffer,
             else
             {
                 tab->midiRouteReadyThisBlock =
-                    tab->pluginProducesMidi
+                    usingAdvancedRouting
+                    || tab->pluginProducesMidi
                     || tab->hasProducedGeneratedMidi;
             }
+        }
+
+        if (usingAdvancedRouting
+            && ! tab->midiRouteReadyThisBlock)
+        {
+            tab->midiRouteReadyThisBlock = true;
         }
 
         if (usingAdvancedRouting)
@@ -2549,6 +2823,18 @@ void PluginCore::processBlock(juce::AudioBuffer<float>& buffer,
                 || tab->processingQuarantined.load(
                     std::memory_order_acquire)))
         {
+            auto& bypassMidi = tab->midiScratchBuffer;
+            buildMidiBufferForTab(
+                tabIndex,
+                findMidiSourceForTab(tabIndex),
+                bypassMidi);
+            tab->midiInputScratchBuffer.clear();
+            tab->midiInputScratchBuffer.addEvents(
+                bypassMidi,
+                0,
+                numSamples,
+                0);
+            tab->midiRouteReadyThisBlock = true;
             routeFxAudioOutput(fxListIndex, fxBuffer);
             continue;
         }
@@ -2568,7 +2854,7 @@ void PluginCore::processBlock(juce::AudioBuffer<float>& buffer,
 
         buildMidiBufferForTab(
             tabIndex,
-            findMidiSourceBeforeTab(tabIndex),
+            findMidiSourceForTab(tabIndex),
             fxMidi);
 
         if (tab->isSeqwencer)
@@ -2780,16 +3066,52 @@ void PluginCore::processBlock(juce::AudioBuffer<float>& buffer,
                 else
                 {
                     tab->midiRouteReadyThisBlock =
-                        tab->pluginProducesMidi
+                        usingAdvancedRouting
+                        || tab->pluginProducesMidi
                         || tab->hasProducedGeneratedMidi;
                 }
             }
+        }
+
+        if (usingAdvancedRouting
+            && processCompleted
+            && ! tab->midiRouteReadyThisBlock)
+        {
+            tab->midiRouteReadyThisBlock = true;
         }
 
         if (processCompleted)
             applyTabOutputGain(*tab, fxBuffer);
 
         routeFxAudioOutput(fxListIndex, fxBuffer);
+    }
+
+    for (auto* tab : hostedTabs)
+    {
+        if (tab == nullptr)
+            continue;
+
+        auto& previousOutput =
+            tab->advancedMidiPreviousOutputBuffer;
+        previousOutput.clear();
+
+        if (! usingAdvancedRouting
+            || ! tab->midiRouteReadyThisBlock)
+        {
+            tab->advancedMidiPreviousOutputReady = false;
+            continue;
+        }
+
+        const auto& currentOutput =
+            tab->hasProducedGeneratedMidi
+                ? tab->midiScratchBuffer
+                : tab->midiInputScratchBuffer;
+        previousOutput.addEvents(
+            currentOutput,
+            0,
+            numSamples,
+            0);
+        tab->advancedMidiPreviousOutputReady = true;
     }
 
     buffer.makeCopyOf(finalOutput, true);
@@ -3136,6 +3458,9 @@ bool PluginCore::addTab(const juce::String& tabName)
     tab->midiInputScratchBuffer.ensureSize(
         64 * 1024);
 
+    tab->advancedMidiPreviousOutputBuffer.ensureSize(
+        64 * 1024);
+
     tab->audioScratchChannelCapacity =
         hostBufferChannelCapacity;
 
@@ -3161,6 +3486,10 @@ bool PluginCore::addTab(const juce::String& tabName)
     tab->outputGainLinear.setCurrentAndTargetValue(1.0f);
 
     fxIndexScratch.ensureStorageAllocated(
+        hostedTabs.size() + 1);
+    synthIndexScratch.ensureStorageAllocated(
+        hostedTabs.size() + 1);
+    midiProcessorIndexScratch.ensureStorageAllocated(
         hostedTabs.size() + 1);
     advancedFxOrderScratch.ensureStorageAllocated(
         hostedTabs.size() + 1);
@@ -3384,9 +3713,16 @@ bool PluginCore::undoLastClosedTab()
         {
             if (existingConnection.sourceNodeId
                     == indexedConnection.connection.sourceNodeId
+                && existingConnection.type
+                    == indexedConnection.connection.type
+                && existingConnection.sourceBusIndex
+                    == indexedConnection.connection.sourceBusIndex
                 && existingConnection.destinationNodeId
                     == indexedConnection.connection
-                           .destinationNodeId)
+                           .destinationNodeId
+                && existingConnection.destinationBusIndex
+                    == indexedConnection.connection
+                           .destinationBusIndex)
             {
                 connectionAlreadyExists = true;
                 break;
@@ -3566,7 +3902,14 @@ void PluginCore::setTabBypassed(int tabIndex, bool shouldBeBypassed)
     if (! juce::isPositiveAndBelow(tabIndex, hostedTabs.size()))
         return;
 
+    if (hostedTabs[tabIndex]->bypassed == shouldBeBypassed)
+        return;
+
     hostedTabs[tabIndex]->bypassed = shouldBeBypassed;
+
+    if (shouldBeBypassed)
+        requestMidiReleaseReset();
+
     markDirty();
 }
 
@@ -4534,8 +4877,7 @@ juce::String PluginCore::buildPluginDiagnosticsText(int tabIndex) const
                 std::memory_order_acquire)
             && instance->producesMidi()
             && (hostedTab->pluginType == PluginSlotType::Synth
-                || phi_midi_routing::isMidiOnlyEffect(
-                    hostedTab->pluginType == PluginSlotType::FX,
+                || phi_midi_routing::isMidiOnlyProcessor(
                     false,
                     false,
                     true,
@@ -4930,7 +5272,10 @@ RoutingMode PluginCore::getRoutingMode() const noexcept
 void PluginCore::setRoutingMode(RoutingMode mode)
 {
     if (mode == RoutingMode::Advanced)
+    {
         ensureAdvancedRoutingInitialised();
+        ensureAdvancedMidiRoutingInitialised();
+    }
 
     if (routingMode.exchange(mode, std::memory_order_acq_rel) != mode)
         markDirty();
@@ -5025,8 +5370,16 @@ int PluginCore::getAdvancedOutputIndex(const juce::String& nodeId) const
 
 bool PluginCore::isAdvancedSourcePort(
     const juce::String& nodeId,
-    int busIndex) const
+    int busIndex,
+    AdvancedRoutingConnectionType type) const
 {
+    if (type == AdvancedRoutingConnectionType::Midi)
+    {
+        return busIndex == 0
+            && (nodeId == advancedAudioInputNodeId
+                || findTabIndexForRoutingId(nodeId) >= 0);
+    }
+
     if (nodeId == advancedAudioInputNodeId)
         return busIndex == 0;
 
@@ -5046,8 +5399,15 @@ bool PluginCore::isAdvancedSourcePort(
 
 bool PluginCore::isAdvancedDestinationPort(
     const juce::String& nodeId,
-    int busIndex) const
+    int busIndex,
+    AdvancedRoutingConnectionType type) const
 {
+    if (type == AdvancedRoutingConnectionType::Midi)
+    {
+        return busIndex == 0
+            && findTabIndexForRoutingId(nodeId) >= 0;
+    }
+
     if (isAdvancedOutputNode(nodeId))
         return busIndex == 0;
 
@@ -5130,11 +5490,45 @@ bool PluginCore::advancedConnectionWouldCreateCycle(
 void PluginCore::publishAdvancedRoutingGraph()
 {
     auto graph = std::make_shared<ResolvedAdvancedGraph>();
-    graph->connections.reserve(
+    graph->audioConnections.reserve(
+        static_cast<size_t>(advancedRoutingConnections.size()));
+    graph->midiConnections.reserve(
         static_cast<size_t>(advancedRoutingConnections.size()));
 
     for (const auto& connection : advancedRoutingConnections)
     {
+        if (connection.type
+            == AdvancedRoutingConnectionType::Midi)
+        {
+            ResolvedAdvancedMidiConnection resolvedMidi;
+            resolvedMidi.sourceTabIndex =
+                connection.sourceNodeId
+                        == advancedAudioInputNodeId
+                    ? -1
+                    : findTabIndexForRoutingId(
+                          connection.sourceNodeId);
+            resolvedMidi.destinationTabIndex =
+                findTabIndexForRoutingId(
+                    connection.destinationNodeId);
+
+            const bool sourceValid =
+                connection.sourceBusIndex == 0
+                && (connection.sourceNodeId
+                        == advancedAudioInputNodeId
+                    || resolvedMidi.sourceTabIndex >= 0);
+            const bool destinationValid =
+                connection.destinationBusIndex == 0
+                && resolvedMidi.destinationTabIndex >= 0;
+
+            if (sourceValid && destinationValid)
+            {
+                graph->midiConnections.push_back(
+                    resolvedMidi);
+            }
+
+            continue;
+        }
+
         ResolvedAdvancedConnection resolved;
         resolved.sourceTabIndex =
             connection.sourceNodeId == advancedAudioInputNodeId
@@ -5226,7 +5620,7 @@ void PluginCore::publishAdvancedRoutingGraph()
             && destinationValid
             && sourcePortValid
             && destinationPortValid)
-            graph->connections.push_back(resolved);
+            graph->audioConnections.push_back(resolved);
     }
 
     std::atomic_store_explicit(
@@ -5304,18 +5698,66 @@ void PluginCore::ensureAdvancedRoutingInitialised()
     publishAdvancedRoutingGraph();
 }
 
+void PluginCore::ensureAdvancedMidiRoutingInitialised()
+{
+    if (advancedMidiRoutingInitialised)
+        return;
+
+    juce::String sourceNodeId = advancedAudioInputNodeId;
+
+    for (int tabIndex = 0;
+         tabIndex < hostedTabs.size();
+         ++tabIndex)
+    {
+        if (getHostedTabType(tabIndex)
+            == PluginSlotType::Empty)
+        {
+            continue;
+        }
+
+        const auto destinationNodeId =
+            getTabRoutingId(tabIndex);
+
+        if (destinationNodeId.isEmpty())
+            continue;
+
+        AdvancedRoutingConnection connection;
+        connection.type =
+            AdvancedRoutingConnectionType::Midi;
+        connection.sourceNodeId = sourceNodeId;
+        connection.destinationNodeId = destinationNodeId;
+        advancedRoutingConnections.add(connection);
+
+        const auto* tab = hostedTabs[tabIndex];
+        if (tab != nullptr
+            && (tab->pluginProducesMidi
+                || tab->hasProducedGeneratedMidi))
+        {
+            sourceNodeId = destinationNodeId;
+        }
+    }
+
+    advancedMidiRoutingInitialised = true;
+    publishAdvancedRoutingGraph();
+}
+
 bool PluginCore::addAdvancedRoutingConnection(
     const juce::String& sourceNodeId,
     int sourceBusIndex,
     const juce::String& destinationNodeId,
     int destinationBusIndex,
+    AdvancedRoutingConnectionType type,
     juce::String* errorMessage)
 {
     ensureAdvancedRoutingInitialised();
+    ensureAdvancedMidiRoutingInitialised();
 
-    if (! isAdvancedSourcePort(sourceNodeId, sourceBusIndex)
+    if (! isAdvancedSourcePort(sourceNodeId,
+                               sourceBusIndex,
+                               type)
         || ! isAdvancedDestinationPort(destinationNodeId,
-                                        destinationBusIndex))
+                                        destinationBusIndex,
+                                        type))
     {
         if (errorMessage != nullptr)
             *errorMessage = "That connection is not available.";
@@ -5332,6 +5774,7 @@ bool PluginCore::addAdvancedRoutingConnection(
     for (const auto& connection : advancedRoutingConnections)
     {
         if (connection.sourceNodeId == sourceNodeId
+            && connection.type == type
             && connection.sourceBusIndex == sourceBusIndex
             && connection.destinationNodeId == destinationNodeId
             && connection.destinationBusIndex == destinationBusIndex)
@@ -5344,11 +5787,12 @@ bool PluginCore::addAdvancedRoutingConnection(
                                            destinationNodeId))
     {
         if (errorMessage != nullptr)
-            *errorMessage = "That cable would create an audio feedback loop.";
+            *errorMessage = "That cable would create a routing feedback loop.";
         return false;
     }
 
     AdvancedRoutingConnection connection;
+    connection.type = type;
     connection.sourceNodeId = sourceNodeId;
     connection.sourceBusIndex = sourceBusIndex;
     connection.destinationNodeId = destinationNodeId;
@@ -5363,13 +5807,15 @@ bool PluginCore::removeAdvancedRoutingConnection(
     const juce::String& sourceNodeId,
     int sourceBusIndex,
     const juce::String& destinationNodeId,
-    int destinationBusIndex)
+    int destinationBusIndex,
+    AdvancedRoutingConnectionType type)
 {
     for (int i = advancedRoutingConnections.size(); --i >= 0;)
     {
         const auto& connection = advancedRoutingConnections.getReference(i);
 
         if (connection.sourceNodeId == sourceNodeId
+            && connection.type == type
             && connection.sourceBusIndex == sourceBusIndex
             && connection.destinationNodeId == destinationNodeId
             && connection.destinationBusIndex == destinationBusIndex)
@@ -5393,9 +5839,11 @@ bool PluginCore::reconnectAdvancedRoutingConnection(
     int newSourceBusIndex,
     const juce::String& newDestinationNodeId,
     int newDestinationBusIndex,
+    AdvancedRoutingConnectionType type,
     juce::String* errorMessage)
 {
     ensureAdvancedRoutingInitialised();
+    ensureAdvancedMidiRoutingInitialised();
 
     int originalIndex = -1;
     for (int i = 0; i < advancedRoutingConnections.size(); ++i)
@@ -5403,6 +5851,7 @@ bool PluginCore::reconnectAdvancedRoutingConnection(
         const auto& connection =
             advancedRoutingConnections.getReference(i);
         if (connection.sourceNodeId == oldSourceNodeId
+            && connection.type == type
             && connection.sourceBusIndex == oldSourceBusIndex
             && connection.destinationNodeId == oldDestinationNodeId
             && connection.destinationBusIndex == oldDestinationBusIndex)
@@ -5428,9 +5877,11 @@ bool PluginCore::reconnectAdvancedRoutingConnection(
     }
 
     if (! isAdvancedSourcePort(newSourceNodeId,
-                               newSourceBusIndex)
+                               newSourceBusIndex,
+                               type)
         || ! isAdvancedDestinationPort(newDestinationNodeId,
-                                        newDestinationBusIndex))
+                                        newDestinationBusIndex,
+                                        type))
     {
         if (errorMessage != nullptr)
             *errorMessage = "That connection is not available.";
@@ -5452,6 +5903,7 @@ bool PluginCore::reconnectAdvancedRoutingConnection(
         const auto& connection =
             advancedRoutingConnections.getReference(i);
         if (connection.sourceNodeId == newSourceNodeId
+            && connection.type == type
             && connection.sourceBusIndex == newSourceBusIndex
             && connection.destinationNodeId == newDestinationNodeId
             && connection.destinationBusIndex == newDestinationBusIndex)
@@ -5473,11 +5925,12 @@ bool PluginCore::reconnectAdvancedRoutingConnection(
                                           originalConnection);
         if (errorMessage != nullptr)
             *errorMessage =
-                "That cable would create an audio feedback loop.";
+                "That cable would create a routing feedback loop.";
         return false;
     }
 
     AdvancedRoutingConnection replacement;
+    replacement.type = type;
     replacement.sourceNodeId = newSourceNodeId;
     replacement.sourceBusIndex = newSourceBusIndex;
     replacement.destinationNodeId = newDestinationNodeId;
@@ -6289,6 +6742,10 @@ bool PluginCore::loadMainSlotPluginFromDescription(const juce::PluginDescription
             {
                 if (advancedRoutingConnections
                         .getReference(i)
+                        .type
+                        == AdvancedRoutingConnectionType::Audio
+                    && advancedRoutingConnections
+                        .getReference(i)
                         .destinationNodeId
                     == selectedTab->routingId)
                 {
@@ -6301,7 +6758,10 @@ bool PluginCore::loadMainSlotPluginFromDescription(const juce::PluginDescription
 
         for (const auto& connection : advancedRoutingConnections)
         {
-            if (connection.sourceNodeId == selectedTab->routingId)
+            if (connection.type
+                    == AdvancedRoutingConnectionType::Audio
+                && connection.sourceNodeId
+                    == selectedTab->routingId)
             {
                 hasAudioOutputConnection = true;
                 break;
@@ -6315,6 +6775,36 @@ bool PluginCore::loadMainSlotPluginFromDescription(const juce::PluginDescription
             connection.destinationNodeId =
                 advancedMainOutputNodeId;
             advancedRoutingConnections.add(connection);
+        }
+
+        if (advancedMidiRoutingInitialised)
+        {
+            bool hasMidiInputConnection = false;
+
+            for (const auto& connection :
+                 advancedRoutingConnections)
+            {
+                if (connection.type
+                        == AdvancedRoutingConnectionType::Midi
+                    && connection.destinationNodeId
+                        == selectedTab->routingId)
+                {
+                    hasMidiInputConnection = true;
+                    break;
+                }
+            }
+
+            if (! hasMidiInputConnection)
+            {
+                AdvancedRoutingConnection connection;
+                connection.type =
+                    AdvancedRoutingConnectionType::Midi;
+                connection.sourceNodeId =
+                    advancedAudioInputNodeId;
+                connection.destinationNodeId =
+                    selectedTab->routingId;
+                advancedRoutingConnections.add(connection);
+            }
         }
 
         publishAdvancedRoutingGraph();
@@ -6469,6 +6959,7 @@ void PluginCore::resetForNewPreset()
     advancedRoutingConnections.clearQuick();
     advancedRoutingNodePositions.clearQuick();
     advancedRoutingInitialised = false;
+    advancedMidiRoutingInitialised = false;
     routingMode.store(RoutingMode::Simple,
                       std::memory_order_release);
     publishAdvancedRoutingGraph();
@@ -6909,6 +7400,8 @@ SessionData PluginCore::buildSessionData() const
     sessionData.selectedTabIndex = selectedTabIndex;
     sessionData.routingMode = getRoutingMode();
     sessionData.advancedRoutingInitialised = advancedRoutingInitialised;
+    sessionData.advancedMidiRoutingInitialised =
+        advancedMidiRoutingInitialised;
     sessionData.hasSimpleRoutingViewSize = routingViewSizeValid;
     sessionData.simpleRoutingViewWidth = routingViewWidth;
     sessionData.simpleRoutingViewHeight = routingViewHeight;
@@ -6974,6 +7467,7 @@ bool PluginCore::restoreSessionData(const SessionData& sessionData,
     advancedRoutingConnections.clearQuick();
     advancedRoutingNodePositions.clearQuick();
     advancedRoutingInitialised = false;
+    advancedMidiRoutingInitialised = false;
     routingMode.store(RoutingMode::Simple,
                       std::memory_order_release);
     publishAdvancedRoutingGraph();
@@ -7014,6 +7508,14 @@ bool PluginCore::restoreSessionData(const SessionData& sessionData,
     advancedRoutingConnections = sessionData.advancedRoutingConnections;
     advancedRoutingNodePositions = sessionData.advancedRoutingNodePositions;
     advancedRoutingInitialised = sessionData.advancedRoutingInitialised;
+    advancedMidiRoutingInitialised =
+        sessionData.advancedMidiRoutingInitialised;
+
+    if (sessionData.routingMode == RoutingMode::Advanced)
+    {
+        ensureAdvancedRoutingInitialised();
+        ensureAdvancedMidiRoutingInitialised();
+    }
 
     if (sessionData.hasSimpleRoutingViewSize)
     {

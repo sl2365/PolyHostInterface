@@ -3,20 +3,22 @@
 namespace phi_midi_routing
 {
     inline bool shouldUsePreservedInputForDownstream(
-        bool sourceIsSynth) noexcept
+        bool sourceIsSynth,
+        bool sourceIsMidiOnlyProcessor,
+        bool sourceHasProducedGeneratedMidi) noexcept
     {
-        return sourceIsSynth;
+        return sourceIsSynth
+            && ! sourceIsMidiOnlyProcessor
+            && ! sourceHasProducedGeneratedMidi;
     }
 
-    inline bool isMidiOnlyEffect(bool isEffect,
-                                 bool isBypassed,
-                                 bool isQuarantined,
-                                 bool producesMidi,
-                                 int audioInputChannels,
-                                 int audioOutputChannels) noexcept
+    inline bool isMidiOnlyProcessor(bool isBypassed,
+                                    bool isQuarantined,
+                                    bool producesMidi,
+                                    int audioInputChannels,
+                                    int audioOutputChannels) noexcept
     {
-        return isEffect
-            && ! isBypassed
+        return ! isBypassed
             && ! isQuarantined
             && producesMidi
             && audioInputChannels == 0

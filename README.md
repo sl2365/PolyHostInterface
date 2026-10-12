@@ -64,7 +64,12 @@ The Routing View provides a structured overview of all tabs in the current prese
 
 Tabs can be reordered, soloed, bypassed, and selected directly from this view.
 
+The Routing toolbar button turns blue while either Simple or Advanced Routing is open.
+The Macro Mappings toolbar button turns blue while Macro Mappings is open.
+
 Advanced Routing shows the main audio input/output of each hosted plug-in on the module's left/right edges. Additional enabled input buses appear across the top and additional output buses across the bottom. Normal modules retain their compact width; a module widens automatically only when a long row of ports needs extra spacing. Hover a blue port to see its bus name and channel count. Connections are directional: an output can connect only to an input.
+
+Advanced MIDI routing is separate from the audio graph. Orange ports and cables carry MIDI, while blue cables carry audio. The green input module supplies host/controller MIDI, and every plug-in module has an orange MIDI input and output. This allows separate arpeggiators or MIDI processors to feed different instruments. Bypassing an Advanced module stops that plug-in processing and passes its unprocessed incoming MIDI onward. Simple Routing retains its automatic top-to-bottom MIDI behaviour.
 
 ### Routing View Explained
 - The 8 dots to the left are used as a drag handle, allowing much easier reordering than previous versions, which used up/down buttons.
