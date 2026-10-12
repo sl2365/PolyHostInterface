@@ -16,6 +16,13 @@ public:
 
     struct NodeEntry
     {
+        struct AudioPort
+        {
+            int busIndex = 0;
+            juce::String name;
+            int channelCount = 0;
+        };
+
         juce::String id;
         juce::String label;
         juce::String subtitle;
@@ -34,6 +41,8 @@ public:
         bool needsAttention = false;
         juce::String attentionMessage;
         int outputBusIndex = -1;
+        juce::Array<AudioPort> inputPorts;
+        juce::Array<AudioPort> outputPorts;
         juce::Point<int> position;
     };
 
@@ -42,6 +51,14 @@ public:
     void setModel(
         const juce::Array<NodeEntry>& nodes,
         const juce::Array<AdvancedRoutingConnection>& connections);
+    void updateNodeControlState(
+        int tabIndex,
+        bool isBypassed,
+        bool isSoloed,
+        bool isMutedBySolo,
+        float outputGainDb,
+        const juce::String& midiAssignmentsTooltip,
+        int pointerAdjustMethodOverride);
     void setDeleteUndoAvailable(bool shouldBeAvailable);
 
     std::function<void()> onShowSimple;
@@ -49,15 +66,23 @@ public:
     std::function<void()> onClearConnections;
     std::function<void()> onAutoLayout;
     std::function<bool(const juce::String& sourceNodeId,
+                       int sourceBusIndex,
                        const juce::String& destinationNodeId,
+                       int destinationBusIndex,
                        juce::String& errorMessage)> onAddConnection;
     std::function<void(const juce::String& sourceNodeId,
-                       const juce::String& destinationNodeId)>
+                       int sourceBusIndex,
+                       const juce::String& destinationNodeId,
+                       int destinationBusIndex)>
         onRemoveConnection;
     std::function<bool(const juce::String& oldSourceNodeId,
+                       int oldSourceBusIndex,
                        const juce::String& oldDestinationNodeId,
+                       int oldDestinationBusIndex,
                        const juce::String& newSourceNodeId,
+                       int newSourceBusIndex,
                        const juce::String& newDestinationNodeId,
+                       int newDestinationBusIndex,
                        juce::String& errorMessage)>
         onReconnectConnection;
     std::function<void(const juce::String& nodeId,
@@ -81,7 +106,8 @@ public:
     void resized() override;
 
 private:
-    class Canvas final : public juce::Component
+    class Canvas final : public juce::Component,
+                         public juce::SettableTooltipClient
     {
     public:
         explicit Canvas(AdvancedRoutingView& ownerIn);
@@ -90,6 +116,14 @@ private:
         void setModel(
             const juce::Array<NodeEntry>& nodes,
             const juce::Array<AdvancedRoutingConnection>& connections);
+        void updateNodeControlState(
+            int tabIndex,
+            bool isBypassed,
+            bool isSoloed,
+            bool isMutedBySolo,
+            float outputGainDb,
+            const juce::String& midiAssignmentsTooltip,
+            int pointerAdjustMethodOverride);
 
         void paint(juce::Graphics& g) override;
         void mouseDown(const juce::MouseEvent& event) override;
@@ -111,6 +145,17 @@ private:
             Destination
         };
 
+        struct PortHit
+        {
+            int nodeIndex = -1;
+            int busIndex = 0;
+
+            bool isValid() const noexcept
+            {
+                return nodeIndex >= 0;
+            }
+        };
+
         static constexpr int minimumCanvasWidth = 1200;
         static constexpr int minimumCanvasHeight = 800;
         static constexpr int canvasContentPadding = 240;
@@ -121,6 +166,7 @@ private:
         static constexpr int moduleSnapDistance = 10;
         static constexpr int nodeWidth = 168;
         static constexpr int nodeHeight = 66;
+        static constexpr int auxiliaryPortSpacing = 12;
         static constexpr int outputModuleWidth = 96;
         static constexpr int outputHeaderHeight = 32;
         static constexpr int outputRowHeight = 20;
@@ -131,18 +177,35 @@ private:
             + outputRowHeight * outputBusCount
             + outputBottomPadding;
         static constexpr float portRadius = 6.0f;
+        static constexpr float auxiliaryPortRadius = 4.0f;
 
         juce::Rectangle<int> getNodeBounds(const NodeEntry& node) const;
+        int getNodeWidth(const NodeEntry& node) const;
         juce::Rectangle<int> getOutputModuleBounds() const;
-        juce::Point<float> getInputPort(const NodeEntry& node) const;
-        juce::Point<float> getOutputPort(const NodeEntry& node) const;
+        juce::Point<float> getInputPort(const NodeEntry& node,
+                                        int busIndex) const;
+        juce::Point<float> getOutputPort(const NodeEntry& node,
+                                         int busIndex) const;
+        juce::Point<float> getInputPortDirection(
+            const NodeEntry& node,
+            int busIndex) const;
+        juce::Point<float> getOutputPortDirection(
+            const NodeEntry& node,
+            int busIndex) const;
         static juce::Path makeCablePath(juce::Point<float> start,
-                                        juce::Point<float> end);
+                                        juce::Point<float> end,
+                                        juce::Point<float> startDirection,
+                                        juce::Point<float> endDirection);
         juce::Path makeConnectionPath(
             const AdvancedRoutingConnection& connection) const;
         int findNodeAt(juce::Point<float> position) const;
-        int findInputPortAt(juce::Point<float> position) const;
-        int findOutputPortAt(juce::Point<float> position) const;
+        PortHit findInputPortAt(juce::Point<float> position) const;
+        PortHit findOutputPortAt(juce::Point<float> position) const;
+        static int findPortOrdinal(
+            const juce::Array<NodeEntry::AudioPort>& ports,
+            int busIndex);
+        static int countAuxiliaryPorts(
+            const juce::Array<NodeEntry::AudioPort>& ports);
         int findConnectionAt(juce::Point<float> position) const;
         int findNodeIndex(const juce::String& id) const;
         int findOutputAnchorIndex() const;
@@ -177,6 +240,7 @@ private:
         juce::Point<int> lastValidDragPosition;
         bool hasValidDragPosition = false;
         int cableSourceNodeIndex = -1;
+        int cableSourceBusIndex = 0;
         juce::Point<float> cableEnd;
         int reconnectConnectionIndex = -1;
         ReconnectEnd reconnectEnd = ReconnectEnd::None;

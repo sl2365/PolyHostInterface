@@ -25,6 +25,7 @@ private:
     static constexpr int defaultWidth = 800;
     static constexpr int defaultHeight = 500;
     static constexpr int macroMappingsWidth = 922;
+    static constexpr int macroMappingsAdditionalHelpHeight = 22;
     static constexpr int minWidth = 500;
     static constexpr int minHeight = 300;
     static constexpr int maxWidth = 1600;

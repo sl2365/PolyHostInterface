@@ -131,23 +131,43 @@ public:
     static const juce::String advancedMainOutputNodeId;
     static juce::String getAdvancedAuxOutputNodeId(int auxIndex);
 
+    struct AdvancedAudioBusInfo
+    {
+        int busIndex = 0;
+        int processBufferChannelStart = 0;
+        int channelCount = 0;
+        juce::String name;
+    };
+
     RoutingMode getRoutingMode() const noexcept;
     void setRoutingMode(RoutingMode mode);
     void ensureAdvancedRoutingInitialised();
     bool isAdvancedRoutingInitialised() const noexcept;
     juce::String getTabRoutingId(int tabIndex) const;
+    juce::Array<AdvancedAudioBusInfo> getAdvancedInputBuses(
+        int tabIndex) const;
+    juce::Array<AdvancedAudioBusInfo> getAdvancedOutputBuses(
+        int tabIndex) const;
     juce::Array<AdvancedRoutingConnection> getAdvancedRoutingConnections() const;
     juce::Array<AdvancedRoutingNodePosition> getAdvancedRoutingNodePositions() const;
     bool addAdvancedRoutingConnection(const juce::String& sourceNodeId,
+                                      int sourceBusIndex,
                                       const juce::String& destinationNodeId,
+                                      int destinationBusIndex,
                                       juce::String* errorMessage = nullptr);
     bool removeAdvancedRoutingConnection(const juce::String& sourceNodeId,
-                                         const juce::String& destinationNodeId);
+                                         int sourceBusIndex,
+                                         const juce::String& destinationNodeId,
+                                         int destinationBusIndex);
     bool reconnectAdvancedRoutingConnection(
         const juce::String& oldSourceNodeId,
+        int oldSourceBusIndex,
         const juce::String& oldDestinationNodeId,
+        int oldDestinationBusIndex,
         const juce::String& newSourceNodeId,
+        int newSourceBusIndex,
         const juce::String& newDestinationNodeId,
+        int newDestinationBusIndex,
         juce::String* errorMessage = nullptr);
     void clearAdvancedRoutingConnections();
     void setAdvancedRoutingNodePosition(const juce::String& nodeId,
@@ -289,6 +309,11 @@ private:
         PluginSlotType pluginType = PluginSlotType::Empty;
         bool isSeqwencer = false;
         bool needsLegacyThornVst3Compatibility = false;
+        int pluginInputChannelCount = 0;
+        int pluginOutputChannelCount = 0;
+        juce::Array<AdvancedAudioBusInfo> pluginInputBuses;
+        juce::Array<AdvancedAudioBusInfo> pluginOutputBuses;
+        bool pluginProducesMidi = false;
         juce::MidiBuffer midiScratchBuffer;
         juce::MidiBuffer midiInputScratchBuffer;
         bool hasProducedGeneratedMidi = false;
@@ -367,6 +392,8 @@ private:
 
     void attachToHostedPlugin(juce::AudioPluginInstance* instance);
     void detachFromHostedPlugin(juce::AudioPluginInstance* instance);
+    void refreshHostedPluginCapabilities(HostedTabState& tab);
+    void resizeHostedTabScratchBuffers(HostedTabState& tab);
     void disposeHostedPluginInstance(HostedTabState& tab,
                                      const juce::String& diagnosticContext,
                                      bool releaseHealthyPluginResources = true);
@@ -401,6 +428,10 @@ private:
         int sourceTabIndex = -1;      // -1 is AUDIO INPUT.
         int destinationTabIndex = -1; // -1 when routed to an output bus.
         int destinationOutputIndex = -1; // 0 MAIN, 1..16 AUX.
+        int sourceChannelStart = 0;
+        int sourceChannelCount = 0;
+        int destinationChannelStart = 0;
+        int destinationChannelCount = 0;
     };
 
     struct ResolvedAdvancedGraph
@@ -412,8 +443,13 @@ private:
     int findTabIndexForRoutingId(const juce::String& routingId) const;
     bool advancedConnectionWouldCreateCycle(const juce::String& sourceNodeId,
                                             const juce::String& destinationNodeId) const;
-    bool isAdvancedSourceNode(const juce::String& nodeId) const;
-    bool isAdvancedDestinationNode(const juce::String& nodeId) const;
+    bool isAdvancedSourcePort(const juce::String& nodeId,
+                              int busIndex) const;
+    bool isAdvancedDestinationPort(const juce::String& nodeId,
+                                   int busIndex) const;
+    static const AdvancedAudioBusInfo* findAdvancedBus(
+        const juce::Array<AdvancedAudioBusInfo>& buses,
+        int busIndex);
     bool isAdvancedOutputNode(const juce::String& nodeId) const;
     int getAdvancedOutputIndex(const juce::String& nodeId) const;
     void removeAdvancedRoutingForNode(const juce::String& nodeId);
@@ -518,6 +554,7 @@ private:
     juce::MidiBuffer hostMidiInputScratchBuffer;
     juce::MidiBuffer midiReleaseResetScratchBuffer;
     juce::MidiBuffer midiPanicScratchBuffer;
+    juce::MidiMessage seqwencerPresenceMessage;
     juce::Array<int> fxIndexScratch;
     juce::Array<int> advancedFxOrderScratch;
     juce::Array<int> advancedFxPendingScratch;

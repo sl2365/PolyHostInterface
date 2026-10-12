@@ -78,8 +78,11 @@ void PolyHostPluginEditor::resized()
     {
         macroMappingsViewHeight = juce::jlimit(
             minHeight,
-            maxHeight - getMidiKeyboardExtraHeight(),
-            contentHeight);
+            maxHeight
+                - getMidiKeyboardExtraHeight()
+                - macroMappingsAdditionalHelpHeight,
+            contentHeight
+                - macroMappingsAdditionalHelpHeight);
     }
 
     mainView.setBounds(getLocalBounds());
@@ -183,9 +186,12 @@ void PolyHostPluginEditor::resizeToMacroMappingsView()
         applyingMacroMappingsViewSize, true);
     updateResizeLimits();
     setSize(macroMappingsWidth,
-            juce::jlimit(minHeight + getMidiKeyboardExtraHeight(),
+            juce::jlimit(minHeight
+                             + macroMappingsAdditionalHelpHeight
+                             + getMidiKeyboardExtraHeight(),
                          maxHeight,
                          macroMappingsViewHeight
+                             + macroMappingsAdditionalHelpHeight
                              + getMidiKeyboardExtraHeight()));
     resized();
     repaint();

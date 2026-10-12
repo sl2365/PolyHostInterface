@@ -36,6 +36,9 @@ public:
     bool getSessionRecallEnabled() const;
     void setSessionRecallEnabled(bool shouldEnable);
 
+    int getSessionAutoSaveMinutes() const;
+    void setSessionAutoSaveMinutes(int minutes);
+
     bool getSingleInstanceEnabled() const;
     void setSingleInstanceEnabled(bool shouldEnable);
 

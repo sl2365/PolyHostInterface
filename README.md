@@ -42,7 +42,7 @@ See the demos at the bottom of the page for a few gifs of the Pointer Control in
 | Plugin Repair - locates missing plugins | ✅ Working |
 | Standalone App | ✅ Working |
 | VST3 Plugin for use in other hosts | ✅ Working |
-| Optional standalone session recall | ✅ Working - Options > Session Recall |
+| Optional standalone session recall | ✅ Working - Options > Session Recall, with selectable 1-15 minute crash-recovery auto-save |
 | Optional standalone single-instance mode | ✅ Working - Options > Single Instance |
 
 ## Features
@@ -63,6 +63,8 @@ The Routing View provides a structured overview of all tabs in the current prese
 - detailed plugin info report
 
 Tabs can be reordered, soloed, bypassed, and selected directly from this view.
+
+Advanced Routing shows the main audio input/output of each hosted plug-in on the module's left/right edges. Additional enabled input buses appear across the top and additional output buses across the bottom. Normal modules retain their compact width; a module widens automatically only when a long row of ports needs extra spacing. Hover a blue port to see its bus name and channel count. Connections are directional: an output can connect only to an input.
 
 ### Routing View Explained
 - The 8 dots to the left are used as a drag handle, allowing much easier reordering than previous versions, which used up/down buttons.
@@ -255,6 +257,20 @@ You are free to store maps in subfolders within the PointerMaps directory allowi
 
 ### MIDI Assignment Per Tab
 Each tab can maintain its own MIDI channel assignment set, allowing different hosted plugins to respond to different incoming MIDI sources/channels.
+
+### MIDI Output and MIDI Thru
+In standalone PHI, open **MIDI > MIDI Settings** to select a hardware or installed virtual MIDI output. PHI does not install or create virtual MIDI ports.
+
+- **Send generated MIDI to output** sends MIDI produced or changed by hosted arpeggiators, sequencers and MIDI effects.
+- **MIDI Thru** forwards the original MIDI received from PHI's enabled input devices.
+
+These switches do not control MIDI routing between plugins inside PHI. For example, an arpeggiator placed before a synth can control that synth even when both output options are disabled.
+
+It is worthwhile for controlling external hardware, sending PHI-generated MIDI to another application, or externally recording a hosted sequencer. If everything remains hosted inside PHI, it provides no practical benefit and can remain disabled.
+
+Do not route PHI's MIDI output back into one of its enabled inputs. This can create duplicate notes or a MIDI feedback loop. Duplicate notes can also occur if a controller reaches the destination directly while MIDI Thru sends a second copy through PHI. Unexpectedly disconnecting an output device may leave a note sounding because PHI can no longer deliver its reset messages. Physical and virtual MIDI output can also introduce some scheduling latency or jitter and is not sample-accurate.
+
+PHI sends MIDI output on a background thread so the audio thread is not held up. Disabling an output option, changing device or closing PHI clears pending messages and sends sustain-off, all-notes-off and all-sound-off messages on all 16 channels.
 
 ### Preset Handling
 PolyHostInterface supports:

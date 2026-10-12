@@ -142,6 +142,7 @@ namespace
     {
         if (! useLegacyThornVst3Compatibility)
         {
+            instance.enableAllBuses();
             instance.prepareToPlay(
                 sampleRate,
                 samplesPerBlock);
@@ -705,6 +706,14 @@ const juce::String PluginCore::advancedMainOutputNodeId { "MAIN" };
 
 PluginCore::PluginCore()
 {
+    const auto presencePacket =
+        seqwencer_bridge::encodePhiPresence();
+
+    seqwencerPresenceMessage =
+        juce::MidiMessage::createSysExMessage(
+            presencePacket.data(),
+            static_cast<int>(presencePacket.size()));
+
     macroCurrentValues.fill(0.0f);
 
     sessionDocument.clear();
@@ -1137,56 +1146,15 @@ void PluginCore::prepareToPlay(double sampleRate, int samplesPerBlock)
                 tab->needsLegacyThornVst3Compatibility,
                 sampleRate,
                 samplesPerBlock);
+
+            refreshHostedPluginCapabilities(*tab);
         }
 
-        int requiredChannels =
-            hostBufferChannelCapacity;
-
-        if (pluginCanBeCalled)
-        {
-            requiredChannels =
-                juce::jmax(
-                    requiredChannels,
-                    juce::jmax(
-                        juce::jmax(
-                            0,
-                            tab->pluginInstance
-                                ->getTotalNumInputChannels()),
-                        juce::jmax(
-                            0,
-                            tab->pluginInstance
-                                ->getTotalNumOutputChannels())));
-        }
-
-        tab->audioScratchChannelCapacity =
-            juce::jmax(
-                1,
-                requiredChannels);
-
-        tab->audioScratchSampleCapacity =
-            hostBufferSampleCapacity;
-
-        tab->audioScratchBuffer.setSize(
-            tab->audioScratchChannelCapacity,
-            tab->audioScratchSampleCapacity,
-            false,
-            true,
-            false);
-
-        tab->audioScratchBuffer.clear();
-
-        if (tab->pluginType == PluginSlotType::FX)
-        {
-            tab->audioBypassScratchBuffer.setSize(
-                tab->audioScratchChannelCapacity,
-                tab->audioScratchSampleCapacity,
-                false,
-                true,
-                false);
-
-            tab->audioBypassScratchBuffer.clear();
-        }
+        resizeHostedTabScratchBuffers(*tab);
     }
+
+    if (advancedRoutingInitialised)
+        publishAdvancedRoutingGraph();
 
     playbackPrepared.store(true);
 }
@@ -1743,16 +1711,14 @@ void PluginCore::processBlock(juce::AudioBuffer<float>& buffer,
                 return false;
             }
 
-            auto* instance = tab->pluginInstance.get();
-
             return phi_midi_routing::isMidiOnlyEffect(
                 true,
                 tab->bypassed,
                 tab->processingQuarantined.load(
                     std::memory_order_acquire),
-                instance->producesMidi(),
-                instance->getTotalNumInputChannels(),
-                instance->getTotalNumOutputChannels());
+                tab->pluginProducesMidi,
+                tab->pluginInputChannelCount,
+                tab->pluginOutputChannelCount);
         };
 
     if (hostChannels > hostBufferChannelCapacity
@@ -1826,18 +1792,11 @@ void PluginCore::processBlock(juce::AudioBuffer<float>& buffer,
             continue;
         }
 
-        auto* instance =
-            tab->pluginInstance.get();
-
         const int totalInputChannels =
-            juce::jmax(
-                0,
-                instance->getTotalNumInputChannels());
+            tab->pluginInputChannelCount;
 
         const int totalOutputChannels =
-            juce::jmax(
-                0,
-                instance->getTotalNumOutputChannels());
+            tab->pluginOutputChannelCount;
 
         const int processChannels =
             juce::jmax(
@@ -1946,20 +1905,37 @@ void PluginCore::processBlock(juce::AudioBuffer<float>& buffer,
             return -1;
         };
 
-    auto addAudioToBuffer =
+    auto addAudioBusToBuffer =
         [numSamples](juce::AudioBuffer<float>& destination,
-                     const juce::AudioBuffer<float>& source)
+                     int destinationChannelStart,
+                     int destinationChannelCount,
+                     const juce::AudioBuffer<float>& source,
+                     int sourceChannelStart,
+                     int sourceChannelCount)
         {
+            const int availableDestinationChannels =
+                juce::jmax(
+                    0,
+                    destination.getNumChannels()
+                        - destinationChannelStart);
+            const int availableSourceChannels =
+                juce::jmax(
+                    0,
+                    source.getNumChannels()
+                        - sourceChannelStart);
             const int channels =
-                juce::jmin(destination.getNumChannels(),
-                           source.getNumChannels());
+                juce::jmin(
+                    destinationChannelCount,
+                    sourceChannelCount,
+                    availableDestinationChannels,
+                    availableSourceChannels);
 
             for (int channel = 0; channel < channels; ++channel)
             {
-                destination.addFrom(channel,
+                destination.addFrom(destinationChannelStart + channel,
                                     0,
                                     source,
-                                    channel,
+                                    sourceChannelStart + channel,
                                     0,
                                     numSamples);
             }
@@ -1969,7 +1945,7 @@ void PluginCore::processBlock(juce::AudioBuffer<float>& buffer,
         [this,
          &advancedGraph,
          &finalOutput,
-         &addAudioToBuffer](
+         &addAudioBusToBuffer](
             int sourceTabIndex,
             const juce::AudioBuffer<float>& sourceBuffer)
         {
@@ -1984,17 +1960,27 @@ void PluginCore::processBlock(juce::AudioBuffer<float>& buffer,
 
                 if (connection.destinationOutputIndex == 0)
                 {
-                    addAudioToBuffer(finalOutput, sourceBuffer);
+                    addAudioBusToBuffer(
+                        finalOutput,
+                        connection.destinationChannelStart,
+                        connection.destinationChannelCount,
+                        sourceBuffer,
+                        connection.sourceChannelStart,
+                        connection.sourceChannelCount);
                 }
                 else if (connection.destinationOutputIndex > 0
                          && connection.destinationOutputIndex
                                 <= advancedAuxOutputCount)
                 {
-                    addAudioToBuffer(
+                    addAudioBusToBuffer(
                         advancedAuxOutputScratchBuffers[
                             static_cast<size_t>(
                                 connection.destinationOutputIndex - 1)],
-                        sourceBuffer);
+                        connection.destinationChannelStart,
+                        connection.destinationChannelCount,
+                        sourceBuffer,
+                        connection.sourceChannelStart,
+                        connection.sourceChannelCount);
                 }
                 else if (juce::isPositiveAndBelow(
                              connection.destinationTabIndex,
@@ -2006,9 +1992,13 @@ void PluginCore::processBlock(juce::AudioBuffer<float>& buffer,
 
                     if (destinationTab != nullptr)
                     {
-                        addAudioToBuffer(
+                        addAudioBusToBuffer(
                             destinationTab->audioScratchBuffer,
-                            sourceBuffer);
+                            connection.destinationChannelStart,
+                            connection.destinationChannelCount,
+                            sourceBuffer,
+                            connection.sourceChannelStart,
+                            connection.sourceChannelCount);
                     }
                 }
             }
@@ -2235,14 +2225,10 @@ void PluginCore::processBlock(juce::AudioBuffer<float>& buffer,
             0);
 
         const int totalInputChannels =
-            juce::jmax(
-                0,
-                instance->getTotalNumInputChannels());
+            tab->pluginInputChannelCount;
 
         const int totalOutputChannels =
-            juce::jmax(
-                0,
-                instance->getTotalNumOutputChannels());
+            tab->pluginOutputChannelCount;
 
         const int processChannels =
             juce::jmax(
@@ -2417,7 +2403,7 @@ void PluginCore::processBlock(juce::AudioBuffer<float>& buffer,
             else
             {
                 tab->midiRouteReadyThisBlock =
-                    instance->producesMidi()
+                    tab->pluginProducesMidi
                     || tab->hasProducedGeneratedMidi;
             }
         }
@@ -2586,15 +2572,7 @@ void PluginCore::processBlock(juce::AudioBuffer<float>& buffer,
             fxMidi);
 
         if (tab->isSeqwencer)
-        {
-            const auto presencePacket =
-                seqwencer_bridge::encodePhiPresence();
-            fxMidi.addEvent(
-                juce::MidiMessage::createSysExMessage(
-                    presencePacket.data(),
-                    static_cast<int>(presencePacket.size())),
-                0);
-        }
+            fxMidi.addEvent(seqwencerPresenceMessage, 0);
 
         auto& fxInputMidi =
             tab->midiInputScratchBuffer;
@@ -2607,14 +2585,10 @@ void PluginCore::processBlock(juce::AudioBuffer<float>& buffer,
             0);
 
         const int totalInputChannels =
-            juce::jmax(
-                0,
-                instance->getTotalNumInputChannels());
+            tab->pluginInputChannelCount;
 
         const int totalOutputChannels =
-            juce::jmax(
-                0,
-                instance->getTotalNumOutputChannels());
+            tab->pluginOutputChannelCount;
 
         const int processChannels =
             juce::jmax(
@@ -2806,7 +2780,7 @@ void PluginCore::processBlock(juce::AudioBuffer<float>& buffer,
                 else
                 {
                     tab->midiRouteReadyThisBlock =
-                        instance->producesMidi()
+                        tab->pluginProducesMidi
                         || tab->hasProducedGeneratedMidi;
                 }
             }
@@ -3157,6 +3131,9 @@ bool PluginCore::addTab(const juce::String& tabName)
                                         : "Empty";
 
     tab->midiScratchBuffer.ensureSize(
+        64 * 1024);
+
+    tab->midiInputScratchBuffer.ensureSize(
         64 * 1024);
 
     tab->audioScratchChannelCapacity =
@@ -4975,6 +4952,42 @@ juce::String PluginCore::getTabRoutingId(int tabIndex) const
     return hostedTabs[tabIndex]->routingId;
 }
 
+juce::Array<PluginCore::AdvancedAudioBusInfo>
+PluginCore::getAdvancedInputBuses(int tabIndex) const
+{
+    if (! juce::isPositiveAndBelow(tabIndex, hostedTabs.size())
+        || hostedTabs[tabIndex] == nullptr)
+    {
+        return {};
+    }
+
+    return hostedTabs[tabIndex]->pluginInputBuses;
+}
+
+juce::Array<PluginCore::AdvancedAudioBusInfo>
+PluginCore::getAdvancedOutputBuses(int tabIndex) const
+{
+    if (! juce::isPositiveAndBelow(tabIndex, hostedTabs.size())
+        || hostedTabs[tabIndex] == nullptr)
+    {
+        return {};
+    }
+
+    return hostedTabs[tabIndex]->pluginOutputBuses;
+}
+
+const PluginCore::AdvancedAudioBusInfo*
+PluginCore::findAdvancedBus(
+    const juce::Array<AdvancedAudioBusInfo>& buses,
+    int busIndex)
+{
+    for (const auto& bus : buses)
+        if (bus.busIndex == busIndex)
+            return &bus;
+
+    return nullptr;
+}
+
 int PluginCore::findTabIndexForRoutingId(
     const juce::String& routingIdToFind) const
 {
@@ -5010,23 +5023,47 @@ int PluginCore::getAdvancedOutputIndex(const juce::String& nodeId) const
     return -1;
 }
 
-bool PluginCore::isAdvancedSourceNode(const juce::String& nodeId) const
+bool PluginCore::isAdvancedSourcePort(
+    const juce::String& nodeId,
+    int busIndex) const
 {
-    return nodeId == advancedAudioInputNodeId
-        || findTabIndexForRoutingId(nodeId) >= 0;
-}
-
-bool PluginCore::isAdvancedDestinationNode(const juce::String& nodeId) const
-{
-    if (isAdvancedOutputNode(nodeId))
-        return true;
+    if (nodeId == advancedAudioInputNodeId)
+        return busIndex == 0;
 
     const int tabIndex = findTabIndexForRoutingId(nodeId);
 
-    // Stage one routes audio into effect tabs. Instruments remain sources,
-    // matching PHI's established synth/FX distinction.
-    return tabIndex >= 0
-        && getHostedTabType(tabIndex) == PluginSlotType::FX;
+    if (! juce::isPositiveAndBelow(tabIndex, hostedTabs.size())
+        || hostedTabs[tabIndex] == nullptr)
+    {
+        return false;
+    }
+
+    return findAdvancedBus(
+               hostedTabs[tabIndex]->pluginOutputBuses,
+               busIndex)
+           != nullptr;
+}
+
+bool PluginCore::isAdvancedDestinationPort(
+    const juce::String& nodeId,
+    int busIndex) const
+{
+    if (isAdvancedOutputNode(nodeId))
+        return busIndex == 0;
+
+    const int tabIndex = findTabIndexForRoutingId(nodeId);
+
+    if (! juce::isPositiveAndBelow(tabIndex, hostedTabs.size())
+        || hostedTabs[tabIndex] == nullptr
+        || getHostedTabType(tabIndex) != PluginSlotType::FX)
+    {
+        return false;
+    }
+
+    return findAdvancedBus(
+               hostedTabs[tabIndex]->pluginInputBuses,
+               busIndex)
+           != nullptr;
 }
 
 juce::Array<AdvancedRoutingConnection>
@@ -5114,6 +5151,69 @@ void PluginCore::publishAdvancedRoutingGraph()
                     connection.destinationNodeId);
         }
 
+        bool sourcePortValid = false;
+
+        if (connection.sourceNodeId == advancedAudioInputNodeId)
+        {
+            sourcePortValid = connection.sourceBusIndex == 0;
+            resolved.sourceChannelStart = 0;
+            resolved.sourceChannelCount = 2;
+        }
+        else if (juce::isPositiveAndBelow(
+                     resolved.sourceTabIndex,
+                     hostedTabs.size()))
+        {
+            const auto* sourceTab =
+                hostedTabs[resolved.sourceTabIndex];
+            const auto* sourceBus =
+                sourceTab != nullptr
+                    ? findAdvancedBus(
+                          sourceTab->pluginOutputBuses,
+                          connection.sourceBusIndex)
+                    : nullptr;
+
+            if (sourceBus != nullptr)
+            {
+                sourcePortValid = true;
+                resolved.sourceChannelStart =
+                    sourceBus->processBufferChannelStart;
+                resolved.sourceChannelCount =
+                    sourceBus->channelCount;
+            }
+        }
+
+        bool destinationPortValid = false;
+
+        if (resolved.destinationOutputIndex >= 0)
+        {
+            destinationPortValid =
+                connection.destinationBusIndex == 0;
+            resolved.destinationChannelStart = 0;
+            resolved.destinationChannelCount = 2;
+        }
+        else if (juce::isPositiveAndBelow(
+                     resolved.destinationTabIndex,
+                     hostedTabs.size()))
+        {
+            const auto* destinationTab =
+                hostedTabs[resolved.destinationTabIndex];
+            const auto* destinationBus =
+                destinationTab != nullptr
+                    ? findAdvancedBus(
+                          destinationTab->pluginInputBuses,
+                          connection.destinationBusIndex)
+                    : nullptr;
+
+            if (destinationBus != nullptr)
+            {
+                destinationPortValid = true;
+                resolved.destinationChannelStart =
+                    destinationBus->processBufferChannelStart;
+                resolved.destinationChannelCount =
+                    destinationBus->channelCount;
+            }
+        }
+
         const bool sourceValid =
             connection.sourceNodeId == advancedAudioInputNodeId
             || resolved.sourceTabIndex >= 0;
@@ -5122,7 +5222,10 @@ void PluginCore::publishAdvancedRoutingGraph()
             resolved.destinationOutputIndex >= 0
             || resolved.destinationTabIndex >= 0;
 
-        if (sourceValid && destinationValid)
+        if (sourceValid
+            && destinationValid
+            && sourcePortValid
+            && destinationPortValid)
             graph->connections.push_back(resolved);
     }
 
@@ -5203,13 +5306,16 @@ void PluginCore::ensureAdvancedRoutingInitialised()
 
 bool PluginCore::addAdvancedRoutingConnection(
     const juce::String& sourceNodeId,
+    int sourceBusIndex,
     const juce::String& destinationNodeId,
+    int destinationBusIndex,
     juce::String* errorMessage)
 {
     ensureAdvancedRoutingInitialised();
 
-    if (! isAdvancedSourceNode(sourceNodeId)
-        || ! isAdvancedDestinationNode(destinationNodeId))
+    if (! isAdvancedSourcePort(sourceNodeId, sourceBusIndex)
+        || ! isAdvancedDestinationPort(destinationNodeId,
+                                        destinationBusIndex))
     {
         if (errorMessage != nullptr)
             *errorMessage = "That connection is not available.";
@@ -5226,7 +5332,9 @@ bool PluginCore::addAdvancedRoutingConnection(
     for (const auto& connection : advancedRoutingConnections)
     {
         if (connection.sourceNodeId == sourceNodeId
-            && connection.destinationNodeId == destinationNodeId)
+            && connection.sourceBusIndex == sourceBusIndex
+            && connection.destinationNodeId == destinationNodeId
+            && connection.destinationBusIndex == destinationBusIndex)
         {
             return false;
         }
@@ -5242,7 +5350,9 @@ bool PluginCore::addAdvancedRoutingConnection(
 
     AdvancedRoutingConnection connection;
     connection.sourceNodeId = sourceNodeId;
+    connection.sourceBusIndex = sourceBusIndex;
     connection.destinationNodeId = destinationNodeId;
+    connection.destinationBusIndex = destinationBusIndex;
     advancedRoutingConnections.add(connection);
     publishAdvancedRoutingGraph();
     markDirty();
@@ -5251,14 +5361,18 @@ bool PluginCore::addAdvancedRoutingConnection(
 
 bool PluginCore::removeAdvancedRoutingConnection(
     const juce::String& sourceNodeId,
-    const juce::String& destinationNodeId)
+    int sourceBusIndex,
+    const juce::String& destinationNodeId,
+    int destinationBusIndex)
 {
     for (int i = advancedRoutingConnections.size(); --i >= 0;)
     {
         const auto& connection = advancedRoutingConnections.getReference(i);
 
         if (connection.sourceNodeId == sourceNodeId
-            && connection.destinationNodeId == destinationNodeId)
+            && connection.sourceBusIndex == sourceBusIndex
+            && connection.destinationNodeId == destinationNodeId
+            && connection.destinationBusIndex == destinationBusIndex)
         {
             advancedRoutingConnections.remove(i);
             publishAdvancedRoutingGraph();
@@ -5272,9 +5386,13 @@ bool PluginCore::removeAdvancedRoutingConnection(
 
 bool PluginCore::reconnectAdvancedRoutingConnection(
     const juce::String& oldSourceNodeId,
+    int oldSourceBusIndex,
     const juce::String& oldDestinationNodeId,
+    int oldDestinationBusIndex,
     const juce::String& newSourceNodeId,
+    int newSourceBusIndex,
     const juce::String& newDestinationNodeId,
+    int newDestinationBusIndex,
     juce::String* errorMessage)
 {
     ensureAdvancedRoutingInitialised();
@@ -5285,7 +5403,9 @@ bool PluginCore::reconnectAdvancedRoutingConnection(
         const auto& connection =
             advancedRoutingConnections.getReference(i);
         if (connection.sourceNodeId == oldSourceNodeId
-            && connection.destinationNodeId == oldDestinationNodeId)
+            && connection.sourceBusIndex == oldSourceBusIndex
+            && connection.destinationNodeId == oldDestinationNodeId
+            && connection.destinationBusIndex == oldDestinationBusIndex)
         {
             originalIndex = i;
             break;
@@ -5300,13 +5420,17 @@ bool PluginCore::reconnectAdvancedRoutingConnection(
     }
 
     if (oldSourceNodeId == newSourceNodeId
-        && oldDestinationNodeId == newDestinationNodeId)
+        && oldSourceBusIndex == newSourceBusIndex
+        && oldDestinationNodeId == newDestinationNodeId
+        && oldDestinationBusIndex == newDestinationBusIndex)
     {
         return true;
     }
 
-    if (! isAdvancedSourceNode(newSourceNodeId)
-        || ! isAdvancedDestinationNode(newDestinationNodeId))
+    if (! isAdvancedSourcePort(newSourceNodeId,
+                               newSourceBusIndex)
+        || ! isAdvancedDestinationPort(newDestinationNodeId,
+                                        newDestinationBusIndex))
     {
         if (errorMessage != nullptr)
             *errorMessage = "That connection is not available.";
@@ -5328,7 +5452,9 @@ bool PluginCore::reconnectAdvancedRoutingConnection(
         const auto& connection =
             advancedRoutingConnections.getReference(i);
         if (connection.sourceNodeId == newSourceNodeId
-            && connection.destinationNodeId == newDestinationNodeId)
+            && connection.sourceBusIndex == newSourceBusIndex
+            && connection.destinationNodeId == newDestinationNodeId
+            && connection.destinationBusIndex == newDestinationBusIndex)
         {
             if (errorMessage != nullptr)
                 *errorMessage = "That cable already exists.";
@@ -5353,7 +5479,9 @@ bool PluginCore::reconnectAdvancedRoutingConnection(
 
     AdvancedRoutingConnection replacement;
     replacement.sourceNodeId = newSourceNodeId;
+    replacement.sourceBusIndex = newSourceBusIndex;
     replacement.destinationNodeId = newDestinationNodeId;
+    replacement.destinationBusIndex = newDestinationBusIndex;
     advancedRoutingConnections.insert(originalIndex, replacement);
     publishAdvancedRoutingGraph();
     markDirty();
@@ -5474,6 +5602,127 @@ void PluginCore::detachFromHostedPlugin(juce::AudioPluginInstance* instance)
         instance->removeListener(this);
 }
 
+void PluginCore::refreshHostedPluginCapabilities(
+    HostedTabState& tab)
+{
+    tab.pluginInputBuses.clearQuick();
+    tab.pluginOutputBuses.clearQuick();
+
+    if (tab.pluginInstance == nullptr)
+    {
+        tab.pluginInputChannelCount = 0;
+        tab.pluginOutputChannelCount = 0;
+        tab.pluginProducesMidi = false;
+        return;
+    }
+
+    if (tab.processingQuarantined.load(
+            std::memory_order_acquire))
+    {
+        return;
+    }
+
+    tab.pluginInputChannelCount =
+        juce::jmax(
+            0,
+            tab.pluginInstance
+                ->getTotalNumInputChannels());
+
+    tab.pluginOutputChannelCount =
+        juce::jmax(
+            0,
+            tab.pluginInstance
+                ->getTotalNumOutputChannels());
+
+    tab.pluginProducesMidi =
+        tab.pluginInstance->producesMidi();
+
+    auto cacheBuses = [&tab](bool isInput)
+    {
+        auto& destination = isInput
+                                ? tab.pluginInputBuses
+                                : tab.pluginOutputBuses;
+        const int busCount =
+            tab.pluginInstance->getBusCount(isInput);
+
+        for (int busIndex = 0;
+             busIndex < busCount;
+             ++busIndex)
+        {
+            auto* bus = tab.pluginInstance->getBus(
+                isInput,
+                busIndex);
+
+            if (bus == nullptr || ! bus->isEnabled())
+                continue;
+
+            const int channelCount =
+                juce::jmax(0, bus->getNumberOfChannels());
+
+            if (channelCount <= 0)
+                continue;
+
+            AdvancedAudioBusInfo info;
+            info.busIndex = busIndex;
+            info.processBufferChannelStart =
+                tab.pluginInstance
+                    ->getChannelIndexInProcessBlockBuffer(
+                        isInput,
+                        busIndex,
+                        0);
+            info.channelCount = channelCount;
+            info.name = bus->getName().trim();
+
+            if (info.name.isEmpty())
+            {
+                info.name =
+                    juce::String(isInput ? "Input " : "Output ")
+                    + juce::String(busIndex + 1);
+            }
+
+            destination.add(info);
+        }
+    };
+
+    cacheBuses(true);
+    cacheBuses(false);
+}
+
+void PluginCore::resizeHostedTabScratchBuffers(
+    HostedTabState& tab)
+{
+    tab.audioScratchChannelCapacity =
+        juce::jmax(
+            hostBufferChannelCapacity,
+            juce::jmax(
+                tab.pluginInputChannelCount,
+                tab.pluginOutputChannelCount));
+
+    tab.audioScratchSampleCapacity =
+        hostBufferSampleCapacity;
+
+    tab.audioScratchBuffer.setSize(
+        tab.audioScratchChannelCapacity,
+        tab.audioScratchSampleCapacity,
+        false,
+        true,
+        false);
+
+    tab.audioScratchBuffer.clear();
+
+    if (tab.pluginType == PluginSlotType::FX)
+    {
+        tab.audioBypassScratchBuffer.setSize(
+            tab.audioScratchChannelCapacity,
+            tab.audioScratchSampleCapacity,
+            false,
+            true,
+            false);
+
+        tab.audioBypassScratchBuffer.clear();
+    }
+}
+
 void PluginCore::disposeHostedPluginInstance(
     HostedTabState& tab,
     const juce::String& diagnosticContext,
@@ -5481,6 +5730,9 @@ void PluginCore::disposeHostedPluginInstance(
 {
     tab.isSeqwencer = false;
     tab.needsLegacyThornVst3Compatibility = false;
+    tab.pluginInputChannelCount = 0;
+    tab.pluginOutputChannelCount = 0;
+    tab.pluginProducesMidi = false;
 
     if (tab.pluginInstance == nullptr)
     {
@@ -5919,6 +6171,8 @@ bool PluginCore::loadMainSlotPluginFromDescription(const juce::PluginDescription
         return false;
     }
 
+    instance->enableAllBuses();
+
     if (playbackPrepared.load())
     {
         DebugLog::write("[PluginLoadDiagnostic] 30 prepareToPlay call begin");
@@ -5948,6 +6202,15 @@ bool PluginCore::loadMainSlotPluginFromDescription(const juce::PluginDescription
 
     const int totalOutputChannels =
         instance->getTotalNumOutputChannels();
+
+    selectedTab->pluginInputChannelCount =
+        juce::jmax(0, totalInputChannels);
+
+    selectedTab->pluginOutputChannelCount =
+        juce::jmax(0, totalOutputChannels);
+
+    selectedTab->pluginProducesMidi =
+        instance->producesMidi();
 
     DebugLog::write("[PluginLoadDiagnostic] 41 channel query returned | inputs="
                     + juce::String(totalInputChannels)
@@ -5998,6 +6261,8 @@ bool PluginCore::loadMainSlotPluginFromDescription(const juce::PluginDescription
         std::memory_order_release);
     selectedTab->pluginInstance =
         std::move(instance);
+    refreshHostedPluginCapabilities(*selectedTab);
+    resizeHostedTabScratchBuffers(*selectedTab);
     DebugLog::write("[PluginLoadDiagnostic] 51 instance ownership transfer returned");
 
     DebugLog::write("[PluginLoadDiagnostic] 52 listener attach begin");
@@ -6250,6 +6515,13 @@ bool PluginCore::setMainSlotPluginState(const void* data, int sizeInBytes)
         return false;
 
     selectedTab->pluginInstance->setStateInformation(data, sizeInBytes);
+    selectedTab->pluginInstance->enableAllBuses();
+    refreshHostedPluginCapabilities(*selectedTab);
+    resizeHostedTabScratchBuffers(*selectedTab);
+
+    if (advancedRoutingInitialised)
+        publishAdvancedRoutingGraph();
+
     return true;
 }
 

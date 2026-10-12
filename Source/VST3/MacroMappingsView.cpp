@@ -365,13 +365,17 @@ void MacroMappingsView::setParameters(
         header.setSortColumnId(tabColumn, true);
     }
 
-    helpLabel.setText(
+    juce::String helpText =
         showSeqwencerTargets
             ? (serialPairMask != 0
                    ? "Mapped pauses or resumes a Macro. A-H are arranged as four pairs; each pair in SERIAL mirrors its two target buttons. Replace keeps the Macro number and X deletes it."
                    : "Mapped pauses or resumes a Macro. A-H are independent Seqwencer targets arranged as four pairs. Replace keeps the Macro number and X deletes it.")
-            : "Mapped assigns the next free Macro or pauses/resumes it. Replace keeps the Macro number; X permanently deletes the assignment.",
-        juce::dontSendNotification);
+            : "Mapped assigns the next free Macro or pauses/resumes it. Replace keeps the Macro number; X permanently deletes the assignment.";
+
+    helpText +=
+        "\nThese are global PolyHost macro mappings. Use Macros 001-128 in your DAW, ignore the MIDI CC entries.";
+
+    helpLabel.setText(helpText, juce::dontSendNotification);
 
     clearAllButton.setEnabled(
         std::any_of(allParameters.begin(), allParameters.end(),
@@ -761,7 +765,7 @@ void MacroMappingsView::resized()
     titleLabel.setBounds(topRow);
 
     area.removeFromTop(5);
-    helpLabel.setBounds(area.removeFromTop(22));
+    helpLabel.setBounds(area.removeFromTop(44));
     area.removeFromTop(9);
 
     auto footer = area.removeFromBottom(24);

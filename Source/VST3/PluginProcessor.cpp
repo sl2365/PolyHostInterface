@@ -349,9 +349,12 @@ void PolyHostPluginProcessor::prepareToPlay(double sampleRate,
     audioProcessLoadMeasurer.reset(sampleRate, samplesPerBlock);
     hostedPlayHeadProxy.prepareToPlay(sampleRate);
 
+    processorMainAudioScratchSampleCapacity =
+        juce::jmax(1, samplesPerBlock);
+
     processorMainAudioScratchBuffer.setSize(
         2,
-        juce::jmax(1, samplesPerBlock),
+        processorMainAudioScratchSampleCapacity,
         false,
         true,
         false);
@@ -400,6 +403,25 @@ void PolyHostPluginProcessor::processBlock(
     juce::AudioBuffer<float>& buffer,
     juce::MidiBuffer& midiMessages)
 {
+    const int numSamples = buffer.getNumSamples();
+
+    if (numSamples
+        > processorMainAudioScratchSampleCapacity)
+    {
+        diagnosticOversizedAudioBlocks.fetch_add(
+            1,
+            std::memory_order_relaxed);
+
+        buffer.clear();
+        midiMessages.clear();
+
+        core.requestMidiReleaseReset();
+        pendingMidiOutputReset.store(
+            true,
+            std::memory_order_release);
+        return;
+    }
+
     const auto processStartTicks =
         juce::Time::getHighResolutionTicks();
 
@@ -534,7 +556,6 @@ void PolyHostPluginProcessor::processBlock(
 
     juce::ScopedNoDenormals noDenormals;
 
-    const int numSamples = buffer.getNumSamples();
     processorMainAudioScratchBuffer.setSize(
         2,
         numSamples,
@@ -1459,6 +1480,18 @@ PolyHostPluginProcessor::
         "Current Block Size",
         juce::String(
             getBlockSize()));
+
+    addLine(
+        "Prepared Scratch Capacity",
+        juce::String(
+            processorMainAudioScratchSampleCapacity));
+
+    addLine(
+        "Oversized Audio Blocks Rejected",
+        juce::String(
+            (juce::int64)
+                diagnosticOversizedAudioBlocks.load(
+                    std::memory_order_relaxed)));
 
     addLine(
         "Outer Host PlayHead Available",

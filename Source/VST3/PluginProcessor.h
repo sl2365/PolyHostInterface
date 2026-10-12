@@ -215,6 +215,7 @@ private:
     juce::MidiBuffer processorMidiInputScratchBuffer;
     juce::MidiBuffer midiOutputResetScratchBuffer;
     juce::AudioBuffer<float> processorMainAudioScratchBuffer;
+    int processorMainAudioScratchSampleCapacity = 512;
     juce::AudioProcessLoadMeasurer audioProcessLoadMeasurer;
     std::atomic<int> pendingMidiKeyboardPitchBend { -1 };
     std::atomic<int> midiKeyboardPitchBendRangeSemitones { 12 };
@@ -251,6 +252,7 @@ private:
     std::atomic<int> diagnosticLastInputMidiEventCount { 0 };
     std::atomic<int> diagnosticLastOutputMidiEventCount { 0 };
     std::atomic<juce::uint32> diagnosticCoreOutputResetRequests { 0 };
+    std::atomic<juce::uint32> diagnosticOversizedAudioBlocks { 0 };
 
     std::atomic<juce::uint32> diagnosticGetStateCalls { 0 };
     std::atomic<juce::uint32> diagnosticSetStateCalls { 0 };

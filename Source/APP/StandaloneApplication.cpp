@@ -2932,6 +2932,13 @@ public:
         appSettings = settingsIn;
     }
 
+    void setSessionRecoverySettingsChangedCallback(
+        std::function<void()> callback)
+    {
+        sessionRecoverySettingsChangedCallback =
+            std::move(callback);
+    }
+
     juce::PopupMenu getAdditionalMenuForName(
         const juce::String& menuName) override
     {
@@ -2956,6 +2963,47 @@ public:
                              "Session Recall",
                              true,
                              appSettings->getSessionRecallEnabled());
+
+                juce::PopupMenu autoSaveMenu;
+                const int autoSaveMinutes =
+                    appSettings->getSessionAutoSaveMinutes();
+
+                autoSaveMenu.addItem(
+                    commandSessionAutoSaveOff,
+                    "Off",
+                    true,
+                    autoSaveMinutes == 0);
+                autoSaveMenu.addItem(
+                    commandSessionAutoSaveOneMinute,
+                    "1 minute",
+                    true,
+                    autoSaveMinutes == 1);
+                autoSaveMenu.addItem(
+                    commandSessionAutoSaveTwoMinutes,
+                    "2 minutes",
+                    true,
+                    autoSaveMinutes == 2);
+                autoSaveMenu.addItem(
+                    commandSessionAutoSaveFiveMinutes,
+                    "5 minutes",
+                    true,
+                    autoSaveMinutes == 5);
+                autoSaveMenu.addItem(
+                    commandSessionAutoSaveTenMinutes,
+                    "10 minutes",
+                    true,
+                    autoSaveMinutes == 10);
+                autoSaveMenu.addItem(
+                    commandSessionAutoSaveFifteenMinutes,
+                    "15 minutes",
+                    true,
+                    autoSaveMinutes == 15);
+
+                menu.addSubMenu(
+                    "Session Auto-Save",
+                    autoSaveMenu,
+                    appSettings->getSessionRecallEnabled());
+
                 menu.addItem(commandSingleInstance,
                              "Single Instance",
                              true,
@@ -3003,6 +3051,54 @@ public:
         {
             appSettings->setSessionRecallEnabled(
                 ! appSettings->getSessionRecallEnabled());
+
+            if (sessionRecoverySettingsChangedCallback)
+                sessionRecoverySettingsChangedCallback();
+
+            return true;
+        }
+
+        int autoSaveMinutes = -1;
+
+        switch (menuItemID)
+        {
+            case commandSessionAutoSaveOff:
+                autoSaveMinutes = 0;
+                break;
+
+            case commandSessionAutoSaveOneMinute:
+                autoSaveMinutes = 1;
+                break;
+
+            case commandSessionAutoSaveTwoMinutes:
+                autoSaveMinutes = 2;
+                break;
+
+            case commandSessionAutoSaveFiveMinutes:
+                autoSaveMinutes = 5;
+                break;
+
+            case commandSessionAutoSaveTenMinutes:
+                autoSaveMinutes = 10;
+                break;
+
+            case commandSessionAutoSaveFifteenMinutes:
+                autoSaveMinutes = 15;
+                break;
+
+            default:
+                break;
+        }
+
+        if (autoSaveMinutes >= 0
+            && appSettings != nullptr)
+        {
+            appSettings->setSessionAutoSaveMinutes(
+                autoSaveMinutes);
+
+            if (sessionRecoverySettingsChangedCallback)
+                sessionRecoverySettingsChangedCallback();
+
             return true;
         }
 
@@ -3035,7 +3131,13 @@ private:
         commandMidiSettings = 10002,
         commandQuit = 10003,
         commandSessionRecall = 10004,
-        commandSingleInstance = 10005
+        commandSingleInstance = 10005,
+        commandSessionAutoSaveOff = 10010,
+        commandSessionAutoSaveOneMinute = 10011,
+        commandSessionAutoSaveTwoMinutes = 10012,
+        commandSessionAutoSaveFiveMinutes = 10013,
+        commandSessionAutoSaveTenMinutes = 10014,
+        commandSessionAutoSaveFifteenMinutes = 10015
     };
 
     void showMidiSettingsDialog()
@@ -3147,6 +3249,8 @@ private:
     StandaloneMidiOutputController& midiOutputController;
     StandaloneTempoControls tempoControls;
     AppSettings* appSettings = nullptr;
+    std::function<void()>
+        sessionRecoverySettingsChangedCallback;
 };
 
 class PolyHostStandaloneWindow final : public juce::DocumentWindow
@@ -3319,6 +3423,14 @@ public:
             application->systemRequestedQuit();
     }
 
+    void setSessionRecoverySettingsChangedCallback(
+        std::function<void()> callback)
+    {
+        menuExtension
+            .setSessionRecoverySettingsChangedCallback(
+                std::move(callback));
+    }
+
     void moved() override
     {
         juce::DocumentWindow::moved();
@@ -3352,6 +3464,26 @@ public:
             pluginHolder->saveAudioDeviceState();
             DebugLog::write("[Shutdown] audio device state save returned");
         }
+    }
+
+    bool saveSessionRecoveryState()
+    {
+        if (pluginHolder == nullptr
+            || processor == nullptr)
+        {
+            return false;
+        }
+
+        DebugLog::writeAdvanced(
+            "[SessionRecovery] state capture begin");
+
+        // Match ordinary preset saving: capture a read-only snapshot
+        // without stopping the audio device or suspending processing.
+        pluginHolder->savePluginState();
+
+        DebugLog::writeAdvanced(
+            "[SessionRecovery] state capture complete");
+        return true;
     }
 
     bool openPluginPath(const juce::String& pluginPath,
@@ -3474,7 +3606,9 @@ private:
     bool adjustingWindowPosition = false;
 };
 
-class PolyHostStandaloneApplication final : public juce::JUCEApplication
+class PolyHostStandaloneApplication final
+    : public juce::JUCEApplication,
+      private juce::Timer
 {
 public:
     PolyHostStandaloneApplication()
@@ -3545,7 +3679,15 @@ public:
             getApplicationName(),
             createPluginHolder());
 
+        mainWindow->setSessionRecoverySettingsChangedCallback(
+            [this]
+            {
+                updateSessionRecoveryAutoSave(true);
+            });
+
         mainWindow->setVisible(true);
+
+        updateSessionRecoveryAutoSave(false);
 
         if (! pluginPaths.isEmpty())
         {
@@ -3571,6 +3713,7 @@ public:
 
     void shutdown() override
     {
+        stopTimer();
         startupSplash.reset();
 
         if (mainWindow != nullptr)
@@ -3591,13 +3734,7 @@ public:
         if (! settings.getSessionRecallEnabled())
             standaloneProperties.removeValue("filterState");
 
-        if (auto stateXml =
-                standaloneProperties.createXml(
-                    "StandaloneProperties"))
-        {
-            settings.setAudioDeviceState(
-                stateXml->toString());
-        }
+        persistStandaloneProperties(settings);
 
         DebugLog::write("[Shutdown] complete");
     }
@@ -3624,6 +3761,79 @@ public:
     }
 
 private:
+    void timerCallback() override
+    {
+        saveSessionRecoverySnapshot();
+    }
+
+    void updateSessionRecoveryAutoSave(
+        bool saveImmediately)
+    {
+        stopTimer();
+
+        AppSettings settings;
+
+        if (! settings.getSessionRecallEnabled())
+        {
+            standaloneProperties.removeValue("filterState");
+            persistStandaloneProperties(settings);
+            return;
+        }
+
+        if (saveImmediately)
+            saveSessionRecoverySnapshot();
+
+        const int autoSaveMinutes =
+            settings.getSessionAutoSaveMinutes();
+
+        if (autoSaveMinutes > 0)
+        {
+            startTimer(autoSaveMinutes * 60 * 1000);
+
+            DebugLog::writeAdvanced(
+                "[SessionRecovery] auto-save interval set | minutes="
+                + juce::String(autoSaveMinutes));
+        }
+    }
+
+    void saveSessionRecoverySnapshot()
+    {
+        if (sessionRecoverySaveInProgress
+            || mainWindow == nullptr)
+        {
+            return;
+        }
+
+        AppSettings settings;
+
+        if (! settings.getSessionRecallEnabled())
+            return;
+
+        const juce::ScopedValueSetter<bool> saveGuard(
+            sessionRecoverySaveInProgress,
+            true);
+
+        if (! mainWindow->saveSessionRecoveryState())
+            return;
+
+        persistStandaloneProperties(settings);
+
+        DebugLog::writeAdvanced(
+            "[SessionRecovery] snapshot saved");
+    }
+
+    void persistStandaloneProperties(
+        AppSettings& settings)
+    {
+        if (auto stateXml =
+                standaloneProperties.createXml(
+                    "StandaloneProperties"))
+        {
+            settings.setAudioDeviceState(
+                stateXml->toString());
+        }
+    }
+
     juce::Image createStartupSplashImage()
     {
         constexpr int splashWidth = 500;
@@ -3846,6 +4056,7 @@ private:
     juce::PropertySet standaloneProperties;
     bool sessionRecallEnabled = true;
     bool singleInstanceEnabled = true;
+    bool sessionRecoverySaveInProgress = false;
     std::unique_ptr<juce::SplashScreen> startupSplash;
     std::unique_ptr<PolyHostStandaloneWindow> mainWindow;
 };

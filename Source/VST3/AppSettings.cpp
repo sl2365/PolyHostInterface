@@ -73,6 +73,7 @@ static constexpr const char* kDebugLoggingEnabled           = "debugLoggingEnabl
 static constexpr const char* kAdvancedDebugLoggingEnabled   = "advancedDebugLoggingEnabled";
 static constexpr const char* kClearDebugLogOnStartup        = "clearDebugLogOnStartup";
 static constexpr const char* kSessionRecallEnabled          = "sessionRecallEnabled";
+static constexpr const char* kSessionAutoSaveMinutes        = "sessionAutoSaveMinutes";
 static constexpr const char* kSingleInstanceEnabled         = "singleInstanceEnabled";
 #if defined(POLYHOST_32BIT_EDITION) && POLYHOST_32BIT_EDITION
 static constexpr auto kPresetsDirectoryName = "Presets32";
@@ -196,6 +197,31 @@ bool AppSettings::getSessionRecallEnabled() const
 void AppSettings::setSessionRecallEnabled(bool shouldEnable)
 {
     xml->setAttribute(kSessionRecallEnabled, shouldEnable);
+    save();
+}
+
+int AppSettings::getSessionAutoSaveMinutes() const
+{
+    const int minutes =
+        xml->getIntAttribute(kSessionAutoSaveMinutes, 5);
+
+    for (const int allowed : { 0, 1, 2, 5, 10, 15 })
+        if (minutes == allowed)
+            return minutes;
+
+    return 5;
+}
+
+void AppSettings::setSessionAutoSaveMinutes(int minutes)
+{
+    bool isAllowed = false;
+
+    for (const int allowed : { 0, 1, 2, 5, 10, 15 })
+        if (minutes == allowed)
+            isAllowed = true;
+
+    xml->setAttribute(kSessionAutoSaveMinutes,
+                      isAllowed ? minutes : 5);
     save();
 }
 

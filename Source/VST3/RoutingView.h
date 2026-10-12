@@ -28,6 +28,15 @@ public:
     RoutingView();
 
     void setModules(const juce::Array<ModuleEntry>& newModules);
+    void updateModuleControlState(
+        int tabIndex,
+        bool isBypassed,
+        bool isSoloed,
+        bool isMutedBySolo,
+        float outputGainDb,
+        int midiAssignmentCount,
+        const juce::String& midiAssignmentsTooltip,
+        int pointerAdjustMethodOverride);
     void setDeleteUndoAvailable(bool shouldBeAvailable);
 
     std::function<void(int fromTabIndex, int toTabIndex)> onMove;

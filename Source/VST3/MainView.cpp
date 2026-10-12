@@ -2377,7 +2377,7 @@ void MainView::MidiAssignmentsPopup::buttonClicked(juce::Button* button)
             core.setMidiInputAssignedToTab(tabIndex, inputNames[i], true);
 
         refresh();
-        owner.refreshFromCore();
+        owner.syncRoutingControlState(tabIndex);
         owner.repaint();
         return;
     }
@@ -2390,7 +2390,7 @@ void MainView::MidiAssignmentsPopup::buttonClicked(juce::Button* button)
             core.setMidiInputAssignedToTab(tabIndex, inputNames[i], false);
 
         refresh();
-        owner.refreshFromCore();
+        owner.syncRoutingControlState(tabIndex);
         owner.repaint();
         return;
     }
@@ -2406,7 +2406,7 @@ void MainView::MidiAssignmentsPopup::buttonClicked(juce::Button* button)
 
             core.toggleMidiInputAssignedToTab(tabIndex, inputNames[i]);
             refresh();
-            owner.refreshFromCore();
+            owner.syncRoutingControlState(tabIndex);
             owner.repaint();
             return;
         }
@@ -2661,7 +2661,7 @@ MainView::MainView(PolyHostPluginProcessor& processorIn,
 
         manualBypassStates.set(tabIndex, ! manualBypassStates[tabIndex]);
         applyEffectiveBypassStates();
-        refreshFromCore();
+        syncAllRoutingControlStates();
         repaint();
     };
 
@@ -2700,13 +2700,14 @@ MainView::MainView(PolyHostPluginProcessor& processorIn,
     routingView.onSetPointerAdjustMethodOverride = [this](int tabIndex, int methodOverride)
     {
         processor.getCore().setTabPointerAdjustMethodOverride(tabIndex, methodOverride);
-        refreshFromCore();
+        syncRoutingControlState(tabIndex);
         repaint();
     };
 
     routingView.onSetOutputGainDb = [this](int tabIndex, float gainDb)
     {
         processor.getCore().setTabOutputGainDb(tabIndex, gainDb);
+        syncRoutingControlState(tabIndex);
     };
 
     advancedRoutingView.onShowSimple = [this]
@@ -2755,7 +2756,7 @@ MainView::MainView(PolyHostPluginProcessor& processorIn,
             tabIndex,
             ! manualBypassStates[tabIndex]);
         applyEffectiveBypassStates();
-        refreshFromCore();
+        syncAllRoutingControlStates();
         repaint();
     };
 
@@ -2783,7 +2784,7 @@ MainView::MainView(PolyHostPluginProcessor& processorIn,
                 .setTabPointerAdjustMethodOverride(
                     tabIndex,
                     methodOverride);
-            refreshFromCore();
+            syncRoutingControlState(tabIndex);
             repaint();
         };
 
@@ -2793,17 +2794,22 @@ MainView::MainView(PolyHostPluginProcessor& processorIn,
             processor.getCore().setTabOutputGainDb(
                 tabIndex,
                 gainDb);
+            syncRoutingControlState(tabIndex);
         };
 
     advancedRoutingView.onAddConnection =
         [this](const juce::String& sourceNodeId,
+               int sourceBusIndex,
                const juce::String& destinationNodeId,
+               int destinationBusIndex,
                juce::String& errorMessage)
         {
             const bool added =
                 processor.getCore().addAdvancedRoutingConnection(
                     sourceNodeId,
+                    sourceBusIndex,
                     destinationNodeId,
+                    destinationBusIndex,
                     &errorMessage);
 
             if (added)
@@ -2817,11 +2823,15 @@ MainView::MainView(PolyHostPluginProcessor& processorIn,
 
     advancedRoutingView.onRemoveConnection =
         [this](const juce::String& sourceNodeId,
-               const juce::String& destinationNodeId)
+               int sourceBusIndex,
+               const juce::String& destinationNodeId,
+               int destinationBusIndex)
         {
             if (processor.getCore().removeAdvancedRoutingConnection(
                     sourceNodeId,
-                    destinationNodeId))
+                    sourceBusIndex,
+                    destinationNodeId,
+                    destinationBusIndex))
             {
                 rebuildAdvancedRoutingView();
                 repaint();
@@ -2830,17 +2840,25 @@ MainView::MainView(PolyHostPluginProcessor& processorIn,
 
     advancedRoutingView.onReconnectConnection =
         [this](const juce::String& oldSourceNodeId,
+               int oldSourceBusIndex,
                const juce::String& oldDestinationNodeId,
+               int oldDestinationBusIndex,
                const juce::String& newSourceNodeId,
+               int newSourceBusIndex,
                const juce::String& newDestinationNodeId,
+               int newDestinationBusIndex,
                juce::String& errorMessage)
         {
             const bool reconnected =
                 processor.getCore().reconnectAdvancedRoutingConnection(
                     oldSourceNodeId,
+                    oldSourceBusIndex,
                     oldDestinationNodeId,
+                    oldDestinationBusIndex,
                     newSourceNodeId,
+                    newSourceBusIndex,
                     newDestinationNodeId,
+                    newDestinationBusIndex,
                     &errorMessage);
 
             if (reconnected)
@@ -4982,7 +5000,7 @@ void MainView::handleToggleSolo(int tabIndex)
         soloedTabIndices.addIfNotAlreadyThere(tabIndex);
 
     applyEffectiveBypassStates();
-    refreshFromCore();
+    syncAllRoutingControlStates();
     toolbar.repaint();
     repaint();
 }
@@ -4994,7 +5012,7 @@ void MainView::clearAllSolos()
 
     soloedTabIndices.clear();
     applyEffectiveBypassStates();
-    refreshFromCore();
+    syncAllRoutingControlStates();
     toolbar.repaint();
     repaint();
 }
@@ -5462,9 +5480,34 @@ void MainView::rebuildAdvancedRoutingView()
             tab.type == PluginSlotType::Synth
                 ? AdvancedRoutingView::NodeKind::Synth
                 : AdvancedRoutingView::NodeKind::Effect;
+
+        auto appendPorts = [](
+            const juce::Array<PluginCore::AdvancedAudioBusInfo>& buses,
+            juce::Array<AdvancedRoutingView::NodeEntry::AudioPort>& ports)
+        {
+            for (const auto& bus : buses)
+            {
+                AdvancedRoutingView::NodeEntry::AudioPort port;
+                port.busIndex = bus.busIndex;
+                port.name = bus.name;
+                port.channelCount = bus.channelCount;
+                ports.add(port);
+            }
+        };
+
+        if (tab.type == PluginSlotType::FX)
+        {
+            appendPorts(core.getAdvancedInputBuses(tabIndex),
+                        pluginNode.inputPorts);
+        }
+
+        appendPorts(core.getAdvancedOutputBuses(tabIndex),
+                    pluginNode.outputPorts);
+
         pluginNode.acceptsInput =
-            tab.type == PluginSlotType::FX;
-        pluginNode.producesOutput = true;
+            ! pluginNode.inputPorts.isEmpty();
+        pluginNode.producesOutput =
+            ! pluginNode.outputPorts.isEmpty();
 
         const bool isSoloed =
             soloedTabIndices.contains(tabIndex);
@@ -5585,6 +5628,117 @@ void MainView::rebuildAdvancedRoutingView()
     advancedRoutingView.setModel(
         nodes,
         core.getAdvancedRoutingConnections());
+}
+
+void MainView::syncRoutingControlState(int tabIndex)
+{
+    auto& core = processor.getCore();
+
+    if (! juce::isPositiveAndBelow(tabIndex,
+                                   core.getNumTabs()))
+    {
+        return;
+    }
+
+    const bool isSoloed =
+        soloedTabIndices.contains(tabIndex);
+
+    const bool manualBypassed =
+        juce::isPositiveAndBelow(
+            tabIndex,
+            manualBypassStates.size())
+            ? manualBypassStates[tabIndex]
+            : core.isTabBypassed(tabIndex);
+
+    const bool isMutedBySolo =
+        ! soloedTabIndices.isEmpty()
+        && ! isSoloed
+        && ! manualBypassed;
+
+    juce::String midiAssignmentsTooltip;
+
+    if (core.isMidiInputAssignedToTab(
+            tabIndex,
+            "MIDI Ch: All"))
+    {
+        midiAssignmentsTooltip = "MIDI Ch: All";
+    }
+    else
+    {
+        juce::StringArray assignedChannels;
+
+        for (int channel = 1; channel <= 16; ++channel)
+        {
+            if (core.isMidiInputAssignedToTab(
+                    tabIndex,
+                    "MIDI Ch: " + juce::String(channel)))
+            {
+                assignedChannels.add(juce::String(channel));
+            }
+        }
+
+        if (assignedChannels.isEmpty())
+        {
+            midiAssignmentsTooltip = "MIDI Ch: None";
+        }
+        else
+        {
+            const auto lastChannel =
+                assignedChannels[
+                    assignedChannels.size() - 1];
+
+            assignedChannels.remove(
+                assignedChannels.size() - 1);
+
+            midiAssignmentsTooltip = "MIDI Ch: ";
+
+            if (! assignedChannels.isEmpty())
+            {
+                midiAssignmentsTooltip +=
+                    assignedChannels.joinIntoString(", ")
+                    + " and ";
+            }
+
+            midiAssignmentsTooltip += lastChannel;
+        }
+    }
+
+    const float outputGainDb =
+        core.getTabOutputGainDb(tabIndex);
+
+    const int pointerAdjustMethodOverride =
+        core.getTabPointerAdjustMethodOverride(tabIndex);
+
+    routingView.updateModuleControlState(
+        tabIndex,
+        manualBypassed,
+        isSoloed,
+        isMutedBySolo,
+        outputGainDb,
+        core.getTabMidiAssignmentCount(tabIndex),
+        midiAssignmentsTooltip,
+        pointerAdjustMethodOverride);
+
+    advancedRoutingView.updateNodeControlState(
+        tabIndex,
+        manualBypassed,
+        isSoloed,
+        isMutedBySolo,
+        outputGainDb,
+        midiAssignmentsTooltip,
+        pointerAdjustMethodOverride);
+}
+
+void MainView::syncAllRoutingControlStates()
+{
+    const int tabCount = processor.getCore().getNumTabs();
+
+    for (int tabIndex = 0;
+         tabIndex < tabCount;
+         ++tabIndex)
+    {
+        syncRoutingControlState(tabIndex);
+    }
 }
 
 void MainView::selectTab(int tabIndex)

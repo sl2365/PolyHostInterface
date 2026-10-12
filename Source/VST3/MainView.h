@@ -595,6 +595,8 @@ private:
     void rebuildTabButtons();
     void rebuildRoutingView();
     void rebuildAdvancedRoutingView();
+    void syncRoutingControlState(int tabIndex);
+    void syncAllRoutingControlStates();
     void updateTabScrollButtonState();
     void selectTab(int tabIndex);
     void clearTab(int tabIndex);

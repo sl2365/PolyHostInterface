@@ -19,6 +19,8 @@ struct AdvancedRoutingConnection
 {
     juce::String sourceNodeId;
     juce::String destinationNodeId;
+    int sourceBusIndex = 0;
+    int destinationBusIndex = 0;
 };
 
 struct AdvancedRoutingNodePosition

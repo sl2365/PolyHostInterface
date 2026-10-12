@@ -129,6 +129,10 @@ std::unique_ptr<juce::XmlElement> SessionManager::createXmlFromSessionData(const
                                         connection.sourceNodeId);
             connectionXml->setAttribute("destination",
                                         connection.destinationNodeId);
+            connectionXml->setAttribute("sourceBus",
+                                        connection.sourceBusIndex);
+            connectionXml->setAttribute("destinationBus",
+                                        connection.destinationBusIndex);
         }
 
         for (const auto& position :
@@ -274,6 +278,14 @@ bool SessionManager::restoreSessionDataFromXml(const juce::XmlElement& xml,
                     childXml->getStringAttribute("source").trim();
                 connection.destinationNodeId =
                     childXml->getStringAttribute("destination").trim();
+                connection.sourceBusIndex =
+                    juce::jmax(
+                        0,
+                        childXml->getIntAttribute("sourceBus", 0));
+                connection.destinationBusIndex =
+                    juce::jmax(
+                        0,
+                        childXml->getIntAttribute("destinationBus", 0));
 
                 if (connection.sourceNodeId.isNotEmpty()
                     && connection.destinationNodeId.isNotEmpty())

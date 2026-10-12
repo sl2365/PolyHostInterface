@@ -592,6 +592,44 @@ void RoutingView::setModules(const juce::Array<ModuleEntry>& newModules)
     resized();
 }
 
+void RoutingView::updateModuleControlState(
+    int tabIndex,
+    bool isBypassed,
+    bool isSoloed,
+    bool isMutedBySolo,
+    float outputGainDb,
+    int midiAssignmentCount,
+    const juce::String& midiAssignmentsTooltip,
+    int pointerAdjustMethodOverride)
+{
+    for (int moduleIndex = 0;
+         moduleIndex < modules.size();
+         ++moduleIndex)
+    {
+        auto& module = modules.getReference(moduleIndex);
+
+        if (module.tabIndex != tabIndex)
+            continue;
+
+        module.isBypassed = isBypassed;
+        module.isSoloed = isSoloed;
+        module.isMutedBySolo = isMutedBySolo;
+        module.outputGainDb = outputGainDb;
+        module.midiAssignmentCount = midiAssignmentCount;
+        module.midiAssignmentsTooltip = midiAssignmentsTooltip;
+        module.pointerAdjustMethodOverride =
+            pointerAdjustMethodOverride;
+
+        if (juce::isPositiveAndBelow(moduleIndex,
+                                     moduleRows.size()))
+        {
+            moduleRows[moduleIndex]->setModule(module);
+        }
+
+        return;
+    }
+}
+
 void RoutingView::setDeleteUndoAvailable(bool shouldBeAvailable)
 {
     undoDeleteButton.setEnabled(shouldBeAvailable);
