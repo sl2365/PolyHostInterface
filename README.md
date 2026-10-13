@@ -30,18 +30,20 @@ See the demos at the bottom of the page for a few gifs of the Pointer Control in
 | MIDI 1.0 | ✅ Working |
 | MIDI 2.0 (Windows MIDI Services) | ⚠️ Requires JUCE 8+ and Windows 11 - planned |
 | Tabbed interface (Synth: parallel + FX: serial) | ✅ Working |
+| Detachable plug-in editor windows | ✅ Working - right-click a tab to open its editor in a separate window |
 | Tab-ordering = FX routing order | ✅ Working |
+| Simple and Advanced Modular Routing | ✅ Working |
 | Portable settings (no AppData/registry) | ✅ Working |
 | Audio / MIDI recording | ✅ Working |
 | ASIO audio driver (standalone PHI64 and PHI32) | ✅ Working - Requires an ASIO driver compatible with the application's 32-bit or 64-bit architecture |
 | Pointer Control functionality | ✅ Working - Absolute knob mode (1) and 3x Relative knob modes (2),(3) and (4) |
 | Mouse button emulation | ✅ Working - (Left, Middle, Right buttons) |
 | Keyboard emulation | ✅ Working - (Limited to: Up, Down, Enter, mainly for menu navigation) |
-| MIDI Monitor | ✅ Working |
+| MIDI Monitor + Export to MID/TXT | ✅ Working |
 | MIDI Macros | ✅ Working |
 | Plugin Repair - locates missing plugins | ✅ Working |
 | Standalone App | ✅ Working |
-| VST3 Plugin for use in other hosts | ✅ Working |
+| VST3 FX and Synth editions for use in other hosts | ✅ Working |
 | Optional standalone session recall | ✅ Working - Options > Session Recall, with selectable 1-15 minute crash-recovery auto-save |
 | Optional standalone single-instance mode | ✅ Working - Options > Single Instance |
 
@@ -49,6 +51,13 @@ See the demos at the bottom of the page for a few gifs of the Pointer Control in
 
 ### Tabbed Plugin Hosting
 PolyHostInterface hosts multiple plugins in a tabbed workflow, allowing quick switching between synth and FX tabs inside one container plugin.
+
+Right-click any loaded tab and choose **Open Plugin in New Window** to keep that plug-in editor visible while working with another tab. Multiple plug-in editors can be detached at the same time. Detaching moves only the editor: the same live plug-in instance remains in its existing Simple or Advanced routing, with its audio, MIDI, automation and preset state unchanged. Close the detached window, or right-click its tab and choose **Return Plugin to PHI**, to place its editor back in the main PHI window. Pointer Control is intentionally unavailable while an editor is detached because it targets the editor embedded in PHI's main window.
+
+The VST3 build produces two editions with the same PHI features and compatible PHI presets:
+
+- `PolyHostInterface.vst3` is the established FX edition. Its identity remains unchanged so existing DAW projects continue to find it.
+- `PolyHostInterface_Synth.vst3` is the instrument edition for DAW synth/instrument slots.
 
 ### Routing View
 The Routing View provides a structured overview of all tabs in the current preset, including:
@@ -407,7 +416,7 @@ One-time installs (unavoidable for C++)
 
 ### 5. Build
 	Double-click build-BOTH.bat from the project root.
-	The finished exe/vst3 files appears in: dist\PolyHostInterface.exe
+	The finished EXE/VST3 files appear in `dist`, including `PolyHostInterface.vst3` and `PolyHostInterface_Synth.vst3`.
 
 ## Opening a Plugin in PHI Standalone
 1. Right-click any vst2, vst3 or clap file in File Explorer

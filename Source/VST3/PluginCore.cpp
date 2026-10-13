@@ -6195,8 +6195,18 @@ void PluginCore::disposeHostedPluginInstance(
         return;
     }
 
-    if (tab.processingQuarantined.load(
-            std::memory_order_acquire))
+    const bool abandonWithoutCleanup =
+        tab.processingQuarantined.load(
+            std::memory_order_acquire);
+
+    if (hostedPluginWillBeDisposedCallback)
+    {
+        hostedPluginWillBeDisposedCallback(
+            tab.pluginInstance.get(),
+            abandonWithoutCleanup);
+    }
+
+    if (abandonWithoutCleanup)
     {
         const auto pluginName =
             tab.slot != nullptr
@@ -6974,6 +6984,23 @@ juce::AudioPluginInstance* PluginCore::getMainPluginInstance() const
 {
     auto* selectedTab = getSelectedHostedTab();
     return selectedTab != nullptr ? selectedTab->pluginInstance.get() : nullptr;
+}
+
+juce::AudioPluginInstance* PluginCore::getPluginInstanceForTab(
+    int tabIndex) const
+{
+    if (! juce::isPositiveAndBelow(tabIndex, hostedTabs.size()))
+        return nullptr;
+
+    auto* tab = hostedTabs[tabIndex];
+    return tab != nullptr ? tab->pluginInstance.get() : nullptr;
+}
+
+void PluginCore::setHostedPluginWillBeDisposedCallback(
+    HostedPluginWillBeDisposedCallback callback)
+{
+    hostedPluginWillBeDisposedCallback =
+        std::move(callback);
 }
 
 juce::String PluginCore::getMainSlotPluginPath() const

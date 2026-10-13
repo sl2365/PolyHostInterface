@@ -19,8 +19,8 @@
 ::   Visual Studio 2026 Build Tools
 ::   Desktop development with C++
 ::
-:: The finished VST3 binary is copied directly into dist beside
-:: PolyHostInterface.exe. No other dist files or folders are removed.
+:: The finished FX and Synth VST3 binaries are copied directly into dist
+:: beside PolyHostInterface.exe. No other dist files or folders are removed.
 :: ============================================================
 
 @echo off
@@ -88,10 +88,14 @@ set "TOOLS=%ROOT%..\_Tools"
 set "CMAKE=%TOOLS%\cmake\_4.4.2\bin\cmake.exe"
 set "BUILD_DIR=%ROOT%build-VST3"
 set "DIST_DIR=%ROOT%dist"
-set "PLUGIN_NAME=PolyHostInterface.vst3"
-set "BUILT_BUNDLE=%BUILD_DIR%\PolyHostPlugin_artefacts\Release\VST3\%PLUGIN_NAME%"
-set "BUILT_BINARY=%BUILT_BUNDLE%\Contents\x86_64-win\%PLUGIN_NAME%"
-set "FINAL_PLUGIN=%DIST_DIR%\%PLUGIN_NAME%"
+set "FX_PLUGIN_NAME=PolyHostInterface.vst3"
+set "FX_BUILT_BUNDLE=%BUILD_DIR%\PolyHostPlugin_artefacts\Release\VST3\%FX_PLUGIN_NAME%"
+set "FX_BUILT_BINARY=%FX_BUILT_BUNDLE%\Contents\x86_64-win\%FX_PLUGIN_NAME%"
+set "FX_FINAL_PLUGIN=%DIST_DIR%\%FX_PLUGIN_NAME%"
+set "SYNTH_PLUGIN_NAME=PolyHostInterface_Synth.vst3"
+set "SYNTH_BUILT_BUNDLE=%BUILD_DIR%\PolyHostSynthPlugin_artefacts\Release\VST3\%SYNTH_PLUGIN_NAME%"
+set "SYNTH_BUILT_BINARY=%SYNTH_BUILT_BUNDLE%\Contents\x86_64-win\%SYNTH_PLUGIN_NAME%"
+set "SYNTH_FINAL_PLUGIN=%DIST_DIR%\%SYNTH_PLUGIN_NAME%"
 set "APP_NAME=savihost.exe"
 set "SAVIHOST=D:\SyMenu\ProgramFiles\MyApps\MuLab\- VST's\Utilities\savihost\savihost.exe"
 set "MIDI_ROUTING_TEST=%BUILD_DIR%\Release\PhiHostedMidiRoutingTests.exe"
@@ -167,7 +171,7 @@ if errorlevel 1 (
 
 echo.
 echo Building Release...
-"%CMAKE%" --build "%BUILD_DIR%" --config Release --target PolyHostPlugin_VST3
+"%CMAKE%" --build "%BUILD_DIR%" --config Release --target PolyHostPlugin_VST3 PolyHostSynthPlugin_VST3
 if errorlevel 1 (
     echo.
     echo Build FAILED.
@@ -176,27 +180,46 @@ if errorlevel 1 (
 )
 
 echo.
-echo Copying VST3 binary directly to dist...
+echo Copying FX and Synth VST3 binaries directly to dist...
 if not exist "%DIST_DIR%" mkdir "%DIST_DIR%"
 
-if not exist "%BUILT_BINARY%" (
-    echo ERROR: Built VST3 binary not found at:
-    echo %BUILT_BINARY%
+if not exist "%FX_BUILT_BINARY%" (
+    echo ERROR: Built FX VST3 binary not found at:
+    echo %FX_BUILT_BINARY%
     echo.
     echo The build may have succeeded, but JUCE may have used a different artefacts path.
     if not defined PHI_BUILD_CAPTURE pause
     exit /b 1
 )
 
-:: Remove only an older PolyHostInterface.vst3 target.
-:: This also cleans up the previous directory-bundle copy if present.
-if exist "%FINAL_PLUGIN%\NUL" rmdir /s /q "%FINAL_PLUGIN%"
-if exist "%FINAL_PLUGIN%" del /f /q "%FINAL_PLUGIN%"
+if not exist "%SYNTH_BUILT_BINARY%" (
+    echo ERROR: Built Synth VST3 binary not found at:
+    echo %SYNTH_BUILT_BINARY%
+    echo.
+    echo The build may have succeeded, but JUCE may have used a different artefacts path.
+    if not defined PHI_BUILD_CAPTURE pause
+    exit /b 1
+)
 
-copy /Y "%BUILT_BINARY%" "%FINAL_PLUGIN%" >nul
+:: Remove only older PHI FX and Synth VST3 targets.
+:: This also cleans up previous directory-bundle copies if present.
+if exist "%FX_FINAL_PLUGIN%\NUL" rmdir /s /q "%FX_FINAL_PLUGIN%"
+if exist "%FX_FINAL_PLUGIN%" del /f /q "%FX_FINAL_PLUGIN%"
+if exist "%SYNTH_FINAL_PLUGIN%\NUL" rmdir /s /q "%SYNTH_FINAL_PLUGIN%"
+if exist "%SYNTH_FINAL_PLUGIN%" del /f /q "%SYNTH_FINAL_PLUGIN%"
+
+copy /Y "%FX_BUILT_BINARY%" "%FX_FINAL_PLUGIN%" >nul
 if errorlevel 1 (
-    echo ERROR: Failed to copy VST3 binary to:
-    echo %FINAL_PLUGIN%
+    echo ERROR: Failed to copy FX VST3 binary to:
+    echo %FX_FINAL_PLUGIN%
+    if not defined PHI_BUILD_CAPTURE pause
+    exit /b 1
+)
+
+copy /Y "%SYNTH_BUILT_BINARY%" "%SYNTH_FINAL_PLUGIN%" >nul
+if errorlevel 1 (
+    echo ERROR: Failed to copy Synth VST3 binary to:
+    echo %SYNTH_FINAL_PLUGIN%
     if not defined PHI_BUILD_CAPTURE pause
     exit /b 1
 )
@@ -208,21 +231,29 @@ if errorlevel 1 (
     exit /b 1
 )
 
-if not exist "%FINAL_PLUGIN%" (
-    echo ERROR: Final VST3 binary was not copied successfully:
-    echo %FINAL_PLUGIN%
+if not exist "%FX_FINAL_PLUGIN%" (
+    echo ERROR: Final FX VST3 binary was not copied successfully:
+    echo %FX_FINAL_PLUGIN%
     if not defined PHI_BUILD_CAPTURE pause
     exit /b 1
 )
 
-echo Copied VST3 to:
-echo %FINAL_PLUGIN%
+if not exist "%SYNTH_FINAL_PLUGIN%" (
+    echo ERROR: Final Synth VST3 binary was not copied successfully:
+    echo %SYNTH_FINAL_PLUGIN%
+    if not defined PHI_BUILD_CAPTURE pause
+    exit /b 1
+)
+
+echo Copied VST3 editions to:
+echo %FX_FINAL_PLUGIN%
+echo %SYNTH_FINAL_PLUGIN%
 
 :: Close cmd and launch this VST3 directly in Savihost. Do not use the
 :: system .vst3 association, which belongs to PHI standalone.
 echo.
 echo ======================================================================
-echo VST3 Build complete. Launching %PLUGIN_NAME% in 2 seconds...
+echo VST3 Build complete. Launching %SYNTH_PLUGIN_NAME% in 2 seconds...
 echo ======================================================================
 timeout /t 2 /nobreak >nul
 if not exist "%SAVIHOST%" (
@@ -232,5 +263,5 @@ if not exist "%SAVIHOST%" (
     echo VST3 build completed successfully, but PHI VST3 was not launched.
     exit /b 0
 )
-start "" "%SAVIHOST%" "%FINAL_PLUGIN%"
+start "" "%SAVIHOST%" "%SYNTH_FINAL_PLUGIN%"
 exit /b 0

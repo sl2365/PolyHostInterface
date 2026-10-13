@@ -2282,6 +2282,91 @@ private:
     PointerEditOverlayContent content;
 };
 
+class MainView::DetachedPluginWindow final
+    : public juce::DocumentWindow
+{
+public:
+    DetachedPluginWindow(
+        MainView& ownerIn,
+        juce::String routingIdIn,
+        const juce::String& tabName,
+        juce::AudioPluginInstance& pluginInstanceIn,
+        std::unique_ptr<juce::AudioProcessorEditor> editorIn)
+        : juce::DocumentWindow(
+              tabName + " - PHI",
+              juce::Colour(0xFF23283A),
+              juce::DocumentWindow::closeButton),
+          owner(ownerIn),
+          routingId(std::move(routingIdIn)),
+          pluginInstance(&pluginInstanceIn),
+          editor(std::move(editorIn))
+    {
+        setUsingNativeTitleBar(true);
+        setDropShadowEnabled(true);
+        setAlwaysOnTop(false);
+
+        if (editor != nullptr)
+        {
+            setResizable(editor->isResizable(), false);
+            setContentNonOwned(editor.get(), true);
+        }
+
+        centreAroundComponent(
+            owner.getWindowCenterTarget(),
+            juce::jmax(1, getWidth()),
+            juce::jmax(1, getHeight()));
+
+        setVisible(true);
+        toFront(true);
+    }
+
+    ~DetachedPluginWindow() override
+    {
+        clearContentComponent();
+
+        if (pluginInstance != nullptr && editor != nullptr)
+            pluginInstance->editorBeingDeleted(editor.get());
+
+        editor.reset();
+    }
+
+    void closeButtonPressed() override
+    {
+        setVisible(false);
+        owner.requestCloseDetachedPluginWindow(routingId);
+    }
+
+    juce::AudioPluginInstance* getPluginInstance() const noexcept
+    {
+        return pluginInstance;
+    }
+
+    const juce::String& getRoutingId() const noexcept
+    {
+        return routingId;
+    }
+
+    void bringToFront()
+    {
+        setVisible(true);
+        toFront(true);
+        grabKeyboardFocus();
+    }
+
+    void abandonPluginEditor()
+    {
+        clearContentComponent();
+        editor.release();
+        pluginInstance = nullptr;
+    }
+
+private:
+    MainView& owner;
+    juce::String routingId;
+    juce::AudioPluginInstance* pluginInstance = nullptr;
+    std::unique_ptr<juce::AudioProcessorEditor> editor;
+};
+
 MainView::MidiAssignmentsPopup::MidiAssignmentsPopup(MainView& ownerIn,
                                                      int tabIndexIn)
     : owner(ownerIn),
@@ -2426,6 +2511,15 @@ MainView::MainView(PolyHostPluginProcessor& processorIn,
                     appSettings),
       midiKeyboardPanel(processorIn.getMidiKeyboardState())
 {
+    processor.getCore().setHostedPluginWillBeDisposedCallback(
+        [this](juce::AudioPluginInstance* instance,
+               bool abandonWithoutCleanup)
+        {
+            handleHostedPluginWillBeDisposed(
+                instance,
+                abandonWithoutCleanup);
+        });
+
     // Diagnostic build: basic logging is intentionally always enabled so a
     // plug-in load that terminates PHI leaves a useful final phase marker.
     DebugLog::setEnabled(true);
@@ -3116,7 +3210,10 @@ MainView::~MainView()
         menuBar->setModel(nullptr);
 
     hidePointerEditOverlay();
+    closeAllDetachedPluginWindows();
     clearHostedEditor();
+    processor.getCore()
+        .setHostedPluginWillBeDisposedCallback({});
     pointerEditOverlayHost.reset();
 
     savePresetToolbarButton = nullptr;
@@ -3761,6 +3858,258 @@ void MainView::timerCallback()
     }
 }
 
+MainView::DetachedPluginWindow*
+MainView::findDetachedPluginWindow(
+    juce::AudioPluginInstance* instance) const
+{
+    if (instance == nullptr)
+        return nullptr;
+
+    for (auto* window : detachedPluginWindows)
+        if (window != nullptr
+            && window->getPluginInstance() == instance)
+        {
+            return window;
+        }
+
+    return nullptr;
+}
+
+MainView::DetachedPluginWindow*
+MainView::findDetachedPluginWindow(
+    const juce::String& routingId) const
+{
+    for (auto* window : detachedPluginWindows)
+        if (window != nullptr
+            && window->getRoutingId() == routingId)
+        {
+            return window;
+        }
+
+    return nullptr;
+}
+
+bool MainView::isPluginEditorDetached(
+    juce::AudioPluginInstance* instance) const
+{
+    return findDetachedPluginWindow(instance) != nullptr;
+}
+
+void MainView::detachPluginEditor(int tabIndex)
+{
+    auto& core = processor.getCore();
+
+    if (! juce::isPositiveAndBelow(tabIndex, core.getNumTabs()))
+        return;
+
+    auto* instance = core.getPluginInstanceForTab(tabIndex);
+
+    if (instance == nullptr || ! instance->hasEditor())
+    {
+        showTemporaryStatusMessage(
+            "This plugin does not provide an editor");
+        return;
+    }
+
+    if (auto* existingWindow =
+            findDetachedPluginWindow(instance))
+    {
+        existingWindow->bringToFront();
+        return;
+    }
+
+    setPointerControlEditMode(false);
+    pointerControl.clearTarget();
+    clearHostedEditor();
+
+    if (instance->getActiveEditor() != nullptr)
+    {
+        DebugLog::write(
+            "[DetachedEditor] editor creation blocked by an existing active editor");
+        showTemporaryStatusMessage(
+            "Plugin editor is already open");
+        refreshFromCore();
+        return;
+    }
+
+    auto detachedEditor =
+        std::unique_ptr<juce::AudioProcessorEditor>(
+            instance->createEditorAndMakeActive());
+
+    if (detachedEditor == nullptr)
+    {
+        DebugLog::write(
+            "[DetachedEditor] plugin failed to create an editor");
+        showTemporaryStatusMessage(
+            "Plugin editor could not be opened");
+        refreshFromCore();
+        return;
+    }
+
+    const auto routingId = core.getTabRoutingId(tabIndex);
+    const auto tabName =
+        core.getTabModel().getTab(tabIndex).name;
+
+    auto* window = detachedPluginWindows.add(
+        new DetachedPluginWindow(
+            *this,
+            routingId,
+            tabName,
+            *instance,
+            std::move(detachedEditor)));
+
+    DebugLog::write(
+        "[DetachedEditor] opened | tabIndex="
+        + juce::String(tabIndex)
+        + " | routingId="
+        + routingId);
+
+    showTemporaryStatusMessage(
+        "Plugin editor opened in a new window");
+    refreshFromCore();
+
+    if (window != nullptr)
+        window->bringToFront();
+}
+
+void MainView::returnDetachedPluginEditor(int tabIndex)
+{
+    auto& core = processor.getCore();
+
+    if (! juce::isPositiveAndBelow(tabIndex, core.getNumTabs()))
+        return;
+
+    auto* instance = core.getPluginInstanceForTab(tabIndex);
+
+    if (findDetachedPluginWindow(instance) == nullptr)
+        return;
+
+    closeDetachedPluginWindowForInstance(
+        instance,
+        false,
+        false);
+
+    DebugLog::write(
+        "[DetachedEditor] returned to PHI | tabIndex="
+        + juce::String(tabIndex));
+
+    showTemporaryStatusMessage(
+        "Plugin editor returned to PHI");
+    refreshFromCore();
+}
+
+void MainView::requestCloseDetachedPluginWindow(
+    const juce::String& routingId)
+{
+    juce::MessageManager::callAsync(
+        [safe = juce::Component::SafePointer<MainView>(this),
+         routingId]
+        {
+            if (safe == nullptr)
+                return;
+
+            auto* window =
+                safe->findDetachedPluginWindow(routingId);
+
+            if (window == nullptr)
+                return;
+
+            safe->closeDetachedPluginWindowForInstance(
+                window->getPluginInstance(),
+                false,
+                true);
+        });
+}
+
+void MainView::closeDetachedPluginWindowForInstance(
+    juce::AudioPluginInstance* instance,
+    bool abandonWithoutCleanup,
+    bool refreshSelectedTab)
+{
+    if (instance == nullptr)
+        return;
+
+    const bool selectedTabUsesInstance =
+        processor.getCore().getMainPluginInstance()
+            == instance;
+
+    for (int i = detachedPluginWindows.size();
+         --i >= 0;)
+    {
+        auto* window = detachedPluginWindows[i];
+
+        if (window == nullptr
+            || window->getPluginInstance() != instance)
+        {
+            continue;
+        }
+
+        if (abandonWithoutCleanup)
+            window->abandonPluginEditor();
+
+        detachedPluginWindows.remove(i, true);
+
+        if (refreshSelectedTab
+            && selectedTabUsesInstance
+            && isShowing())
+        {
+            refreshFromCore();
+            repaint();
+        }
+
+        return;
+    }
+}
+
+void MainView::closeAllDetachedPluginWindows(
+    bool abandonWithoutCleanup)
+{
+    while (! detachedPluginWindows.isEmpty())
+    {
+        auto* window = detachedPluginWindows.getLast();
+
+        if (window != nullptr && abandonWithoutCleanup)
+            window->abandonPluginEditor();
+
+        detachedPluginWindows.remove(
+            detachedPluginWindows.size() - 1,
+            true);
+    }
+}
+
+void MainView::handleHostedPluginWillBeDisposed(
+    juce::AudioPluginInstance* instance,
+    bool abandonWithoutCleanup)
+{
+    JUCE_ASSERT_MESSAGE_MANAGER_IS_LOCKED
+
+    if (instance == nullptr)
+        return;
+
+    if (hostedEditor != nullptr
+        && hostedEditorInstance == instance)
+    {
+        if (abandonWithoutCleanup)
+        {
+            editorHolder.removeChildComponent(
+                hostedEditor.get());
+            hostedEditor.release();
+            hostedEditorInstance = nullptr;
+            pointerControl.clearTarget();
+            hidePointerEditOverlay();
+        }
+        else
+        {
+            clearHostedEditor();
+        }
+    }
+
+    closeDetachedPluginWindowForInstance(
+        instance,
+        abandonWithoutCleanup,
+        false);
+}
+
 void MainView::clearHostedEditor()
 {
     DebugLog::write("[PresetTeardown] 01 editor clear entered | hasEditor="
@@ -3770,10 +4119,11 @@ void MainView::clearHostedEditor()
     {
         DebugLog::writeAdvanced("[HostedEditor] clearing hosted editor");
 
-        if (auto* instance = processor.getCore().getMainPluginInstance())
+        if (hostedEditorInstance != nullptr)
         {
             DebugLog::write("[PresetTeardown] 02 editorBeingDeleted call begin");
-            instance->editorBeingDeleted(hostedEditor.get());
+            hostedEditorInstance->editorBeingDeleted(
+                hostedEditor.get());
             DebugLog::write("[PresetTeardown] 03 editorBeingDeleted call returned");
         }
         else
@@ -3789,6 +4139,8 @@ void MainView::clearHostedEditor()
         hostedEditor.reset();
         DebugLog::write("[PresetTeardown] 07 editor delete returned");
     }
+
+    hostedEditorInstance = nullptr;
 
     lastObservedHostedEditorWidth = 0;
     lastObservedHostedEditorHeight = 0;
@@ -4970,6 +5322,14 @@ void MainView::rebuildTabButtons()
                                                    tab.selected,
                                                    processor.getCore().tabNeedsAttention(i)));
 
+        if (isPluginEditorDetached(
+                processor.getCore()
+                    .getPluginInstanceForTab(i)))
+        {
+            button->setTooltip(
+                "Plugin editor is open in a separate window");
+        }
+
         button->onClick = [this, i]
         {
             selectTab(i);
@@ -5777,6 +6137,13 @@ void MainView::selectTab(int tabIndex)
 
     refreshFromCore();
 
+    if (auto* detachedWindow =
+            findDetachedPluginWindow(
+                core.getMainPluginInstance()))
+    {
+        detachedWindow->bringToFront();
+    }
+
     showTemporaryStatusMessage("Adjust sensitivity: "
                                + juce::String(core.getTabPointerAdjustSensitivity(tabIndex)));
 
@@ -5793,13 +6160,26 @@ void MainView::showTabContextMenuAsync(int tabIndex, juce::Component* anchor)
     const bool canReloadPlugin = juce::isPositiveAndBelow(tabIndex, core.getNumTabs())
                               && ! core.tabNeedsAttention(tabIndex)
                               && core.getTabModel().getTab(tabIndex).type != PluginSlotType::Empty;
+    auto* instance =
+        core.getPluginInstanceForTab(tabIndex);
+    const bool editorIsDetached =
+        isPluginEditorDetached(instance);
+    const bool canDetachEditor =
+        canReloadPlugin
+        && instance != nullptr
+        && (editorIsDetached || instance->hasEditor());
 
     juce::PopupMenu menu;
     menu.addItem(commandTabContextNewTab, "New Tab");
     menu.addItem(commandTabContextReplacePlugin, "Replace Plugin...");
     menu.addItem(commandTabContextReloadPlugin, "Reload Plugin", canReloadPlugin);
-    menu.addItem(commandTabContextClearTab, "Clear Tab");
+    menu.addItem(commandTabContextDetachPlugin,
+                 editorIsDetached
+                     ? "Return Plugin to PHI"
+                     : "Open Plugin in New Window",
+                 canDetachEditor);
     menu.addSeparator();
+    menu.addItem(commandTabContextClearTab, "Clear Tab");
     menu.addItem(commandTabContextCloseTab, "Close Tab", canCloseTab);
 
     juce::PopupMenu::Options opts;
@@ -5861,6 +6241,18 @@ void MainView::handleTabContextCommand(int commandId, int tabIndex)
             repaint();
             return;
         }
+
+        case commandTabContextDetachPlugin:
+            if (isPluginEditorDetached(
+                    core.getPluginInstanceForTab(tabIndex)))
+            {
+                returnDetachedPluginEditor(tabIndex);
+            }
+            else
+            {
+                detachPluginEditor(tabIndex);
+            }
+            return;
 
         case commandTabContextClearTab:
             DebugLog::write("[Tabs] context clear tab | tabIndex=" + juce::String(tabIndex));
@@ -5925,6 +6317,11 @@ void MainView::closeTab(int tabIndex)
 
     if (! juce::isPositiveAndBelow(tabIndex, core.getNumTabs()))
         return;
+
+    closeDetachedPluginWindowForInstance(
+        core.getPluginInstanceForTab(tabIndex),
+        false,
+        false);
 
     core.setSelectedTabIndex(tabIndex);
     core.getTabModel().selectTab(tabIndex);
@@ -7016,6 +7413,15 @@ void MainView::refreshHostedEditor()
         return;
     }
 
+    if (isPluginEditorDetached(instance))
+    {
+        DebugLog::writeAdvanced(
+            "[HostedEditor] selected plugin editor is detached");
+        resizeParentEditorToFitHostedPlugin();
+        updatePointerEditOverlay();
+        return;
+    }
+
     DebugLog::write("[PluginLoadDiagnostic] 83 hasEditor call begin");
     const bool hasPluginEditor = instance->hasEditor();
     DebugLog::write("[PluginLoadDiagnostic] 84 hasEditor call returned | hasEditor="
@@ -7027,11 +7433,22 @@ void MainView::refreshHostedEditor()
         return;
     }
 
+    if (instance->getActiveEditor() != nullptr)
+    {
+        DebugLog::write(
+            "[HostedEditor] editor refresh skipped | plugin already has an active editor");
+        resizeParentEditorToFitHostedPlugin();
+        updatePointerEditOverlay();
+        return;
+    }
+
     DebugLog::write("[PluginLoadDiagnostic] 90 createEditorAndMakeActive call begin");
     auto* createdEditor = instance->createEditorAndMakeActive();
     DebugLog::write("[PluginLoadDiagnostic] 91 createEditorAndMakeActive call returned | success="
                     + juce::String(createdEditor != nullptr ? "true" : "false"));
     hostedEditor.reset(createdEditor);
+    hostedEditorInstance =
+        hostedEditor != nullptr ? instance : nullptr;
     DebugLog::write("[PluginLoadDiagnostic] 92 editor ownership transfer returned");
 
     if (hostedEditor != nullptr)
@@ -7092,6 +7509,7 @@ void MainView::refreshHostedEditor()
 void MainView::clearHostedEditorForWindowClose()
 {
     dismissMidiAssignmentsPopup();
+    closeAllDetachedPluginWindows();
     clearHostedEditor();
     resized();
     repaint();
@@ -7269,10 +7687,23 @@ void MainView::refreshFromCore()
         if (hostedEditor == nullptr)
         {
             contentPlaceholder.setColour(juce::Label::textColourId, juce::Colours::lightgrey);
-            contentText = "Hosted plugin instantiated\n\n"
-                          "Slot: " + slot.getSlotName() + "\n"
-                          "Status: " + slot.getStatusText() + "\n\n"
-                          "This plugin does not provide an editor.";
+
+            if (isPluginEditorDetached(
+                    core.getMainPluginInstance()))
+            {
+                contentText =
+                    "Plugin editor is open in a separate window\n\n"
+                    "Right-click this tab and choose Return Plugin to PHI "
+                    "to place it back here.\n\n"
+                    "Pointer Control is unavailable while detached.";
+            }
+            else
+            {
+                contentText = "Hosted plugin instantiated\n\n"
+                              "Slot: " + slot.getSlotName() + "\n"
+                              "Status: " + slot.getStatusText() + "\n\n"
+                              "This plugin does not provide an editor.";
+            }
         }
         else
         {

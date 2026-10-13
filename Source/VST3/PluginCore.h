@@ -195,7 +195,15 @@ public:
     void resetForNewPreset();
 
     juce::AudioPluginInstance* getMainPluginInstance() const;
+    juce::AudioPluginInstance* getPluginInstanceForTab(int tabIndex) const;
     juce::String getMainSlotPluginPath() const;
+
+    using HostedPluginWillBeDisposedCallback =
+        std::function<void(juce::AudioPluginInstance* instance,
+                           bool abandonWithoutCleanup)>;
+
+    void setHostedPluginWillBeDisposedCallback(
+        HostedPluginWillBeDisposedCallback callback);
 
     void getMainSlotPluginState(juce::MemoryBlock& destData) const;
     bool setMainSlotPluginState(const void* data, int sizeInBytes);
@@ -601,6 +609,8 @@ private:
     std::array<float, 128> macroCurrentValues {};
 
     PointerAutomationCallback pointerAutomationCallback;
+    HostedPluginWillBeDisposedCallback
+        hostedPluginWillBeDisposedCallback;
     std::atomic<juce::uint32> pointerAutomationCaptureExpiryMs { 0 };
     std::atomic<bool> applyingMacroValueFromHost { false };
     std::atomic<bool> applyingSeqwencerBridgeValue { false };

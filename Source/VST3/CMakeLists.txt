@@ -1,7 +1,7 @@
 cmake_minimum_required(VERSION 3.22)
 
 # ── VST3 Plugin Version ────────────────────────────────────────────────────────
-set(POLYHOST_VERSION "3.0.38")
+set(POLYHOST_VERSION "3.1.1")
 
 project(PolyHostInterface VERSION ${POLYHOST_VERSION} LANGUAGES C CXX)
 
@@ -48,6 +48,27 @@ juce_add_plugin(PolyHostPlugin
 
 juce_generate_juce_header(PolyHostPlugin)
 
+# Keep the established FX plug-in identity above unchanged so existing DAW
+# projects continue to resolve it.  The Synth edition is a separate VST3 class
+# with its own product name, bundle ID and four-character plug-in code.
+juce_add_plugin(PolyHostSynthPlugin
+    COMPANY_NAME "sl23"
+    BUNDLE_ID "com.sl23.polyhostinterfacesynth"
+    IS_SYNTH TRUE
+    NEEDS_MIDI_INPUT TRUE
+    NEEDS_MIDI_OUTPUT TRUE
+    IS_MIDI_EFFECT FALSE
+    EDITOR_WANTS_KEYBOARD_FOCUS FALSE
+    COPY_PLUGIN_AFTER_BUILD FALSE
+    PLUGIN_MANUFACTURER_CODE Sl23
+    PLUGIN_CODE Phis
+    FORMATS VST3
+    VST3_CATEGORIES Instrument Synth
+    PRODUCT_NAME "PolyHostInterface_Synth"
+)
+
+juce_generate_juce_header(PolyHostSynthPlugin)
+
 juce_add_binary_data(PolyHostAssets
     HEADER_NAME PolyHostAssets.h
     NAMESPACE PolyHostAssets
@@ -55,7 +76,7 @@ juce_add_binary_data(PolyHostAssets
         "${CMAKE_CURRENT_LIST_DIR}/../FluentSystemIcons-Regular.ttf"
 )
 
-target_sources(PolyHostPlugin PRIVATE
+set(POLYHOST_PLUGIN_SOURCES
     AppSettings.cpp
     AppSettings.h
     PluginProcessor.cpp
@@ -100,50 +121,58 @@ target_sources(PolyHostPlugin PRIVATE
     DebugLog.h
 )
 
-target_compile_definitions(PolyHostPlugin PRIVATE
-    POLYHOST_VERSION_STRING="${POLYHOST_VERSION}"
-    JUCE_WEB_BROWSER=0
-    JUCE_USE_CURL=0
-    JUCE_MODAL_LOOPS_PERMITTED=1
-    JUCE_VST3_CAN_REPLACE_VST2=0
+foreach(POLYHOST_PLUGIN_TARGET PolyHostPlugin PolyHostSynthPlugin)
+    target_sources(${POLYHOST_PLUGIN_TARGET} PRIVATE
+        ${POLYHOST_PLUGIN_SOURCES}
+    )
 
-    JUCE_PLUGINHOST_VST3=1
-    JUCE_PLUGINHOST_AU=0
-    JUCE_PLUGINHOST_LV2=0
+    target_compile_definitions(${POLYHOST_PLUGIN_TARGET} PRIVATE
+        POLYHOST_VERSION_STRING="${POLYHOST_VERSION}"
+        JUCE_WEB_BROWSER=0
+        JUCE_USE_CURL=0
+        JUCE_MODAL_LOOPS_PERMITTED=1
+        JUCE_VST3_CAN_REPLACE_VST2=0
 
-    # VST2 -- enabled automatically if _Tools/vstsdk2.4 is present
-    $<$<BOOL:${VST2_ENABLED}>:JUCE_PLUGINHOST_VST=1>
-    $<$<BOOL:${VST2_ENABLED}>:VST2_SDK_ROOT="${VST2_SDK_PATH}">
+        JUCE_PLUGINHOST_VST3=1
+        JUCE_PLUGINHOST_AU=0
+        JUCE_PLUGINHOST_LV2=0
 
-    JucePlugin_Build_VST=0
-    JucePlugin_Build_VST3=1
-    JucePlugin_Build_AU=0
-    JucePlugin_Build_AUv3=0
-    JucePlugin_Build_AAX=0
-    JucePlugin_Build_Standalone=0
-    JucePlugin_Build_Unity=0
-    JucePlugin_Build_LV2=0
-)
+        # VST2 -- enabled automatically if _Tools/vstsdk2.4 is present
+        $<$<BOOL:${VST2_ENABLED}>:JUCE_PLUGINHOST_VST=1>
+        $<$<BOOL:${VST2_ENABLED}>:VST2_SDK_ROOT="${VST2_SDK_PATH}">
 
-if(VST2_ENABLED)
-    target_include_directories(PolyHostPlugin PRIVATE "${VST2_SDK_PATH}")
-endif()
+        JucePlugin_Build_VST=0
+        JucePlugin_Build_VST3=1
+        JucePlugin_Build_AU=0
+        JucePlugin_Build_AUv3=0
+        JucePlugin_Build_AAX=0
+        JucePlugin_Build_Standalone=0
+        JucePlugin_Build_Unity=0
+        JucePlugin_Build_LV2=0
+    )
 
-target_link_libraries(PolyHostPlugin
-    PRIVATE
-        PolyHostAssets
-        juce::juce_audio_basics
-        juce::juce_audio_devices
-        juce::juce_audio_formats
-        juce::juce_audio_processors
-        juce::juce_audio_utils
-        juce::juce_core
-        juce::juce_data_structures
-        juce::juce_events
-        juce::juce_graphics
-        juce::juce_gui_basics
-        juce::juce_gui_extra
-    PUBLIC
-        juce::juce_recommended_config_flags
-        juce::juce_recommended_warning_flags
-)
+    if(VST2_ENABLED)
+        target_include_directories(${POLYHOST_PLUGIN_TARGET} PRIVATE
+            "${VST2_SDK_PATH}"
+        )
+    endif()
+
+    target_link_libraries(${POLYHOST_PLUGIN_TARGET}
+        PRIVATE
+            PolyHostAssets
+            juce::juce_audio_basics
+            juce::juce_audio_devices
+            juce::juce_audio_formats
+            juce::juce_audio_processors
+            juce::juce_audio_utils
+            juce::juce_core
+            juce::juce_data_structures
+            juce::juce_events
+            juce::juce_graphics
+            juce::juce_gui_basics
+            juce::juce_gui_extra
+        PUBLIC
+            juce::juce_recommended_config_flags
+            juce::juce_recommended_warning_flags
+    )
+endforeach()

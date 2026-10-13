@@ -109,6 +109,7 @@ public:
     bool isPointerEditGestureActive() const;
 
 private:
+    class DetachedPluginWindow;
     class PointerEditOverlayHost;
     class StatusMetersComponent;
 
@@ -551,6 +552,7 @@ private:
         commandTabContextCloseTab = 2302,
         commandTabContextReplacePlugin = 2303,
         commandTabContextReloadPlugin = 2304,
+        commandTabContextDetachPlugin = 2305,
         commandPointerControlSettings = 2400,
         commandEnableDebugLogging = 2500,
         commandEnableAdvancedDebugLogging = 2501,
@@ -586,6 +588,25 @@ private:
     void refreshDirtyUiOnly();
     void refreshHostedEditor();
     void clearHostedEditor();
+    void detachPluginEditor(int tabIndex);
+    void returnDetachedPluginEditor(int tabIndex);
+    void requestCloseDetachedPluginWindow(
+        const juce::String& routingId);
+    void closeDetachedPluginWindowForInstance(
+        juce::AudioPluginInstance* instance,
+        bool abandonWithoutCleanup,
+        bool refreshSelectedTab);
+    void closeAllDetachedPluginWindows(
+        bool abandonWithoutCleanup = false);
+    void handleHostedPluginWillBeDisposed(
+        juce::AudioPluginInstance* instance,
+        bool abandonWithoutCleanup);
+    DetachedPluginWindow* findDetachedPluginWindow(
+        juce::AudioPluginInstance* instance) const;
+    DetachedPluginWindow* findDetachedPluginWindow(
+        const juce::String& routingId) const;
+    bool isPluginEditorDetached(
+        juce::AudioPluginInstance* instance) const;
     void loadPluginIntoMainSlot();
     void handlePresetSelection();
     void resizeParentEditorToFitHostedPlugin();
@@ -712,6 +733,8 @@ private:
 
     juce::Component editorHolder;
     std::unique_ptr<juce::AudioProcessorEditor> hostedEditor;
+    juce::AudioPluginInstance* hostedEditorInstance = nullptr;
+    juce::OwnedArray<DetachedPluginWindow> detachedPluginWindows;
     int lastObservedHostedEditorWidth = 0;
     int lastObservedHostedEditorHeight = 0;
     juce::uint32 lastHostedEditorAutoResizeMs = 0;
