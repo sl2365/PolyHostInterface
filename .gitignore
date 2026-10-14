@@ -1,0 +1,18 @@
+# Local backup files
+- Backup/
+
+# Compiler / CMake generated build folders
+build-APP/
+build-APP-32/
+build-VST3/
+
+# Built distributables
+dist/
+
+# Temporary placeholder files
+- Empty.cpp
+- Empty.h
+build-VST3-ViaColorConsole.bat
+
+# Generated logs
+Results.log
