@@ -788,7 +788,7 @@ void MidiRecordingController::stopRecordingInternal(const juce::String& reason)
     {
         const juce::ScopedLock stateScopedLock(stateLock);
         completedFile = activeFile;
-        activeFile = {};
+        activeFile = juce::File{};
         statusMessage = "Finalising recording...";
     }
 

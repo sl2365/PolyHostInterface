@@ -9,7 +9,7 @@
 [![Commits Since Release](https://img.shields.io/github/commits-since/sl2365/PolyHostInterface/latest?style=for-the-badge-square&logo=github&logoColor=white&color=green)](https://github.com/sl2365/PolyHostInterface/activity)
 [![Last Commit](https://img.shields.io/github/last-commit/sl2365/PolyHostInterface?style=for-the-badge-square&logo=github&logoColor=white&color=green)](https://github.com/sl2365/PolyHostInterface/activity)
 
-A lightweight, standalone tabbed VST2, VST3, (CLAP - Later when JUCE 9 released) plugin host for Windows.
+A lightweight, standalone tabbed VST2 and VST3 plugin host for Windows. CLAP support is planned once JUCE provides full native support.
 Play synths and route FX chains, driven by any MIDI device.
 Fully portable: stores all settings next to the exe/vst3, touches nothing else on the system.
 
@@ -405,9 +405,10 @@ One-time installs (unavoidable for C++)
 	Extract it so the structure is:
 	Projects\_Tools\cmake\_x.x.x\bin\cmake.exe
 
-### 3. [Install JUCE Portable](https://github.com/juce-framework/JUCE/releases) (8.0.15)
+### 3. [Install JUCE Portable](https://github.com/juce-framework/JUCE/releases) (9.0.4)
 	Download the required version: 'juce-x.x.x-windows.zip'
 	Extract to: _Projects\_Tools\JUCE\_x.x.x
+	JUCE 9 modules are available under AGPLv3 or the commercial JUCE 9 licence. Review the JUCE 9 licence before distributing PHI.
 
 	The standalone PHI64 and PHI32 builds enable JUCE's bundled ASIO support. Before distributing an ASIO-enabled build, comply with either GPLv3 or Steinberg's proprietary ASIO SDK licence, as described in `JUCE\modules\juce_audio_devices\native\asio\LICENSE.txt`.
 
@@ -476,12 +477,13 @@ Do not change either `CMakeLists.txt` file merely because `cmake.exe` moved. The
 Do not overwrite or delete the previous JUCE version. Extract the new complete JUCE source into its own folder, for example:
 
 ```text
-_Tools\JUCE\_9.0.0\CMakeLists.txt
+_Tools\JUCE\_9.0.4\CMakeLists.txt
 ```
 
-Then make the following change in both files:
+Then make the following change in all three files:
 
 - `Source\APP\CMakeLists.txt`
+- `Source\APP32\CMakeLists.txt`
 - `Source\VST3\CMakeLists.txt`
 
 Old example:
@@ -493,10 +495,10 @@ set(JUCE_SHARED_PATH "${SHARED_TOOLS_DIR}/JUCE/_8.0.15")
 New example:
 
 ```cmake
-set(JUCE_SHARED_PATH "${SHARED_TOOLS_DIR}/JUCE/_9.0.0")
+set(JUCE_SHARED_PATH "${SHARED_TOOLS_DIR}/JUCE/_9.0.4")
 ```
 
-The build batch files do not need changing merely because JUCE moved. The two `CMakeLists.txt` files select the JUCE source folder.
+The build batch files do not need changing merely because JUCE moved. The three `CMakeLists.txt` files select the JUCE source folder.
 
 ## Safely testing an update
 

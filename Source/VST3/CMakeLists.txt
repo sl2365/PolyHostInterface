@@ -1,7 +1,7 @@
 cmake_minimum_required(VERSION 3.22)
 
 # ── VST3 Plugin Version ────────────────────────────────────────────────────────
-set(POLYHOST_VERSION "3.1.1")
+set(POLYHOST_VERSION "3.2.0")
 
 project(PolyHostInterface VERSION ${POLYHOST_VERSION} LANGUAGES C CXX)
 
@@ -16,7 +16,7 @@ add_executable(PhiHostedMidiRoutingTests
 target_compile_features(PhiHostedMidiRoutingTests PRIVATE cxx_std_17)
 
 set(SHARED_TOOLS_DIR "${CMAKE_SOURCE_DIR}/../../../_Tools")
-set(JUCE_SHARED_PATH "${SHARED_TOOLS_DIR}/JUCE/_8.0.15")
+set(JUCE_SHARED_PATH "${SHARED_TOOLS_DIR}/JUCE/_9.0.4")
 set(VST2_SDK_PATH "${SHARED_TOOLS_DIR}/vstsdk2.4")
 
 add_subdirectory("${JUCE_SHARED_PATH}" "${CMAKE_BINARY_DIR}/JUCE")

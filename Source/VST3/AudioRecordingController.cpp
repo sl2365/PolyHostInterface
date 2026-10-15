@@ -283,7 +283,7 @@ void AudioRecordingController::stopRecordingInternal(const juce::String& reason)
         const juce::ScopedLock stateScopedLock(stateLock);
         writerToClose = std::move(threadedWriter);
         completedFile = activeFile;
-        activeFile = {};
+        activeFile = juce::File{};
         statusMessage = "Finalising recording...";
     }
 
