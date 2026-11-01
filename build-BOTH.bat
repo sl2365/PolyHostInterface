@@ -50,6 +50,9 @@ set "CMAKE_GENERATOR_TOOLSET="
 call "%~dp0build-VST3.bat" --run-build
 if errorlevel 1 exit /b 1
 
+call "%~dp0build-VST3-32.bat" --run-build
+if errorlevel 1 exit /b 1
+
 call "%~dp0build-APP.bat" --run-build
 if errorlevel 1 exit /b 1
 

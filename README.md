@@ -1,13 +1,13 @@
 # Poly Host Interface
 
-<div align="center">
-
 [![Release](https://img.shields.io/github/v/release/sl2365/PolyHostInterface?style=for-the-badge-square&logo=github&logoColor=white&color=purple)](https://github.com/sl2365/PolyHostInterface/releases/latest/download/PolyHostInterface.rar)
 [![Release Date](https://img.shields.io/github/release-date/sl2365/PolyHostInterface?style=for-the-badge-square&logo=github&logoColor=white&color=yellow)](https://github.com/sl2365/PolyHostInterface/releases)
+
 [![Latest Asset Downloads](https://img.shields.io/github/downloads/sl2365/PolyHostInterface/latest/PolyHostInterface.rar?style=for-the-badge-square&logo=github&logoColor=white&label=downloads-latest&displayAssetName=false&color=blue)](https://github.com/sl2365/PolyHostInterface/releases/latest)
 [![Total Downloads](https://img.shields.io/github/downloads/sl2365/PolyHostInterface/total?style=for-the-badge-square&logo=github&logoColor=white&label=downloads-total&color=blue)](https://github.com/sl2365/PolyHostInterface/releases)
 
-</div>
+[![Commits Since Release](https://img.shields.io/github/commits-since/sl2365/PolyHostInterface/latest?style=for-the-badge-square&logo=github&logoColor=white&color=green)](https://github.com/sl2365/PolyHostInterface/activity)
+[![Last Commit](https://img.shields.io/github/last-commit/sl2365/PolyHostInterface?style=for-the-badge-square&logo=github&logoColor=white&color=green)](https://github.com/sl2365/PolyHostInterface/activity)
 
 A lightweight, standalone tabbed VST2 and VST3 plugin host for Windows. CLAP support is planned once JUCE provides full native support.
 Play synths and route FX chains, driven by any MIDI device.
@@ -23,7 +23,7 @@ See the demos at the bottom of the page for a few gifs of the Pointer Control in
 
 | Feature | Status - Some features only apply to APP or VST3 |
 |---|---|
-| VST2/3 x32 | ✅ Working - Bridging proved far too problematic. Added a standalone that has 32bit plugin support. There will NOT be a PHI32 VST3 version, unless I get enough request for it. |
+| VST2/3 x32 | ✅ Working - PHI32 standalone plus a Synth32 VST3 edition for FL Studio and other Windows hosts that support bridged 32-bit VST3 plug-ins. |
 | VST2 x64 | ✅ Working - Requires Steinberg VST2 SDK to build — see below |
 | VST3 x64 | ✅ Working - Full support for Shell VST's|
 | CLAP x64 | ⚠️ Once JUCE natively supports CLAP, then it will be added to PHI |
@@ -54,10 +54,13 @@ PolyHostInterface hosts multiple plugins in a tabbed workflow, allowing quick sw
 
 Right-click any loaded tab and choose **Open Plugin in New Window** to keep that plug-in editor visible while working with another tab. Multiple plug-in editors can be detached at the same time. Detaching moves only the editor: the same live plug-in instance remains in its existing Simple or Advanced routing, with its audio, MIDI, automation and preset state unchanged. Close the detached window, or right-click its tab and choose **Return Plugin to PHI**, to place its editor back in the main PHI window. Pointer Control is intentionally unavailable while an editor is detached because it targets the editor embedded in PHI's main window.
 
-The VST3 build produces two editions with the same PHI features and compatible PHI presets:
+Each tab has a bypass LED on its left edge. Click the LED to toggle that tab's bypass state; bypassed or solo-muted tabs use dimmed text. Hover over a tab to reveal its close button on the right edge.
+
+PHI provides three VST3 editions:
 
 - `PolyHostInterface.vst3` is the established FX edition. Its identity remains unchanged so existing DAW projects continue to find it.
 - `PolyHostInterface_Synth.vst3` is the instrument edition for DAW synth/instrument slots.
+- `PolyHostInterface_Synth32.vst3` is the isolated 32-bit instrument edition. It uses `Presets32` and its own plug-in identity, and is intended for Windows hosts such as FL Studio that can bridge 32-bit VST3 plug-ins. There is no 32-bit FX edition.
 
 ### Routing View
 The Routing View provides a structured overview of all tabs in the current preset, including:
@@ -77,6 +80,8 @@ The Routing toolbar button turns blue while either Simple or Advanced Routing is
 The Macro Mappings toolbar button turns blue while Macro Mappings is open.
 
 Advanced Routing shows the main audio input/output of each hosted plug-in on the module's left/right edges. Additional enabled input buses appear across the top and additional output buses across the bottom. Normal modules retain their compact width; a module widens automatically only when a long row of ports needs extra spacing. Hover a blue port to see its bus name and channel count. Connections are directional: an output can connect only to an input.
+
+In standalone PHI, the Advanced Outputs module shows only the stereo pairs currently available from the selected audio device: MAIN is the first pair, followed by as many AUX pairs as the device exposes, up to AUX 16. Connections to temporarily unavailable AUX pairs remain saved and reappear if those outputs become available again. PHI VST3 continues to expose MAIN plus AUX 1-16 to its outer host.
 
 Advanced MIDI routing is separate from the audio graph. Orange ports and cables carry MIDI, while blue cables carry audio. The green input module supplies host/controller MIDI, and every plug-in module has an orange MIDI input and output. This allows separate arpeggiators or MIDI processors to feed different instruments. Bypassing an Advanced module stops that plug-in processing and passes its unprocessed incoming MIDI onward. Simple Routing retains its automatic top-to-bottom MIDI behaviour.
 
@@ -417,7 +422,7 @@ One-time installs (unavoidable for C++)
 
 ### 5. Build
 	Double-click build-BOTH.bat from the project root.
-	The finished EXE/VST3 files appear in `dist`, including `PolyHostInterface.vst3` and `PolyHostInterface_Synth.vst3`.
+	The finished EXE/VST3 files appear in `dist`, including `PolyHostInterface.vst3`, `PolyHostInterface_Synth.vst3` and `PolyHostInterface_Synth32.vst3`.
 
 ## Opening a Plugin in PHI Standalone
 1. Right-click any vst2, vst3 or clap file in File Explorer
@@ -454,7 +459,12 @@ Do not overwrite or delete the previous CMake version. Extract the new version i
 _Tools\cmake\_4.4.2\bin\cmake.exe
 ```
 
-Then make the following change in both `build-APP.bat` and `build-VST3.bat`.
+Then make the same change in all four build scripts:
+
+- `build-APP.bat`
+- `build-APP-32.bat`
+- `build-VST3.bat`
+- `build-VST3-32.bat`
 
 Old example:
 
@@ -468,9 +478,9 @@ New example:
 set "CMAKE=%TOOLS%\cmake\_4.4.2\bin\cmake.exe"
 ```
 
-Update any explanatory CMake paths in those batch files as well. `build-BOTH.bat` does not need changing because it only calls the other two batch files.
+Update any explanatory CMake paths in those batch files as well. `build-BOTH.bat` does not need changing because it only calls the individual build scripts.
 
-Do not change either `CMakeLists.txt` file merely because `cmake.exe` moved. The batch files select the CMake executable.
+Do not change any `CMakeLists.txt` file merely because `cmake.exe` moved. The batch files select the CMake executable.
 
 ## Changing the JUCE version used by PHI
 
@@ -480,11 +490,12 @@ Do not overwrite or delete the previous JUCE version. Extract the new complete J
 _Tools\JUCE\_9.0.4\CMakeLists.txt
 ```
 
-Then make the following change in all three files:
+Then make the following change in all four files:
 
 - `Source\APP\CMakeLists.txt`
 - `Source\APP32\CMakeLists.txt`
 - `Source\VST3\CMakeLists.txt`
+- `Source\VST3-32\CMakeLists.txt`
 
 Old example:
 
@@ -498,7 +509,7 @@ New example:
 set(JUCE_SHARED_PATH "${SHARED_TOOLS_DIR}/JUCE/_9.0.4")
 ```
 
-The build batch files do not need changing merely because JUCE moved. The three `CMakeLists.txt` files select the JUCE source folder.
+The build batch files do not need changing merely because JUCE moved. The four `CMakeLists.txt` files select the JUCE source folder.
 
 ## Safely testing an update
 
@@ -506,8 +517,8 @@ The build batch files do not need changing merely because JUCE moved. The three 
 2. Add the new CMake or JUCE version in a separate versioned folder.
 3. Change only PHI's paths to select the new version.
 4. In the PHI Project Root, double-click `build-BOTH.bat`.
-5. Confirm both the standalone application and VST3 build successfully.
-6. Test the standalone application and PHI VST3 before updating other projects.
+5. Confirm both standalone applications and all VST3 editions build successfully.
+6. Test the standalone applications and PHI VST3 editions before updating other projects.
 7. If the build fails, change the path back to the previous version. No tool files need to be moved or restored.
 
 The PHI batch files remove their previous build folders before configuring, so a normal `build-BOTH.bat` run is sufficient after changing a tool path.
