@@ -28,13 +28,14 @@ See the demos at the bottom of the page for a few gifs of the Pointer Control in
 | Feature | Status - Some features only apply to APP or VST3 |
 |---|---|
 | VST2/3 x32 | ✅ Working - PHI32 standalone plus a Synth32 VST3 edition for FL Studio and other Windows hosts that support bridged 32-bit VST3 plug-ins. |
+| VST2 x32 program/bank browser | ✅ Working - Browse internal programs and load/save standard FXP programs or FXB banks from PHI32 standalone and Synth32 VST3. |
 | VST2 x64 | ✅ Working - Requires Steinberg VST2 SDK to build — see below |
 | VST3 x64 | ✅ Working - Full support for Shell VST's|
 | CLAP x64 | ⚠️ Once JUCE natively supports CLAP, then it will be added to PHI |
 | MIDI 1.0 | ✅ Working |
 | MIDI 2.0 (Windows MIDI Services) | ⚠️ Requires JUCE 8+ and Windows 11 - planned |
 | Tabbed interface (Synth: parallel + FX: serial) | ✅ Working |
-| Detachable plug-in editor windows | ✅ Working - right-click a tab to open its editor in a separate window |
+| Detachable plug-in editor windows | ✅ Working - right-click a tab to open its editor in a separate window; detached editors remain above their owning PHI/DAW window without becoming globally always-on-top |
 | Tab-ordering = FX routing order | ✅ Working |
 | Simple and Advanced Modular Routing | ✅ Working |
 | Portable settings (no AppData/registry) | ✅ Working |
@@ -56,9 +57,11 @@ See the demos at the bottom of the page for a few gifs of the Pointer Control in
 ### Tabbed Plugin Hosting
 PolyHostInterface hosts multiple plugins in a tabbed workflow, allowing quick switching between synth and FX tabs inside one container plugin.
 
-Right-click any loaded tab and choose **Open Plugin in New Window** to keep that plug-in editor visible while working with another tab. Multiple plug-in editors can be detached at the same time. Detaching moves only the editor: the same live plug-in instance remains in its existing Simple or Advanced routing, with its audio, MIDI, automation and preset state unchanged. Close the detached window, or right-click its tab and choose **Return Plugin to PHI**, to place its editor back in the main PHI window. Pointer Control is intentionally unavailable while an editor is detached because it targets the editor embedded in PHI's main window.
+Right-click any loaded tab and choose **Open Plugin in New Window** to keep that plug-in editor visible while working with another tab. Multiple plug-in editors can be detached at the same time. On Windows, detached editors remain above their owning PHI or DAW window while still allowing unrelated applications to cover them. Detaching moves only the editor: the same live plug-in instance remains in its existing Simple or Advanced routing, with its audio, MIDI, automation and preset state unchanged. Close the detached window, or right-click its tab and choose **Return Plugin to PHI**, to place its editor back in the main PHI window. Pointer Control is intentionally unavailable while an editor is detached because it targets the editor embedded in PHI's main window.
 
-Each tab has a bypass LED on its left edge. Click the LED to toggle that tab's bypass state; bypassed or solo-muted tabs use dimmed text. Hover over a tab to reveal its close button on the right edge.
+The two 32-bit PHI editions provide a dedicated **Plugin Presets** toolbar button for the selected hosted VST2 plug-in. It opens a movable PHI-owned browser without moving or resizing the hosted editor. On Windows, the browser remains above its owning PHI or DAW window without being globally always-on-top. It stays open while programs are selected or searched and closes only with its Close button or title-bar X. The browser lists and searches the plug-in's internal programs, provides Previous and Next controls, and loads or saves standard VST2 `.fxp` programs and `.fxb` banks. PointerControl input is suspended while the browser or its file dialogue is open and resumes when it closes. PHI session presets remain separate and continue to store the complete tab, routing and plug-in state.
+
+Each tab has a bypass LED on its left edge. Click the LED to toggle that tab's bypass state; bypassed or solo-muted tabs use dimmed text. Hover over a tab to reveal its close button on the right edge; the `X` turns rose when directly hovered.
 
 PHI provides three VST3 editions:
 
