@@ -15,7 +15,7 @@
 
 A lightweight, standalone tabbed VST2 and VST3 plugin host for Windows. CLAP support is planned once JUCE provides full native support.
 Play synths and route FX chains, driven by any MIDI device.
-Fully portable: stores all settings next to the exe/vst3, touches nothing else on the system.
+Fully portable: stores all PHI data in `PolyHostInterface_Data` beside the exe/vst3 and touches nothing else on the system.
 
 I always liked tools like TobyBear's MiniHost, SaviHost and Tone2's NanoHost. But wanted something that combines all of them. A quick jamming tool that can open multiple plugin formats. I aim to add support for more formats. This is a tool that doesn't yet exist elsewhere in a small package like this, at least not as one that you can use file-associations with.
 
@@ -377,10 +377,18 @@ _Projects\PolyHost\              ← your project root
 │   	└── VST3 Plugin Source files here...
 │
 │
-├── dist\                        ← build output — PolyHost.exe/PolyHost VST3 lands here
-└── [PolyHost.exe/.vst3]\
-    └── Settings\                ← created at runtime, settings stored here
-        └── polyhost.xml
+└── dist\                        ← build output — PHI EXE/VST3 files land here
+    ├── [PolyHost.exe/.vst3]
+    └── PolyHostInterface_Data\  ← all portable PHI data shared by every edition
+        ├── Settings\
+        │   ├── settings.xml
+        │   ├── FluentSystemIcons-Regular.ttf
+        │   └── FluentSystemIcons-LICENSE.txt
+        ├── Presets\
+        ├── Presets32\
+        ├── PointerMaps\
+        ├── Recordings\
+        └── PluginPresets\
 
 
 
@@ -430,6 +438,8 @@ One-time installs (unavoidable for C++)
 ### 5. Build
 	Double-click build-BOTH.bat from the project root.
 	The finished EXE/VST3 files appear in `dist`, including `PolyHostInterface.vst3`, `PolyHostInterface_Synth.vst3` and `PolyHostInterface_Synth32.vst3`.
+	The build scripts copy the shared icon font and its licence to `dist\PolyHostInterface_Data\Settings`; the font is loaded from there at runtime instead of being embedded separately in every EXE and VST3.
+	On first launch, PHI moves legacy root-level `Settings`, `Presets`, `Presets32`, `PointerMaps`, `Recordings` and `PluginPresets` folders into `PolyHostInterface_Data`. Existing contents are preserved, including separate 32-bit presets.
 
 ## Opening a Plugin in PHI Standalone
 1. Right-click any vst2, vst3 or clap file in File Explorer

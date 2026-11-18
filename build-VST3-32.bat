@@ -159,9 +159,17 @@ if errorlevel 1 (
     exit /b 1
 )
 
-copy /Y "%ROOT%Source\FluentSystemIcons-LICENSE.txt" "%DIST_DIR%\FluentSystemIcons-LICENSE.txt" >nul
+if not exist "%DIST_DIR%\PolyHostInterface_Data\Settings" mkdir "%DIST_DIR%\PolyHostInterface_Data\Settings"
+copy /Y "%ROOT%Source\FluentSystemIcons-Regular.ttf" "%DIST_DIR%\PolyHostInterface_Data\Settings\FluentSystemIcons-Regular.ttf" >nul
 if errorlevel 1 (
-    echo ERROR: Failed to copy the Fluent System Icons licence to dist.
+    echo ERROR: Failed to copy the shared icon font to PolyHostInterface_Data\Settings.
+    if not defined PHI_BUILD_CAPTURE pause
+    exit /b 1
+)
+
+copy /Y "%ROOT%Source\FluentSystemIcons-LICENSE.txt" "%DIST_DIR%\PolyHostInterface_Data\Settings\FluentSystemIcons-LICENSE.txt" >nul
+if errorlevel 1 (
+    echo ERROR: Failed to copy the Fluent System Icons licence to PolyHostInterface_Data\Settings.
     if not defined PHI_BUILD_CAPTURE pause
     exit /b 1
 )
