@@ -3288,55 +3288,9 @@ MainView::MainView(PolyHostPluginProcessor& processorIn,
 
     routingView.onMove = [this](int fromIndex, int toIndex)
     {
-        auto& core = processor.getCore();
-
-        while (manualBypassStates.size() < core.getNumTabs())
-            manualBypassStates.add(false);
-
-        if (core.moveTab(fromIndex, toIndex))
-        {
-            if (juce::isPositiveAndBelow(
-                    fromIndex,
-                    manualBypassStates.size())
-                && juce::isPositiveAndBelow(
-                    toIndex,
-                    manualBypassStates.size()))
-            {
-                const bool movedBypassState =
-                    manualBypassStates[fromIndex];
-
-                manualBypassStates.remove(fromIndex);
-                manualBypassStates.insert(
-                    toIndex,
-                    movedBypassState);
-            }
-
-            for (int i = 0; i < soloedTabIndices.size(); ++i)
-            {
-                const int soloIndex = soloedTabIndices[i];
-
-                if (soloIndex == fromIndex)
-                {
-                    soloedTabIndices.set(i, toIndex);
-                }
-                else if (fromIndex < toIndex
-                         && soloIndex > fromIndex
-                         && soloIndex <= toIndex)
-                {
-                    soloedTabIndices.set(i, soloIndex - 1);
-                }
-                else if (fromIndex > toIndex
-                         && soloIndex >= toIndex
-                         && soloIndex < fromIndex)
-                {
-                    soloedTabIndices.set(i, soloIndex + 1);
-                }
-            }
-
-            applyEffectiveBypassStates();
-            refreshFromCore();
-            repaint();
-        }
+        moveTabAndAssociatedState(fromIndex,
+                                  toIndex,
+                                  false);
     };
 
     routingView.onToggleBypass = [this](int tabIndex)
@@ -4279,6 +4233,9 @@ bool MainView::keyPressed(const juce::KeyPress& key)
 
 void MainView::timerCallback()
 {
+    if (draggedTabIndex >= 0)
+        updateTabDragPosition();
+
     processor.sampleSuspensionDiagnostics();
 
     const int standaloneOutputPairCount =
@@ -5903,6 +5860,7 @@ void MainView::rebuildTabButtons()
 {
     const auto previousViewPosition = tabButtonsViewport.getViewPosition();
 
+    cancelTabDrag();
     tabButtons.clear();
 
     auto& core = processor.getCore();
@@ -5959,6 +5917,16 @@ void MainView::rebuildTabButtons()
                     });
             };
 
+        button->onDrag = [this, i](const juce::MouseEvent& event)
+        {
+            updateTabDrag(i, event);
+        };
+
+        button->onDragEnd = [this, i](const juce::MouseEvent& event)
+        {
+            finishTabDrag(i, event);
+        };
+
         tabButtonsContainer.addAndMakeVisible(button);
     }
 
@@ -5970,6 +5938,225 @@ void MainView::rebuildTabButtons()
     tabButtonsViewport.setViewPosition(previousViewPosition);
 
     updateTabScrollButtonState();
+}
+
+void MainView::updateTabDrag(int sourceIndex,
+                             const juce::MouseEvent& event)
+{
+    if (! juce::isPositiveAndBelow(sourceIndex,
+                                   tabButtons.size()))
+    {
+        cancelTabDrag();
+        return;
+    }
+
+    if (draggedTabIndex != sourceIndex)
+    {
+        cancelTabDrag();
+        draggedTabIndex = sourceIndex;
+    }
+
+    tabDragScreenPosition = event.getScreenPosition();
+    updateTabDragPosition();
+}
+
+void MainView::updateTabDragPosition()
+{
+    if (! juce::isPositiveAndBelow(draggedTabIndex,
+                                   tabButtons.size())
+        || tabButtons.isEmpty())
+    {
+        cancelTabDrag();
+        return;
+    }
+
+    const auto viewportPoint =
+        tabButtonsViewport.getLocalPoint(
+            nullptr,
+            tabDragScreenPosition);
+    const int viewportWidth = tabButtonsViewport.getWidth();
+
+    if (viewportWidth > 0)
+    {
+        const int edgeZone = juce::jmin(32,
+                                        juce::jmax(12,
+                                                   viewportWidth / 3));
+        int scrollDelta = 0;
+
+        if (viewportPoint.x < edgeZone)
+            scrollDelta = -14;
+        else if (viewportPoint.x > viewportWidth - edgeZone)
+            scrollDelta = 14;
+
+        if (scrollDelta != 0)
+        {
+            const int maximumViewX =
+                juce::jmax(0,
+                           tabButtonsContainer.getWidth()
+                               - viewportWidth);
+            const int newViewX =
+                juce::jlimit(0,
+                             maximumViewX,
+                             tabButtonsViewport
+                                     .getViewPosition()
+                                     .x
+                                 + scrollDelta);
+
+            tabButtonsViewport.setViewPosition(newViewX, 0);
+            updateTabScrollButtonState();
+        }
+    }
+
+    const auto containerPoint =
+        tabButtonsContainer.getLocalPoint(
+            nullptr,
+            tabDragScreenPosition);
+
+    int insertionSlot = tabButtons.size();
+
+    for (int i = 0; i < tabButtons.size(); ++i)
+    {
+        if (containerPoint.x
+            < tabButtons[i]->getBounds().getCentreX())
+        {
+            insertionSlot = i;
+            break;
+        }
+    }
+
+    int markerX = 0;
+
+    if (insertionSlot <= 0)
+    {
+        markerX = tabButtons.getFirst()->getX();
+    }
+    else if (insertionSlot >= tabButtons.size())
+    {
+        markerX = tabButtons.getLast()->getRight() + 1;
+    }
+    else
+    {
+        markerX = (tabButtons[insertionSlot - 1]->getRight()
+                   + tabButtons[insertionSlot]->getX())
+                  / 2;
+    }
+
+    tabDragInsertionSlot = insertionSlot;
+    tabButtonsContainer.showInsertionMarker(markerX);
+}
+
+void MainView::finishTabDrag(int sourceIndex,
+                             const juce::MouseEvent& event)
+{
+    if (draggedTabIndex == sourceIndex)
+    {
+        tabDragScreenPosition = event.getScreenPosition();
+        updateTabDragPosition();
+    }
+
+    const int insertionSlot = tabDragInsertionSlot;
+    const int tabCount = tabButtons.size();
+
+    cancelTabDrag();
+
+    if (! juce::isPositiveAndBelow(sourceIndex, tabCount)
+        || insertionSlot < 0
+        || insertionSlot > tabCount)
+    {
+        return;
+    }
+
+    int destinationIndex = insertionSlot;
+
+    if (destinationIndex > sourceIndex)
+        --destinationIndex;
+
+    destinationIndex = juce::jlimit(0,
+                                     tabCount - 1,
+                                     destinationIndex);
+
+    if (destinationIndex == sourceIndex)
+        return;
+
+    const auto safeThis =
+        juce::Component::SafePointer<MainView>(this);
+
+    juce::MessageManager::callAsync(
+        [safeThis, sourceIndex, destinationIndex]
+        {
+            if (safeThis != nullptr)
+            {
+                safeThis->moveTabAndAssociatedState(
+                    sourceIndex,
+                    destinationIndex,
+                    true);
+            }
+        });
+}
+
+void MainView::cancelTabDrag()
+{
+    draggedTabIndex = -1;
+    tabDragInsertionSlot = -1;
+    tabButtonsContainer.hideInsertionMarker();
+}
+
+bool MainView::moveTabAndAssociatedState(int fromIndex,
+                                         int toIndex,
+                                         bool selectMovedTab)
+{
+    auto& core = processor.getCore();
+
+    while (manualBypassStates.size() < core.getNumTabs())
+        manualBypassStates.add(false);
+
+    if (! core.moveTab(fromIndex, toIndex))
+        return false;
+
+    if (juce::isPositiveAndBelow(fromIndex,
+                                 manualBypassStates.size())
+        && juce::isPositiveAndBelow(toIndex,
+                                    manualBypassStates.size()))
+    {
+        const bool movedBypassState =
+            manualBypassStates[fromIndex];
+
+        manualBypassStates.remove(fromIndex);
+        manualBypassStates.insert(toIndex,
+                                  movedBypassState);
+    }
+
+    for (int i = 0; i < soloedTabIndices.size(); ++i)
+    {
+        const int soloIndex = soloedTabIndices[i];
+
+        if (soloIndex == fromIndex)
+        {
+            soloedTabIndices.set(i, toIndex);
+        }
+        else if (fromIndex < toIndex
+                 && soloIndex > fromIndex
+                 && soloIndex <= toIndex)
+        {
+            soloedTabIndices.set(i, soloIndex - 1);
+        }
+        else if (fromIndex > toIndex
+                 && soloIndex >= toIndex
+                 && soloIndex < fromIndex)
+        {
+            soloedTabIndices.set(i, soloIndex + 1);
+        }
+    }
+
+    applyEffectiveBypassStates();
+
+    if (selectMovedTab)
+        selectTab(toIndex);
+    else
+        refreshFromCore();
+
+    repaint();
+    return true;
 }
 
 void MainView::handleToggleSolo(int tabIndex)

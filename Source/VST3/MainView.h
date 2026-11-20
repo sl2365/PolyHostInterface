@@ -138,6 +138,8 @@ private:
         std::function<void()> onRightClick;
         std::function<void()> onToggleBypass;
         std::function<void()> onClose;
+        std::function<void(const juce::MouseEvent&)> onDrag;
+        std::function<void(const juce::MouseEvent&)> onDragEnd;
 
         void mouseEnter(const juce::MouseEvent& event) override
         {
@@ -164,6 +166,9 @@ private:
 
         void mouseDown(const juce::MouseEvent& event) override
         {
+            dragCandidate = false;
+            dragInProgress = false;
+
             if (event.mods.isRightButtonDown())
             {
                 suppressNextMouseUp = true;
@@ -200,7 +205,35 @@ private:
             }
 
             suppressNextMouseUp = false;
+            dragCandidate = event.mods.isLeftButtonDown();
             juce::Button::mouseDown(event);
+        }
+
+        void mouseDrag(const juce::MouseEvent& event) override
+        {
+            if (suppressNextMouseUp
+                || ! dragCandidate
+                || ! event.mods.isLeftButtonDown())
+            {
+                juce::Button::mouseDrag(event);
+                return;
+            }
+
+            if (! dragInProgress
+                && event.getDistanceFromDragStart() >= 5)
+            {
+                dragInProgress = true;
+            }
+
+            if (dragInProgress)
+            {
+                if (onDrag)
+                    onDrag(event);
+
+                return;
+            }
+
+            juce::Button::mouseDrag(event);
         }
 
         void mouseUp(const juce::MouseEvent& event) override
@@ -208,9 +241,26 @@ private:
             if (suppressNextMouseUp)
             {
                 suppressNextMouseUp = false;
+                dragCandidate = false;
+                dragInProgress = false;
                 repaint();
                 return;
             }
+
+            if (dragInProgress)
+            {
+                dragCandidate = false;
+                dragInProgress = false;
+                setState(juce::Button::buttonNormal);
+                repaint();
+
+                if (onDragEnd)
+                    onDragEnd(event);
+
+                return;
+            }
+
+            dragCandidate = false;
 
             juce::Button::mouseUp(event);
         }
@@ -355,6 +405,52 @@ private:
         bool mutedBySolo = false;
         bool suppressNextMouseUp = false;
         bool closeButtonHovered = false;
+        bool dragCandidate = false;
+        bool dragInProgress = false;
+    };
+
+    class TabButtonsContainer final : public juce::Component
+    {
+    public:
+        void showInsertionMarker(int x)
+        {
+            const int clampedX = juce::jlimit(2,
+                                              juce::jmax(2, getWidth() - 2),
+                                              x);
+
+            if (insertionMarkerX == clampedX)
+                return;
+
+            insertionMarkerX = clampedX;
+            repaint();
+        }
+
+        void hideInsertionMarker()
+        {
+            if (insertionMarkerX < 0)
+                return;
+
+            insertionMarkerX = -1;
+            repaint();
+        }
+
+        void paintOverChildren(juce::Graphics& g) override
+        {
+            if (insertionMarkerX < 0)
+                return;
+
+            g.setColour(juce::Colour(0xFFFF3B30));
+            g.fillRoundedRectangle(
+                juce::Rectangle<float>(
+                    (float) insertionMarkerX - 1.5f,
+                    1.0f,
+                    3.0f,
+                    (float) juce::jmax(1, getHeight() - 2)),
+                1.5f);
+        }
+
+    private:
+        int insertionMarkerX = -1;
     };
 
     class AddTabButton final : public juce::Button
@@ -831,6 +927,15 @@ private:
     void handlePointerMapSelection();
     void pollPointerMapMouseButtonSwitching();
     void rebuildTabButtons();
+    void updateTabDrag(int sourceIndex,
+                       const juce::MouseEvent& event);
+    void finishTabDrag(int sourceIndex,
+                       const juce::MouseEvent& event);
+    void updateTabDragPosition();
+    void cancelTabDrag();
+    bool moveTabAndAssociatedState(int fromIndex,
+                                   int toIndex,
+                                   bool selectMovedTab);
     void rebuildRoutingView();
     void rebuildAdvancedRoutingView();
     void syncRoutingControlState(int tabIndex);
@@ -955,7 +1060,7 @@ private:
     bool pointerMapForwardMouseButtonWasDown = false;
     juce::uint32 lastPointerMapDropdownWheelMs = 0;
     juce::OwnedArray<TabButton> tabButtons;
-    juce::Component tabButtonsContainer;
+    TabButtonsContainer tabButtonsContainer;
     juce::Viewport tabButtonsViewport;
     AddTabButton scrollTabsLeftButton;
     AddTabButton scrollTabsRightButton;
@@ -987,6 +1092,9 @@ private:
     std::unique_ptr<VstMidiMonitorWindow> midiMonitorWindow;
     bool showingRoutingView = false;
     bool showingMacroMappingsView = false;
+    int draggedTabIndex = -1;
+    int tabDragInsertionSlot = -1;
+    juce::Point<int> tabDragScreenPosition;
     juce::Array<int> soloedTabIndices;
     juce::Array<bool> manualBypassStates;
     int deletedTabUndoIndex = -1;
